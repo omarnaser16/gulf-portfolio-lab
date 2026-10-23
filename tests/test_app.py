@@ -20,10 +20,10 @@ from test_agent import FakeClient, response, text, tool_use
 
 APP = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
 sys.path.insert(0, str(Path(APP).parent))  # the app's own modules (workstation, inputs)
-
+import workstation as ws  # noqa: E402
 
 SUN_THU = (".SR", ".QA", ".KW")  # Saudi, Qatari and Kuwaiti markets trade Sunday-Thursday
-FAKE_CURRENCY = {".SR": "SAR", ".QA": "QAR", ".KW": "KWF", ".AE": "AED"}
+FAKE_CURRENCY = {".SR": "SAR", ".QA": "QAR", ".KW": "KWF", ".AE": "AED", ".L": "GBp"}
 FAKE_TODAY = pd.Timestamp("2026-10-22")
 
 
@@ -86,7 +86,7 @@ def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
 
 def test_app_renders_every_tab(app: AppTest) -> None:
     assert not app.exception, app.exception
-    sections = {"Holdings", "Screen", "Analyse & backtest", "Optimise"}  # inside Portfolio
+    sections = {"Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"}  # Portfolio
     assert [t.label for t in app.tabs if t.label not in sections] == [
         "Portfolio",
         "Assets",
@@ -96,9 +96,10 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Regime",
         "Analyst",
     ]
-    # static tables: data notes, screen, my holdings, my comparison, assets, strategies,
-    # regime folds; dataframes: the editable holdings table and the frontier weights
-    assert len(app.table) == 7 and len(app.dataframe) == 2
+    # static tables: data notes, my holdings, my comparison, benchmark comparison, assets,
+    # strategies, regime folds; dataframes: the editable holdings table, the screen (wide,
+    # scrollable) and the frontier weights
+    assert len(app.table) == 7 and len(app.dataframe) == 3
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -503,18 +504,38 @@ def test_picking_a_search_result_adds_it(monkeypatch, tmp_path) -> None:
     assert len(rows) == 5  # added once, not again on the rerun
 
 
+def _screen(app: AppTest) -> pd.DataFrame:
+    return next(d.value for d in app.dataframe if "Rank" in d.value.columns)
+
+
 def test_screen_ranks_holdings(app: AppTest) -> None:
-    screen = next(t.value for t in app.table if "Correlation to rest" in t.value.columns)
-    assert set(screen.index) == {"SPY", "AGG", "GLD", "KSA"} and list(screen["Rank"]) == [
-        1,
-        2,
-        3,
-        4,
-    ]
+    screen = _screen(app)
+    assert set(screen.index) == {"SPY", "AGG", "GLD", "KSA"}
+    assert list(screen["Rank"]) == [1, 2, 3, 4] and screen.columns[2] == "Sharpe ▼"
     app.selectbox(key="ws_rank_by").set_value("Volatility (ann.)").run()
-    screen = next(t.value for t in app.table if "Correlation to rest" in t.value.columns)
-    vols = [float(v.rstrip("%")) for v in screen["Volatility (ann.)"]]
+    vols = [float(v.rstrip("%")) for v in _screen(app)["Volatility (ann.) ▼"]]
     assert vols == sorted(vols)
+    for by in ws.SCREEN_COLUMNS:
+        app.selectbox(key="ws_rank_by").set_value(by).run()
+        assert not app.exception, (by, app.exception)
+    # Beta follows the chosen benchmark; against cash it is undefined and shown as '–'
+    app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
+    assert set(_screen(app)["Beta to benchmark"]) == {"–"}
+
+
+def test_benchmark_tab_compares_with_the_chosen_benchmark(app: AppTest) -> None:
+    table = next(t.value for t in app.table if "Information ratio" in t.value.index)
+    assert table.loc["Beta", "Benchmark"] == "–" and table.loc["Beta", "Your portfolio"] != "–"
+    assert set(table.columns) == {"Your portfolio", "Benchmark"}
+    titles = [json.loads(c.proto.spec)["layout"]["title"]["text"] for c in app.get("plotly_chart")]
+    assert any(t.startswith("Relative drawdown") for t in titles)
+    app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
+    assert not app.exception, app.exception
+    table = next(t.value for t in app.table if "Information ratio" in t.value.index)
+    assert table.loc["Beta", "Your portfolio"].startswith("n/a")
+    app.selectbox(key="ws_benchmark").set_value("FTSE 100 (ISF.L)").run()  # pence -> USD
+    assert not app.exception, app.exception
+    assert any("Information ratio" in t.value.index for t in app.table)
 
 
 def test_monte_carlo_offers_my_portfolio(app: AppTest) -> None:
@@ -664,3 +685,16 @@ def test_interpret_with_empty_goals_explains(optimise_app) -> None:
     at.button(key="ws_interpret").click().run()
     assert any("Describe your goals first" in w.value for w in at.warning)
     assert client.requests == []
+
+
+def test_rank_screen_puts_missing_values_last() -> None:
+    table = pd.DataFrame(
+        {col: [0.1, 0.2, 0.3] for col, _ in ws.SCREEN_COLUMNS.values()}
+        | {"weight": [0.2, 0.3, 0.5]},
+        index=["A", "B", "C"],
+    )
+    table.loc["C", "ret_3y"] = float("nan")  # too little history
+    shown = ws.rank_screen(table, "3Y return (ann.)")
+    assert list(shown.index) == ["B", "A", "C"] and shown.loc["C", "3Y return (ann.) ▼"] == "–"
+    shown = ws.rank_screen(table, "Volatility (ann.)")  # lower is better
+    assert list(shown.index) == ["A", "B", "C"] and shown.loc["A", "Sharpe"] == "0.10"

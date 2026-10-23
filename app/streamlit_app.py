@@ -25,17 +25,19 @@ from gpl.agent.spec import describe_spec, propose_spec, spec_from_draft
 from gpl.agent.tools import AnalystContext, run_optimisation
 from gpl.data import (
     AssetData,
+    BenchmarkData,
     DataUnavailable,
     clean_prices,
     get_prices,
     get_risk_free,
     latest_quote,
     load_assets,
+    load_benchmark,
     load_universe,
     search_securities,
     to_returns,
 )
-from gpl.metrics import drawdown_series, summary_table
+from gpl.metrics import drawdown_series, relative_drawdown, summary_table
 from gpl.montecarlo import (
     goal_probability,
     path_max_drawdowns,
@@ -130,6 +132,23 @@ def load_data(
 @st.cache_data(show_spinner="Loading the risk-free rate…", ttl=CACHE_TTL)
 def load_rf(start: date, end: date | None, day: date | None) -> pd.Series:
     return get_risk_free(start, end)
+
+
+@st.cache_data(show_spinner="Loading the benchmark…", ttl=CACHE_TTL)
+def get_benchmark(
+    name: str,
+    choice: dict,
+    _index: pd.DatetimeIndex,
+    loaded: tuple[str, ...],
+    start: date,
+    end: date | None,
+    day: date | None,
+) -> BenchmarkData:
+    """The chosen benchmark's returns on the portfolio's dates (see ``gpl.data``).
+
+    ``_index`` isn't hashed; the loaded tickers and dates (which determine it) key the cache.
+    """
+    return load_benchmark(name, choice, _index, load_rf(start, end, day), start, end)
 
 
 @st.cache_data(show_spinner=False, ttl=900)
@@ -854,8 +873,33 @@ with tab_backtest:
 
 with tab_mine:
     st.subheader("My portfolio")
-    sec_hold, sec_screen, sec_analyse, sec_opt = st.tabs(
-        ["Holdings", "Screen", "Analyse & backtest", "Optimise"]
+    bench_choices = {
+        **CFG["benchmark_choices"],
+        **{
+            f"{t} (an asset in your data)": {
+                "weights": {t: 1.0},
+                "represents": f"{NAMES.get(t, t)}, converted to USD.",
+            }
+            for t in data.prices.columns
+        },
+    }
+    bench_name = st.selectbox(
+        "Benchmark",
+        list(bench_choices),
+        key="ws_benchmark",
+        help="What your portfolio is compared with on the Screen, Benchmark and Optimise tabs. "
+        "Total-return ETF proxies, so dividends count as they do in your portfolio.",
+    )
+    st.caption(f"**{bench_name}:** {bench_choices[bench_name]['represents']}")
+    try:
+        bench = get_benchmark(
+            bench_name, bench_choices[bench_name], all_returns.index, loaded, start, end, day
+        )
+    except (ValueError, DataUnavailable) as e:
+        bench = None
+        st.warning(f"Couldn't load the benchmark: {e} Choose another one.")
+    sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt = st.tabs(
+        ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"]
     )
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 
@@ -884,8 +928,16 @@ with tab_mine:
             st.info("Add at least two holdings to compare them.")
         else:
             ws.render_screen(
-                ws.screen_table(all_returns, pd.Series(my_weights), rf, D["var_level"], periods),
+                ws.screen_table(
+                    all_returns,
+                    pd.Series(my_weights),
+                    rf,
+                    D["var_level"],
+                    periods,
+                    None if bench is None else bench.returns,
+                ),
                 holding_names,
+                bench_name,
             )
             st.caption(
                 f"Over the full common sample ({all_returns.index[0]:%d %b %Y} – "
@@ -953,6 +1005,49 @@ with tab_mine:
             st.plotly_chart(drawdown_chart(drawdown_series(rets)), width="stretch")
             st.caption(
                 "Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab."
+            )
+
+    with sec_bench:
+        if not portfolio_ok:
+            st.info("Add holdings with price history on the Holdings tab.")
+        elif not enough_history:
+            st.warning(SHORT_SAMPLE)
+        elif bench is None:
+            st.info("Choose a benchmark with data above.")
+        else:
+            mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
+            port = mine.returns.iloc[1:]  # from the first full day held
+            st.markdown(f"**Your portfolio vs {bench_name}**")
+            st.table(ws.benchmark_comparison(port, bench.returns, rf, periods, bench.is_cash))
+            dates = port.index.intersection(bench.returns.index)
+            st.caption(
+                f"{dates[0]:%d %b %Y} – {dates[-1]:%d %b %Y}. Your portfolio is held at today's "
+                f"weights, rebalanced monthly with {cost_bps:g} bps costs (as on Analyse & "
+                "backtest); the benchmark is an index, so it pays no costs. Alpha: annual return "
+                "not explained by the benchmark exposure (beta). Tracking error: how far your "
+                "returns stray from the benchmark's. Information ratio: extra return per unit of "
+                "tracking error. Up/down capture: your average return on the benchmark's up "
+                "(down) days as a share of its own; below 100% on down days means you fell less."
+            )
+            for note in bench.notes:
+                st.info(note)
+            p, b = port.loc[dates], bench.returns.loc[dates]
+            growth = pd.DataFrame(
+                {"Your portfolio": (1 + p).cumprod(), bench_name: (1 + b).cumprod()}
+            )
+            st.plotly_chart(equity_chart(growth), width="stretch")
+            st.plotly_chart(
+                drawdown_chart(
+                    pd.DataFrame(
+                        {"Your portfolio relative to the benchmark": relative_drawdown(p, b)}
+                    ),
+                    title="Relative drawdown: how far you fell behind the benchmark",
+                ),
+                width="stretch",
+            )
+            st.caption(
+                "Relative drawdown tracks your wealth divided by the benchmark's: 0% at your best "
+                "point relative to it, -10% when you have fallen 10% behind that point."
             )
 
     with sec_opt:

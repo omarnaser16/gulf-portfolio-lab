@@ -342,3 +342,169 @@ def correlation_to_rest(returns: pd.DataFrame, weights: pd.Series) -> pd.Series:
         rest_returns = returns[rest.index] @ (rest / rest.sum())
         out[t] = returns[t].corr(rest_returns)
     return pd.Series(out, name="correlation_to_rest")
+
+
+# ------------------------------------------------------------------ against a benchmark
+
+
+def beta(returns: Returns, benchmark: pd.Series) -> Scalar:
+    """Sensitivity to the benchmark: ``cov(r, b) / var(b)``.
+
+    Parameters
+    ----------
+    returns : pd.Series or pd.DataFrame
+        Simple returns, on the same dates as ``benchmark``.
+    benchmark : pd.Series
+        Benchmark simple returns.
+
+    Returns
+    -------
+    float or pd.Series
+        1.0 moves one-for-one with the benchmark; 0.5 half as much. NaN if the benchmark
+        doesn't move (e.g. cash), because sensitivity to something constant is undefined.
+    """
+    var_b = benchmark.var(ddof=1)
+    if isinstance(returns, pd.DataFrame):
+        cov = returns.apply(lambda col: col.cov(benchmark))
+        return cov / var_b if var_b > _ZERO_TOL else cov * np.nan
+    return _safe_divide(returns.cov(benchmark), var_b)
+
+
+def alpha(
+    returns: Returns,
+    benchmark: pd.Series,
+    rf: float | pd.Series = 0.0,
+    periods_per_year: int = PERIODS_PER_YEAR,
+) -> Scalar:
+    """Jensen's alpha, annualised: return not explained by the benchmark exposure.
+
+    ``alpha = ann. mean excess return - beta * ann. mean benchmark excess return``.
+    """
+    excess = _excess_returns(returns, rf, periods_per_year)
+    excess_b = _excess_returns(benchmark, rf, periods_per_year)
+    return annualised_return(excess, periods_per_year) - beta(returns, benchmark) * (
+        annualised_return(excess_b, periods_per_year)
+    )
+
+
+def _active(returns: Returns, benchmark: pd.Series) -> Returns:
+    if isinstance(returns, pd.DataFrame):
+        return returns.sub(benchmark, axis=0)
+    return returns - benchmark
+
+
+def tracking_error(
+    returns: Returns, benchmark: pd.Series, periods_per_year: int = PERIODS_PER_YEAR
+) -> Scalar:
+    """Annualised volatility of active returns ``r - b``: how far you stray from the benchmark."""
+    return annualised_volatility(_active(returns, benchmark), periods_per_year)
+
+
+def information_ratio(
+    returns: Returns, benchmark: pd.Series, periods_per_year: int = PERIODS_PER_YEAR
+) -> Scalar:
+    """Annualised mean active return per unit of tracking error (NaN with no active risk)."""
+    active = _active(returns, benchmark)
+    return _safe_divide(
+        annualised_return(active, periods_per_year),
+        annualised_volatility(active, periods_per_year),
+    )
+
+
+def _capture(returns: Returns, benchmark: pd.Series, up: bool) -> Scalar:
+    days = benchmark > 0 if up else benchmark < 0
+    if not days.any():
+        return (
+            pd.Series(np.nan, index=returns.columns)
+            if isinstance(returns, pd.DataFrame)
+            else float("nan")
+        )
+    return returns[days].mean() / benchmark[days].mean()
+
+
+def up_capture(returns: Returns, benchmark: pd.Series) -> Scalar:
+    """Mean return on the benchmark's up days ÷ the benchmark's mean on those days.
+
+    1.00 = keeps pace on up days; 0.80 = captures 80% of the gains.
+    """
+    return _capture(returns, benchmark, up=True)
+
+
+def down_capture(returns: Returns, benchmark: pd.Series) -> Scalar:
+    """Mean return on the benchmark's down days ÷ the benchmark's mean on those days.
+
+    Below 1.00 = loses less than the benchmark when it falls (lower is better).
+    """
+    return _capture(returns, benchmark, up=False)
+
+
+def relative_drawdown(returns: pd.Series, benchmark: pd.Series) -> pd.Series:
+    """Drawdown of wealth relative to the benchmark (the ratio of the two wealth paths).
+
+    0 when the portfolio is at its best point *relative to* the benchmark; -0.10 when it has
+    fallen 10% behind that point.
+    """
+    return drawdown_series((1 + returns) / (1 + benchmark) - 1)
+
+
+# ------------------------------------------------------------------- more screen metrics
+
+
+def calmar_ratio(returns: Returns, periods_per_year: int = PERIODS_PER_YEAR) -> Scalar:
+    """CAGR ÷ |max drawdown|: growth per unit of worst fall (NaN if it never fell)."""
+    return _safe_divide(cagr(returns, periods_per_year), -max_drawdown(returns))
+
+
+def trailing_return(
+    returns: Returns, years: float, periods_per_year: int = PERIODS_PER_YEAR
+) -> Scalar:
+    """Annualised return over the last ``years`` (for one year, simply the 1-year return).
+
+    Uses the last ``round(years * periods_per_year)`` observations; NaN if there are fewer.
+    """
+    n = round(years * periods_per_year)
+
+    def one(col: pd.Series) -> float:
+        col = col.dropna()
+        if len(col) < n:
+            return float("nan")
+        return float((1 + col.iloc[-n:]).prod() ** (1 / years) - 1)
+
+    if isinstance(returns, pd.DataFrame):
+        return returns.apply(one)
+    return one(returns)
+
+
+def correlation_clusters(returns: pd.DataFrame, threshold: float = 0.70) -> list[dict]:
+    """Groups of holdings that move together (average pairwise correlation >= threshold).
+
+    Hierarchical clustering with average linkage on the distance ``1 - correlation``, cut at
+    ``1 - threshold``. Holdings with an undefined correlation (no movement) count as
+    uncorrelated.
+
+    Returns
+    -------
+    list of dict
+        One dict per group of two or more holdings: ``members`` (in column order) and
+        ``average_correlation``, sorted by size then correlation.
+    """
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    if returns.shape[1] < 2:
+        return []
+    corr = returns.corr().fillna(0.0)
+    values = corr.to_numpy(copy=True)
+    np.fill_diagonal(values, 1.0)
+    corr = pd.DataFrame(values, index=corr.index, columns=corr.columns)
+    distance = squareform((1 - values).clip(min=0), checks=False)
+    labels = fcluster(linkage(distance, method="average"), t=1 - threshold, criterion="distance")
+    clusters = []
+    for label in np.unique(labels):
+        members = [t for t, lab in zip(returns.columns, labels, strict=True) if lab == label]
+        if len(members) < 2:
+            continue
+        sub = corr.loc[members, members].to_numpy()
+        avg = float(sub[np.triu_indices(len(members), 1)].mean())
+        clusters.append({"members": members, "average_correlation": avg})
+    return sorted(clusters, key=lambda c: (-len(c["members"]), -c["average_correlation"]))

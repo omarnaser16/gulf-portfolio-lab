@@ -69,3 +69,28 @@ ticker_names:
   "EMIRATESNBD.AE": Emirates NBD
   "QNBK.QA": Qatar National Bank
   "NBK.KW": National Bank of Kuwait
+
+# Benchmarks for the Portfolio tab: total-return proxies (adjusted prices include dividends),
+# converted to USD like any other asset. "Any loaded asset" is added in the app.
+benchmark_choices:
+  "60/40 (SPY/AGG)":
+    weights: { SPY: 0.60, AGG: 0.40 }
+    represents: "60% US large-cap stocks (SPY) and 40% US investment-grade bonds (AGG), rebalanced daily."
+  "S&P 500 (SPY)":
+    weights: { SPY: 1.00 }
+    represents: "US large-cap stocks: SPDR S&P 500 ETF, dividends reinvested."
+  "FTSE 100 (ISF.L)":
+    weights: { "ISF.L": 1.00 }
+    represents: "UK large-cap stocks: iShares Core FTSE 100 ETF, quoted in pence in London and converted to USD."
+  "MSCI World (URTH)":
+    weights: { URTH: 1.00 }
+    represents: "Developed-market stocks worldwide: iShares MSCI World ETF."
+  "Saudi market (KSA)":
+    weights: { KSA: 1.00 }
+    represents: "Saudi stocks: iShares MSCI Saudi Arabia ETF (US-listed, in USD)."
+  "UAE market (UAE)":
+    weights: { UAE: 1.00 }
+    represents: "UAE stocks: iShares MSCI UAE ETF (US-listed, in USD)."
+  "Cash (13-week T-bills)":
+    cash: true
+    represents: "13-week US Treasury bills (^IRX), the same rate used for Sharpe ratios; no fund fees."

@@ -10,7 +10,7 @@ and one column per ticker. Returns are simple daily returns unless stated otherw
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -540,6 +540,104 @@ def load_assets(
 # ------------------------------------------------------------------- search and live quotes
 
 SEARCH_TYPES = {"EQUITY": "Stock", "ETF": "ETF", "MUTUALFUND": "Fund", "INDEX": "Index"}
+
+
+# ------------------------------------------------------------------------------ benchmarks
+
+
+def benchmark_wealth(prices: pd.DataFrame, weights: Mapping[str, float]) -> pd.Series:
+    """Growth of 1 for a fixed-weight benchmark on its own trading dates.
+
+    Rebalanced daily (an index, so no trading costs): the daily return is the weighted sum of
+    the proxies' returns on the dates all of them traded.
+    """
+    cols = list(weights)
+    clean = prices[cols].dropna()
+    r = clean.pct_change().iloc[1:] @ pd.Series(weights, dtype=float)[cols]
+    start = pd.Series([1.0], index=clean.index[:1])  # wealth 1 on the first date
+    return pd.concat([start, (1 + r).cumprod()]).rename("wealth")
+
+
+def returns_on_dates(
+    wealth: pd.Series, index: pd.DatetimeIndex, max_gap_days: int = 7
+) -> tuple[pd.Series, dict]:
+    """Benchmark returns between consecutive dates of ``index`` (e.g. the portfolio's dates).
+
+    Each date takes the benchmark's last value on or before it (at most ``max_gap_days`` old),
+    so a benchmark holiday shows as 0% and is caught up the next day, and the portfolio's
+    sample is never shortened. Dates before the benchmark starts are dropped.
+
+    Returns
+    -------
+    (pd.Series, dict)
+        Returns indexed by ``index`` (from the second covered date), and a report:
+        ``stale_dates`` (portfolio dates on which the benchmark didn't trade), ``start``,
+        ``dropped`` (portfolio dates without benchmark data).
+    """
+    on = wealth.sort_index().reindex(
+        index, method="ffill", tolerance=pd.Timedelta(days=max_gap_days)
+    )
+    covered = on.dropna()
+    returns = covered.pct_change().iloc[1:].rename("benchmark")
+    report = {
+        "stale_dates": int((~covered.index.isin(wealth.index)).sum()),
+        "start": covered.index[0] if len(covered) else None,
+        "dropped": int(on.isna().sum()),
+    }
+    return returns, report
+
+
+@dataclass
+class BenchmarkData:
+    """A benchmark's returns on the portfolio's dates, with what it is and any caveats."""
+
+    name: str
+    represents: str
+    returns: pd.Series
+    is_cash: bool
+    notes: list[str]
+
+
+def load_benchmark(
+    name: str,
+    choice: Mapping,
+    index: pd.DatetimeIndex,
+    rf_daily: pd.Series,
+    start: str | date,
+    end: str | date | None,
+    cache_dir: Path | None = None,
+) -> BenchmarkData:
+    """Load a benchmark (``benchmark_choices`` entry) and put it on the portfolio's dates.
+
+    Cash compounds the daily risk-free rate. Other benchmarks are downloaded and converted
+    to USD like any asset (e.g. FTSE 100 from pence via GBP=X). Raises ``ValueError`` if the
+    proxy has no data, ``DataUnavailable`` if Yahoo blocks the request.
+    """
+    notes: list[str] = []
+    if choice.get("cash"):
+        wealth = (1 + rf_daily).cumprod()
+    else:
+        assets = load_assets(list(choice["weights"]), start, end, cache_dir=cache_dir)
+        if assets.invalid:
+            raise ValueError(
+                f"No data for the {name} benchmark: "
+                + "; ".join(f"{t} ({why.lower()})" for t, why in assets.invalid.items())
+            )
+        wealth = benchmark_wealth(assets.prices, choice["weights"])
+    returns, report = returns_on_dates(wealth, index)
+    if report["dropped"] > 0:
+        notes.append(
+            f"The benchmark's data starts on {report['start']:%d %b %Y}, after your portfolio's; "
+            "comparisons use the period both cover."
+        )
+    if report["stale_dates"]:
+        notes.append(
+            f"The benchmark didn't trade on {report['stale_dates']} of your portfolio's dates "
+            "(e.g. holidays in its market); it shows 0% on those dates and catches up next."
+        )
+    return BenchmarkData(
+        name, choice.get("represents", ""), returns, bool(choice.get("cash")), notes
+    )
 
 
 def search_securities(query: str, max_results: int = 8) -> list[dict]:

@@ -20,7 +20,19 @@ from inputs import (
 from streamlit_searchbox import st_searchbox
 
 from formatting import pct
-from gpl.metrics import correlation_to_rest, summary_table
+from gpl.metrics import (
+    alpha,
+    beta,
+    calmar_ratio,
+    correlation_to_rest,
+    down_capture,
+    information_ratio,
+    summary_table,
+    tracking_error,
+    trailing_return,
+    up_capture,
+)
+from gpl.optimise import risk_contributions
 from gpl.plots import allocation_chart
 
 ROWS, MODE, VERSION, LAST_PICK, META = "ws_rows", "ws_mode", "ws_version", "ws_last_pick", "ws_meta"
@@ -308,45 +320,121 @@ def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
 
 
 def screen_table(
-    returns: pd.DataFrame, weights: pd.Series, rf, level: float, periods: int
+    returns: pd.DataFrame,
+    weights: pd.Series,
+    rf,
+    level: float,
+    periods: int,
+    benchmark: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """Per-holding metrics plus correlation to the rest of the portfolio (unformatted)."""
-    table = summary_table(returns[weights.index], rf=rf, level=level, periods_per_year=periods)
-    table["correlation_to_rest"] = correlation_to_rest(returns[weights.index], weights)
+    """Per-holding metrics for the Screen (unformatted). Every figure comes from ``gpl``.
+
+    Beta uses the dates both the holdings and ``benchmark`` cover; NaN without a benchmark or
+    for a benchmark that doesn't move (cash). 1Y and 3Y returns are NaN with too little history.
+    """
+    held = returns[weights.index]
+    table = summary_table(held, rf=rf, level=level, periods_per_year=periods)
+    table["calmar"] = calmar_ratio(held, periods)
+    table["ret_1y"] = trailing_return(held, 1, periods)
+    table["ret_3y"] = trailing_return(held, 3, periods)
+    table["correlation_to_rest"] = correlation_to_rest(held, weights)
+    table["risk_share"] = risk_contributions(weights, held.cov())
+    if benchmark is not None:
+        dates = held.index.intersection(benchmark.index)
+        table["beta"] = beta(held.loc[dates], benchmark.loc[dates])
+    else:
+        table["beta"] = float("nan")
     table["weight"] = weights
     return table
 
 
-SCREEN_COLUMNS = {
+SCREEN_COLUMNS = {  # label: (column, lower is better)
     "Return (ann.)": ("ann_return", False),
+    "CAGR": ("cagr", False),
+    "1Y return": ("ret_1y", False),
+    "3Y return (ann.)": ("ret_3y", False),
     "Volatility (ann.)": ("ann_vol", True),
     "Sharpe": ("sharpe", False),
+    "Sortino": ("sortino", False),
+    "Calmar": ("calmar", False),
     "Max drawdown": ("max_drawdown", False),
+    "VaR 95% (1-day)": ("hist_var", True),
+    "Expected shortfall 95% (1-day)": ("expected_shortfall", True),
+    "Beta to benchmark": ("beta", True),
+    "Share of portfolio risk": ("risk_share", True),
     "Correlation to rest": ("correlation_to_rest", True),
 }
+_RATIOS = {"sharpe", "sortino", "calmar", "beta", "correlation_to_rest"}
 
 
-def render_screen(table: pd.DataFrame, names: Mapping[str, str]) -> None:
-    by = st.selectbox("Rank by", list(SCREEN_COLUMNS), index=2, key="ws_rank_by")
+def _fmt(column: str, value: float) -> str:
+    if pd.isna(value):
+        return "–"
+    return f"{value:.2f}" if column in _RATIOS else pct(value)
+
+
+def rank_screen(table: pd.DataFrame, by: str) -> pd.DataFrame:
+    """Rank holdings by the chosen metric (missing values last), formatted for display."""
     column, ascending = SCREEN_COLUMNS[by]
-    ranked = table.sort_values(column, ascending=ascending)
+    ranked = table.sort_values(column, ascending=ascending, na_position="last")
     shown = pd.DataFrame(
-        {
-            "Name": [names.get(t, "") for t in ranked.index],
-            "Weight": ranked["weight"].map(pct),
-            "Return (ann.)": ranked["ann_return"].map(pct),
-            "Volatility (ann.)": ranked["ann_vol"].map(pct),
-            "Sharpe": ranked["sharpe"].map("{:.2f}".format),
-            "Max drawdown": ranked["max_drawdown"].map(pct),
-            "Correlation to rest": ranked["correlation_to_rest"].map("{:.2f}".format),
-        },
+        {label: [_fmt(col, v) for v in ranked[col]] for label, (col, _) in SCREEN_COLUMNS.items()},
         index=ranked.index,
     )
+    shown.insert(0, "Weight", ranked["weight"].map(pct))
+    shown.insert(0, by + " ▼", shown.pop(by))  # the ranking metric first
     shown.insert(0, "Rank", range(1, len(shown) + 1))
-    st.table(shown)
-    st.caption(
-        "Correlation to rest: how closely each holding moves with the rest of your portfolio "
-        "(0.00 = unrelated, 1.00 = in lockstep). Low or negative values diversify. Lower "
-        "volatility and correlation rank higher; for the others, higher is better (max "
-        "drawdown closest to 0)."
+    return shown
+
+
+def render_screen(table: pd.DataFrame, names: Mapping[str, str], benchmark_name: str) -> None:
+    by = st.selectbox("Rank by", list(SCREEN_COLUMNS), index=5, key="ws_rank_by")
+    shown = rank_screen(table, by)
+    shown.insert(1, "Name", [names.get(t, "") for t in shown.index])
+    st.dataframe(
+        shown, width="stretch", column_config={"Name": st.column_config.TextColumn(width=160)}
     )
+    st.caption(
+        f"Lower ranks higher for volatility, VaR, expected shortfall, beta, share of portfolio "
+        f"risk and correlation to rest; higher ranks higher for the others (max drawdown "
+        f"closest to 0). Beta is measured against **{benchmark_name}**. VaR and expected "
+        "shortfall are 1-day losses at 95%. Calmar = CAGR ÷ |max drawdown|. Correlation to "
+        "rest: how closely each holding moves with the rest of your portfolio (low values "
+        "diversify). '–' means not enough history (3Y return) or not defined (beta to cash); "
+        "these rank last. Scroll sideways for every column."
+    )
+
+
+def benchmark_comparison(
+    portfolio: pd.Series, benchmark: pd.Series, rf, periods: int, is_cash: bool
+) -> pd.DataFrame:
+    """Portfolio vs benchmark on the dates both cover, formatted. Every figure from ``gpl``.
+
+    Relative measures (beta, alpha, tracking error, information ratio, capture, correlation)
+    describe the portfolio against the benchmark, so the benchmark column shows '–'. Against
+    cash, beta, correlation and capture are not defined (cash has no market risk).
+    """
+    dates = portfolio.index.intersection(benchmark.index)
+    p, b = portfolio.loc[dates], benchmark.loc[dates]
+    both = pd.DataFrame({"Your portfolio": p, "Benchmark": b})
+    table = summary_table(both, rf=rf, periods_per_year=periods)
+    na = "n/a (cash has no market risk)"
+    rows = {
+        "Return (CAGR)": table["cagr"].map(pct),
+        "Volatility (ann.)": table["ann_vol"].map(pct),
+        "Sharpe": table["sharpe"].map("{:.2f}".format),
+        "Max drawdown": table["max_drawdown"].map(pct),
+    }
+    relative = {
+        "Beta": na if is_cash else f"{beta(p, b):.2f}",
+        "Alpha (ann., Jensen)": na if is_cash else pct(alpha(p, b, rf, periods)),
+        "Tracking error (ann.)": pct(tracking_error(p, b, periods)),
+        "Information ratio": f"{information_ratio(p, b, periods):.2f}",
+        "Up capture": na if is_cash else pct(up_capture(p, b)),
+        "Down capture": na if is_cash else pct(down_capture(p, b)),
+        "Correlation": na if is_cash else f"{p.corr(b):.2f}",
+    }
+    out = pd.DataFrame(rows).T
+    for name, value in relative.items():
+        out.loc[name] = [value, "–"]
+    return out
