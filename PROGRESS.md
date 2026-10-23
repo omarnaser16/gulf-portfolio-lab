@@ -92,3 +92,17 @@
   If it happens again: screenshot the tab with the sidebar and the "at most X% per asset" caption.
 - **Learned:** maximising a ratio directly is fragile; rewriting it as a convex problem is the standard
   fix. "Can't reproduce" isn't the same as "not a bug", so I wrote it down.
+
+## Regime fixes — 2026-10-23 · calibration, honest metrics, monthly chart
+- **Found:** class weighting made the model's average P(stressed) 47.41% vs a 21.51% actual rate, so it
+  was a score, not a probability. Removed the weighting rather than add time-series calibration
+  (`CalibratedClassifierCV`), because the calibrated version ranked worse (AUC 0.67) and had a worse
+  Brier score than always predicting the base rate. Out of sample, mean P is now 28.86% vs 21.51%. Most
+  of the gap is the first fold, which was trained on the 2008 crisis; later folds are within 1–4 points.
+- **Honest comparison:** the simple "vol already high" rule (precision 58.33%, recall 51.35%, accuracy
+  81.65%) beats the model at the 50% threshold (47.89% / 40.45% / 77.73%). The model ranks slightly
+  better (AUC 0.72 vs 0.71). Neither beats always-calm accuracy by much (78.49%).
+- **Knock-on:** with honest probabilities, equal weight + regime de-risks in 11% of months (was 36%).
+  Sharpe 0.39 (was 0.42; static equal weight 0.49). The Week 2 strategy numbers above are now out of date.
+- **Learned:** class weights trade calibration for recall; ROC AUC doesn't care about calibration,
+  Brier does. A threshold only means something if the probabilities are calibrated.

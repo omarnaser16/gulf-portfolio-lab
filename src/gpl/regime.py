@@ -20,7 +20,14 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score
+from sklearn.metrics import (
+    accuracy_score,
+    brier_score_loss,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -140,17 +147,16 @@ def _clean_xy(
 
 
 def _new_model(model: ModelKind, seed: int) -> Any:
+    # No class weighting: weighting the rare "stressed" class pushed the average predicted
+    # probability to ~47% against a ~21% actual rate, so the output was a score rather than
+    # a probability. Unweighted, the logistic intercept matches the training base rate.
     if model == "logistic":
-        # Scaling matters for regularised logistic regression; balanced weights stop the
-        # model from just predicting "calm" (the 80% majority class).
-        return make_pipeline(
-            StandardScaler(), LogisticRegression(class_weight="balanced", max_iter=1000)
-        )
+        # Scaling matters for regularised logistic regression.
+        return make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
     if model == "random_forest":
         return RandomForestClassifier(
             n_estimators=300,
             min_samples_leaf=20,  # shallow-ish leaves: daily rows are highly autocorrelated
-            class_weight="balanced_subsample",
             random_state=seed,
             n_jobs=-1,
         )
@@ -172,8 +178,9 @@ def fit_model(
     labels : pd.Series
         Output of ``make_labels``, aligned on dates.
     model : {"logistic", "random_forest"}, default "logistic"
-        Logistic regression (with standardised features) or a random forest. Both use
-        class weights so the minority "stressed" class is not ignored.
+        Logistic regression (with standardised features) or a random forest. Neither uses
+        class weights, so ``predict_proba`` is a probability on the scale of the actual
+        stressed rate (class weighting inflated it; see ``_new_model``).
     seed : int, default 0
         Random seed (used by the random forest).
 
@@ -216,6 +223,21 @@ def predict_regime(model: Any, features: pd.DataFrame) -> pd.Series:
     return p
 
 
+def _scores(actual: np.ndarray, p: np.ndarray | None, flagged: np.ndarray) -> dict[str, float]:
+    """Classification scores for one set of predictions (``p`` None for a 0/1 rule)."""
+    both = len(np.unique(actual)) == 2
+    score = p if p is not None else flagged
+    return {
+        "auc": roc_auc_score(actual, score) if both else np.nan,
+        "precision": precision_score(actual, flagged, zero_division=0),
+        "recall": recall_score(actual, flagged, zero_division=0),
+        "accuracy": accuracy_score(actual, flagged),
+        "flagged_share": flagged.mean(),
+        "mean_p": p.mean() if p is not None else np.nan,
+        "brier": brier_score_loss(actual, p) if p is not None else np.nan,
+    }
+
+
 def evaluate_model(
     features: pd.DataFrame,
     labels: pd.Series,
@@ -224,6 +246,7 @@ def evaluate_model(
     horizon: int = 21,
     threshold: float = 0.5,
     seed: int = 0,
+    rule: pd.Series | None = None,
 ) -> dict[str, Any]:
     """Out-of-sample evaluation with expanding-window ``TimeSeriesSplit``.
 
@@ -243,44 +266,69 @@ def evaluate_model(
         Probability above which a day is classified as stressed.
     seed : int, default 0
         Random seed.
+    rule : pd.Series, optional
+        A 0/1 baseline signal (e.g. ``naive_stress_signal``) scored on the same test rows.
 
     Returns
     -------
     dict
-        ``"folds"``: DataFrame, one row per fold, with ``precision`` and ``recall`` on the
-        stressed class, ``accuracy``, the ``baseline_accuracy`` of always predicting calm,
-        ``stressed_share``, ``n_test`` and fold positions.
+        ``"folds"``: DataFrame, one row per fold: ``auc`` (ROC AUC: how well the model
+        ranks stressed days above calm ones; 0.5 = coin flip), ``precision`` and
+        ``recall`` on the stressed class, ``accuracy``, ``mean_p`` (average predicted
+        probability) vs ``stressed_share`` (actual rate), the ``baseline_accuracy`` of
+        always predicting calm and, if ``rule`` is given, ``rule_precision``,
+        ``rule_recall`` and ``rule_accuracy``.
+        ``"overall"``: DataFrame with rows ``model``, ``vol_rule`` (if given) and
+        ``always_calm``, scored on all test rows together, plus ``stressed_share``.
         ``"confusion"``: summed 2x2 confusion matrix (rows actual, columns predicted).
         ``"probabilities"``: out-of-sample P(stressed) for every test row.
     """
     x, y = _clean_xy(features, labels)
+    if rule is not None:
+        rule = rule.reindex(x.index)
     splitter = TimeSeriesSplit(n_splits=n_splits, gap=horizon)
     rows, confusion = [], np.zeros((2, 2), dtype=int)
     probabilities = pd.Series(np.nan, index=x.index, name="p_stressed")
+    tested = np.zeros(len(x), dtype=bool)
     for train, test in splitter.split(x):
         fitted = _new_model(model, seed).fit(x.iloc[train].to_numpy(), y.iloc[train].astype(int))
         p = fitted.predict_proba(x.iloc[test].to_numpy())[:, 1]
         predicted = (p >= threshold).astype(int)
         actual = y.iloc[test].to_numpy().astype(int)
         probabilities.iloc[test] = p
+        tested[test] = True
         confusion += confusion_matrix(actual, predicted, labels=[0, 1])
-        rows.append(
-            {
-                "test_start": x.index[test[0]],
-                "test_end": x.index[test[-1]],
-                "train_end_pos": int(train[-1]),
-                "test_start_pos": int(test[0]),
-                "n_test": len(test),
-                "stressed_share": actual.mean(),
-                "precision": precision_score(actual, predicted, zero_division=0),
-                "recall": recall_score(actual, predicted, zero_division=0),
-                "accuracy": accuracy_score(actual, predicted),
-                "baseline_accuracy": 1 - actual.mean(),  # always predict calm
-            }
-        )
+        row = {
+            "test_start": x.index[test[0]],
+            "test_end": x.index[test[-1]],
+            "train_end_pos": int(train[-1]),
+            "test_start_pos": int(test[0]),
+            "n_test": len(test),
+            "stressed_share": actual.mean(),
+            **_scores(actual, p, predicted),
+            "baseline_accuracy": 1 - actual.mean(),  # always predict calm
+        }
+        if rule is not None:
+            r = rule.iloc[test]
+            if r.isna().any():
+                raise ValueError("rule has no value for some test rows")
+            rule_scores = _scores(actual, None, r.to_numpy().astype(int))
+            row |= {f"rule_{k}": rule_scores[k] for k in ("precision", "recall", "accuracy")}
+        rows.append(row)
+
+    actual_all = y[tested].to_numpy().astype(int)
+    p_all = probabilities[tested].to_numpy()
+    overall = {"model": _scores(actual_all, p_all, (p_all >= threshold).astype(int))}
+    if rule is not None:
+        overall["vol_rule"] = _scores(actual_all, None, rule[tested].to_numpy().astype(int))
+    overall["always_calm"] = _scores(actual_all, None, np.zeros_like(actual_all))
+    overall_table = pd.DataFrame(overall).T
+    overall_table["stressed_share"] = actual_all.mean()
+
     index = pd.Index(["actual calm", "actual stressed"])
     return {
         "folds": pd.DataFrame(rows),
+        "overall": overall_table,
         "confusion": pd.DataFrame(
             confusion, index=index, columns=["predicted calm", "predicted stressed"]
         ),

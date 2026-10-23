@@ -53,3 +53,10 @@ def style_percent(table: pd.DataFrame) -> Styler:
     """Every numeric cell is a fraction -> 2-decimal percentage."""
     numeric = list(table.select_dtypes("number").columns)
     return table.style.format(PCT, subset=numeric)
+
+
+def style_columns(table: pd.DataFrame, formats: dict[str, str] | None = None) -> Styler:
+    """Numeric cells as 2-decimal percentages, except columns given their own format."""
+    formats = formats or {}
+    numeric = table.select_dtypes("number").columns
+    return table.style.format({c: formats.get(c, PCT) for c in numeric})

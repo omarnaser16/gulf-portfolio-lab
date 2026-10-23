@@ -60,8 +60,8 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Regime",
         "Analyst",
     ]
-    # metric tables (assets, strategies) are st.table; frontier weights and folds are dataframes
-    assert len(app.table) == 2 and len(app.dataframe) == 2
+    # metric tables (assets, strategies, regime folds) are st.table; frontier weights a dataframe
+    assert len(app.table) == 3 and len(app.dataframe) == 1
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -195,3 +195,42 @@ def test_drawdown_along_the_way_metric(app: AppTest) -> None:
     app.radio(key="mc_method").set_value("bootstrap").run()
     daily = next(v for k, v in _mc_metrics(app).items() if k.startswith("Drawdown"))
     assert daily != value  # the method changes path roughness
+
+
+# ----------------------------------------------------------------------------------- Regime
+
+REGIME_LABELS = ["ROC AUC", "Precision", "Recall", "Accuracy", "Latest P(stressed)"]
+
+
+def test_regime_headline_leads_with_auc_and_base_rate(app: AppTest) -> None:
+    labels = [m.label for m in app.metric if m.label in REGIME_LABELS]
+    assert labels == REGIME_LABELS  # AUC first, accuracy not the lead
+    by_label = {m.label: m for m in app.metric}
+    assert re.fullmatch(r"0\.\d{2}|1\.00", by_label["ROC AUC"].value)
+    assert by_label["Precision"].delta.endswith("pp vs base")
+    assert any("base rate (actual stressed days)" in m.value for m in app.markdown)
+
+
+def test_regime_fold_table_has_rule_baseline_and_total(app: AppTest) -> None:
+    folds = next(t.value for t in app.table if "Vol-rule precision" in t.value.columns)
+    assert {"Avg P(stressed)", "Model ROC AUC", "Vol-rule recall", "Always-calm accuracy"} <= set(
+        folds.columns
+    )
+    assert folds.index[-1] == "All folds" and len(folds) == 6
+
+
+def test_regime_chart_is_monthly(app: AppTest) -> None:
+    chart = next(
+        json.loads(c.proto.spec)
+        for c in app.get("plotly_chart")
+        if "stressed month ahead" in json.loads(c.proto.spec)["layout"]["title"]["text"]
+    )
+    dates = pd.to_datetime(chart["data"][0]["x"])
+    assert (dates.to_series().diff().dropna().dt.days >= 28).all()  # one point per month
+    assert dates.is_month_end.all() or (dates.to_series().dt.day >= 25).all()
+
+
+def test_regime_caption_states_history_and_relative_definition(app: AppTest) -> None:
+    caption = next(c.value for c in app.caption if "regime model uses" in c.value)
+    assert "SPY, AGG and VIX history from **Jan 2005**" in caption
+    assert "'Stressed' is relative:" in caption

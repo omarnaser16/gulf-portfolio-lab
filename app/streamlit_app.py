@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from formatting import pct, show_metrics_table, style_percent
+from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
@@ -103,7 +103,15 @@ def load_regime(end: date) -> dict:
         min_train=R["min_train"],
         horizon=R["horizon"],
     )
-    report = rg.evaluate_model(features, labels, model=R["model"], horizon=R["horizon"])
+    vol_rule = rg.naive_stress_signal(features, R["quantile"], R["window"])
+    report = rg.evaluate_model(
+        features,
+        labels,
+        model=R["model"],
+        horizon=R["horizon"],
+        threshold=R["threshold"],
+        rule=vol_rule,
+    )
     return {"features": features, "labels": labels, "p_stressed": p_stressed, "report": report}
 
 
@@ -405,52 +413,126 @@ with tab_regime:
     st.subheader("Will next month be stressed?")
     regime = load_regime(end)
     p = regime["p_stressed"].dropna()
-    folds = regime["report"]["folds"]
-    conf = regime["report"]["confusion"].to_numpy()
-    tn, fp, fn, tp = conf.ravel()
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric(f"P(stressed) on {p.index[-1]:%d %b %Y}", pct(p.iloc[-1]))
-    m2.metric("Recall (stressed caught)", pct(tp / (tp + fn)))
-    m3.metric("Precision (calls right)", pct(tp / (tp + fp)))
+    folds, overall = regime["report"]["folds"], regime["report"]["overall"]
+    model_scores, base_rate = overall.loc["model"], overall.loc["model", "stressed_share"]
+    calm_accuracy = overall.loc["always_calm", "accuracy"]
+
+    st.markdown(
+        f"**Out-of-sample scores, {folds['test_start'].min():%b %Y} – "
+        f"{folds['test_end'].max():%b %Y}** · base rate (actual stressed days) "
+        f"{pct(base_rate)} · threshold {pct(threshold)}"
+    )
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric(
+        "ROC AUC",
+        f"{model_scores['auc']:.2f}",
+        help="How well the model ranks stressed days above calm ones, whatever the threshold. "
+        "0.50 = coin flip, 1.00 = perfect.",
+    )
+    m2.metric(
+        "Precision",
+        pct(model_scores["precision"]),
+        f"{(model_scores['precision'] - base_rate) * 100:+.2f} pp vs base",
+        help="When the model says 'stressed', how often it was right, compared with the share "
+        "of days that were actually stressed (what random guessing would score).",
+    )
+    m3.metric(
+        "Recall", pct(model_scores["recall"]), help="Share of stressed days the model flagged."
+    )
     m4.metric(
         "Accuracy",
-        pct((tp + tn) / conf.sum()),
-        f"{((tp + tn) - (tn + fp)) / conf.sum() * 100:+.2f} pp vs always-calm",
-        delta_color="normal",
+        pct(model_scores["accuracy"]),
+        f"{(model_scores['accuracy'] - calm_accuracy) * 100:+.2f} pp vs calm",
+        help="Share of all days classified correctly, vs always saying 'calm'. Misleading on "
+        "its own: always-calm is right on every calm day.",
     )
-    st.plotly_chart(regime_chart(p, threshold, regime["labels"]), width="stretch")
+    m5.metric(
+        "Latest P(stressed)",
+        pct(p.iloc[-1]),
+        help=f"Walk-forward probability on {p.index[-1]:%d %b %Y}, from a model trained only "
+        "on labels known by then.",
+    )
+
+    monthly = p.resample("ME").last().dropna()
+    realised = regime["labels"].reindex(p.index).resample("ME").last()
+    st.plotly_chart(
+        regime_chart(
+            monthly, threshold, realised, title="Month-end probability of a stressed month ahead"
+        ),
+        width="stretch",
+    )
+    features = regime["features"]
     st.caption(
-        f"Stressed = SPY's volatility over the next {R['horizon']} trading days is above the "
-        f"{R['quantile'] * 100:.0f}th percentile of the past year. "
-        f"{R['model'].replace('_', ' ').title()} model, "
-        "refit each month on labels already known, scored on 5 chronological folds with a "
-        f"{R['horizon']}-day gap. Grey = months that turned out stressed."
+        f"The regime model uses SPY, AGG and VIX history from **{features.index[0]:%b %Y}** "
+        f"(complete features from {features.dropna().index[0]:%b %Y}), much longer than the GCC "
+        f"ETF sample ({prices.index[0]:%b %Y} onwards), so it learns from the 2008 crisis and "
+        f"later episodes. First walk-forward prediction: {p.index[0]:%b %Y}. **'Stressed' is "
+        f"relative:** SPY's volatility over the next {R['horizon']} trading days is above the "
+        f"{R['quantile'] * 100:.0f}th percentile of its own past year, so the bar moves with "
+        "recent conditions. Plotted at month ends (the dates the strategies rebalance); grey = "
+        "months that turned out stressed. Unweighted logistic regression, so probabilities are "
+        f"on the scale of the actual rate: {pct(model_scores['mean_p'])} predicted on average vs "
+        f"{pct(base_rate)} actual."
     )
-    fold_table = folds[
-        [
-            "test_start",
-            "test_end",
-            "stressed_share",
-            "precision",
-            "recall",
-            "accuracy",
-            "baseline_accuracy",
+
+    st.markdown("**By fold, with two baselines**")
+    fold_rows = folds.assign(
+        when=folds["test_start"].dt.strftime("%b %Y")
+        + " – "
+        + folds["test_end"].dt.strftime("%b %Y")
+    )
+    all_rule = overall.loc["vol_rule"]
+    fold_rows.loc[len(fold_rows)] = {
+        "when": "All folds",
+        "stressed_share": base_rate,
+        "mean_p": model_scores["mean_p"],
+        "auc": model_scores["auc"],
+        "precision": model_scores["precision"],
+        "recall": model_scores["recall"],
+        "accuracy": model_scores["accuracy"],
+        "rule_precision": all_rule["precision"],
+        "rule_recall": all_rule["recall"],
+        "rule_accuracy": all_rule["accuracy"],
+        "baseline_accuracy": overall.loc["always_calm", "accuracy"],
+    }
+    fold_table = (
+        fold_rows[
+            [
+                "when",
+                "stressed_share",
+                "mean_p",
+                "auc",
+                "precision",
+                "recall",
+                "accuracy",
+                "rule_precision",
+                "rule_recall",
+                "rule_accuracy",
+                "baseline_accuracy",
+            ]
         ]
-    ].rename(
-        columns={
-            "test_start": "Test from",
-            "test_end": "Test to",
-            "stressed_share": "Stressed days",
-            "precision": "Precision",
-            "recall": "Recall",
-            "accuracy": "Accuracy",
-            "baseline_accuracy": "Always-calm accuracy",
-        }
+        .rename(
+            columns={
+                "when": "Test period",
+                "stressed_share": "Stressed days (actual)",
+                "mean_p": "Avg P(stressed)",
+                "auc": "Model ROC AUC",
+                "precision": "Model precision",
+                "recall": "Model recall",
+                "accuracy": "Model accuracy",
+                "rule_precision": "Vol-rule precision",
+                "rule_recall": "Vol-rule recall",
+                "rule_accuracy": "Vol-rule accuracy",
+                "baseline_accuracy": "Always-calm accuracy",
+            }
+        )
+        .set_index("Test period")
     )
-    fold_table[["Test from", "Test to"]] = fold_table[["Test from", "Test to"]].apply(
-        lambda col: col.dt.strftime("%d %b %Y")
+    st.table(style_columns(fold_table, {"Model ROC AUC": "{:.2f}"}))
+    st.caption(
+        "Vol rule = 'stressed if SPY's last-21-day volatility is already above its 80th "
+        "percentile' (no model). Always-calm = never flag stress."
     )
-    st.dataframe(style_percent(fold_table), width="stretch", hide_index=True)
 
 with tab_agent:
     st.subheader("AI analyst")

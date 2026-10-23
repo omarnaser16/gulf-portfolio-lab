@@ -240,3 +240,46 @@ def test_naive_signal_uses_only_the_past(market) -> None:
     t = 700
     truncated = naive_stress_signal(feats.iloc[: t + 1])
     pd.testing.assert_series_equal(truncated, base.iloc[: t + 1])
+
+
+# ---------------------------------------------------------------- calibration and scores
+
+
+@pytest.mark.parametrize("kind", ["logistic", "random_forest"])
+def test_probabilities_are_on_the_base_rate_scale(kind, separable) -> None:
+    """Without class weighting the average predicted P tracks the actual stressed rate
+    (with weighting it was ~2x too high)."""
+    x, y = separable
+    p = predict_regime(fit_model(x.iloc[:1000], y.iloc[:1000], model=kind), x.iloc[1000:])
+    assert p.mean() == pytest.approx(y.iloc[1000:].mean(), abs=0.04)
+
+
+def test_logistic_in_sample_mean_equals_base_rate(separable) -> None:
+    x, y = separable
+    p = predict_regime(fit_model(x, y), x)
+    assert p.mean() == pytest.approx(y.mean(), abs=0.005)
+
+
+def test_evaluate_model_scores_auc_and_calibration(separable) -> None:
+    x, y = separable
+    report = evaluate_model(x, y, n_splits=4)
+    folds, overall = report["folds"], report["overall"]
+    assert (folds["auc"] > 0.85).all()  # easy signal: ranks stressed days well
+    np.testing.assert_allclose(folds["mean_p"], folds["stressed_share"], atol=0.06)
+    assert list(overall.index) == ["model", "always_calm"]
+    assert overall.loc["model", "brier"] < overall.loc["model", "stressed_share"] * (
+        1 - overall.loc["model", "stressed_share"]
+    )  # beats always predicting the base rate
+    calm = overall.loc["always_calm"]
+    assert calm["recall"] == 0 and calm["auc"] == 0.5
+    assert calm["accuracy"] == pytest.approx(1 - calm["stressed_share"])
+
+
+def test_evaluate_model_scores_a_rule_baseline(separable) -> None:
+    x, y = separable
+    perfect = evaluate_model(x, y, n_splits=3, rule=y)  # a rule that is always right
+    assert (perfect["folds"][["rule_precision", "rule_recall", "rule_accuracy"]] == 1).all().all()
+    assert perfect["overall"].loc["vol_rule", "auc"] == 1.0
+    never = evaluate_model(x, y, n_splits=3, rule=y * 0)  # a rule that never fires
+    assert (never["folds"]["rule_recall"] == 0).all()
+    np.testing.assert_allclose(never["folds"]["rule_accuracy"], never["folds"]["baseline_accuracy"])
