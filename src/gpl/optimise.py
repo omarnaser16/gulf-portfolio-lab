@@ -248,13 +248,71 @@ def risk_contributions(weights: Weights, cov: pd.DataFrame) -> pd.Series:
     return pd.Series(w * marginal / (w @ marginal), index=cov.index)
 
 
-def risk_parity(cov: pd.DataFrame, tol: float = 1e-12, max_iter: int = 10_000) -> pd.Series:
-    """Long-only equal-risk-contribution portfolio.
+def _equal_risk_step(
+    sigma: np.ndarray, w: np.ndarray, free: np.ndarray, budget: float, tol: float, max_iter: int
+) -> np.ndarray:
+    """Coordinate descent for ``w_i * (S w)_i = budget`` on the ``free`` assets.
+
+    Holding the other weights fixed, each condition is a quadratic in ``w_i``,
+    ``var_i * w_i^2 + c_i * w_i - budget = 0`` with ``c_i = sum_{j != i} S_ij w_j``,
+    whose positive root has a closed form. Sweep the free assets until nothing moves.
+    """
+    variances = np.diag(sigma)
+    w = w.copy()
+    for _ in range(max_iter):
+        w_previous = w.copy()
+        for i in np.flatnonzero(free):
+            c = sigma[i] @ w - variances[i] * w[i]
+            w[i] = (-c + np.sqrt(c * c + 4 * variances[i] * budget)) / (2 * variances[i])
+        if np.max(np.abs(w - w_previous)) <= tol * np.max(np.abs(w)):
+            return w
+    raise ValueError(f"risk parity did not converge in {max_iter} iterations")
+
+
+def _capped_equal_risk(
+    sigma: np.ndarray, capped: np.ndarray, max_weight: float, tol: float, max_iter: int
+) -> np.ndarray:
+    """Capped assets fixed at ``max_weight``; the rest get equal risk contributions.
+
+    The free weights solve ``w_i * (S w)_i = lam``. Their total rises with ``lam``, so a
+    bisection on ``lam`` finds the value at which all weights sum to 1.
+    """
+    free = ~capped
+    target = 1 - max_weight * capped.sum()
+    w = np.where(capped, max_weight, target / free.sum())
+
+    def free_total(lam: float) -> tuple[float, np.ndarray]:
+        solved = _equal_risk_step(sigma, w, free, lam, tol, max_iter)
+        return solved[free].sum(), solved
+
+    lo, hi = 0.0, float(np.max(np.diag(sigma)))
+    while free_total(hi)[0] < target:
+        hi *= 2
+    if free_total(lo)[0] > target:
+        raise ValueError("no capped risk parity solution: hedging assets exceed the budget")
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        total, w = free_total(mid)
+        if abs(total - target) <= 1e-13:
+            break
+        lo, hi = (mid, hi) if total < target else (lo, mid)
+    return w / w.sum()
+
+
+def risk_parity(
+    cov: pd.DataFrame,
+    max_weight: float = DEFAULT_MAX_WEIGHT,
+    tol: float = 1e-12,
+    max_iter: int = 10_000,
+) -> pd.Series:
+    """Long-only equal-risk-contribution portfolio, with a cap on each weight.
 
     Parameters
     ----------
     cov : pd.DataFrame
         Covariance matrix.
+    max_weight : float, default 0.40
+        Upper bound on each weight.
     tol : float, default 1e-12
         Convergence tolerance on the relative change in weights.
     max_iter : int, default 10000
@@ -263,25 +321,31 @@ def risk_parity(cov: pd.DataFrame, tol: float = 1e-12, max_iter: int = 10_000) -
     Returns
     -------
     pd.Series
-        Weights indexed by ticker such that every asset's risk contribution is
-        ``1 / n_assets``.
+        Weights indexed by ticker. If no weight exceeds ``max_weight``, every asset's
+        risk contribution is ``1 / n_assets``. Otherwise assets that would exceed the
+        cap are held at it (their risk contribution is then *below* the others') and the
+        remaining assets share equal risk contributions.
+
+    Raises
+    ------
+    ValueError
+        If an asset has zero variance, the cap is infeasible, or the solver fails.
     """
     sigma = cov.to_numpy(dtype=float)
     n = len(cov)
     variances = np.diag(sigma)
     if (variances <= 0).any():
         raise ValueError("risk parity needs every asset to have positive variance")
+    _check_feasible(n, max_weight)
 
-    # Equal risk contributions solve, for every i:  y_i * (S y)_i = 1/n  (then rescale y).
-    # Cyclical coordinate descent: holding the others fixed, that is a quadratic in y_i,
-    #   var_i * y_i^2 + c_i * y_i - 1/n = 0,   c_i = sum_{j != i} S_ij y_j,
-    # whose positive root has a closed form. Repeat over all assets until nothing moves.
-    y = 1 / np.sqrt(variances)  # inverse-vol start: exact when assets are uncorrelated
-    for _ in range(max_iter):
-        y_previous = y.copy()
-        for i in range(n):
-            c = sigma[i] @ y - variances[i] * y[i]
-            y[i] = (-c + np.sqrt(c * c + 4 * variances[i] / n)) / (2 * variances[i])
-        if np.max(np.abs(y - y_previous)) <= tol * np.max(np.abs(y)):
-            return pd.Series(y / y.sum(), index=cov.index)
-    raise ValueError(f"risk parity did not converge in {max_iter} iterations")
+    # Uncapped: solve y_i * (S y)_i = 1/n for all i, then rescale (scaling keeps RCs equal).
+    y0 = 1 / np.sqrt(variances)  # inverse-vol start: exact when assets are uncorrelated
+    y = _equal_risk_step(sigma, y0, np.ones(n, dtype=bool), 1 / n, tol, max_iter)
+    w = y / y.sum()
+
+    # Cap: hold offenders at max_weight and re-solve the rest; repeat while anyone breaches.
+    capped = np.zeros(n, dtype=bool)
+    while (w > max_weight + 1e-10).any():
+        capped |= w > max_weight + 1e-10
+        w = _capped_equal_risk(sigma, capped, max_weight, tol, max_iter)
+    return pd.Series(w, index=cov.index)

@@ -218,10 +218,10 @@ def max_sharpe_strategy(rf: float | pd.Series = 0.0, max_weight: float = 0.40) -
     return strategy
 
 
-def risk_parity_strategy() -> Strategy:
+def risk_parity_strategy(max_weight: float = 0.40) -> Strategy:
     """Build a strategy that rebalances to ``optimise.risk_parity`` on the window."""
 
     def strategy(window: pd.DataFrame) -> pd.Series:
-        return risk_parity(window.cov() * PERIODS_PER_YEAR)
+        return risk_parity(window.cov() * PERIODS_PER_YEAR, max_weight)
 
     return strategy

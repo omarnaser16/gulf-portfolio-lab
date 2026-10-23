@@ -53,3 +53,14 @@
   notebook and actually look at the charts.
 - **Week 1 status:** 125 tests passing. "Done when" is met apart from me viewing the charts.
 - **Next:** answer the quizzes, decide on capped risk parity, then Week 2 (regime model + dashboard).
+
+## Week 1 follow-up — 2026-10-23 · cap, fixed dates, Jupyter
+- **Changed:** risk parity is now capped at 40% (capped assets sit at the cap, the rest share risk equally).
+  The config end date is fixed at 2026-09-30 so results don't move daily. Jupyter is a dev dependency and
+  the notebook runs with nbconvert.
+- **Bug found:** `get_prices` treated `end` as exclusive (yfinance's rule), while the docs said inclusive.
+  Fixed and tested. Without the fix the data would have stopped on 29 Sep.
+- **Learned:** the cap only bit in 9 of 120 months (AGG, 2018–19) and moved risk parity's Sharpe by 0.0003.
+  Most of the small changes in the results came from moving the end date (dropping 3 weeks of data), not
+  from the cap. Rankings and max drawdowns didn't change.
+- **Next:** look at the charts in Jupyter, answer the quizzes, then Week 2.

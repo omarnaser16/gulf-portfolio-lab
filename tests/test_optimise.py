@@ -182,18 +182,59 @@ def test_risk_parity_uncorrelated_is_inverse_vol(cov3) -> None:
 
 
 def test_risk_parity_equalises_risk_when_correlated(cov_corr) -> None:
-    w = risk_parity(cov_corr)
+    w = risk_parity(cov_corr, max_weight=1.0)
     assert w.sum() == pytest.approx(1.0)
     assert (w > 0).all()
     np.testing.assert_allclose(risk_contributions(w, cov_corr).to_numpy(), 1 / 3, atol=1e-6)
 
 
 def test_risk_parity_gives_low_vol_asset_more_weight(cov_corr) -> None:
-    w = risk_parity(cov_corr)
+    w = risk_parity(cov_corr, max_weight=1.0)
     assert w["C"] > w["B"] > w["A"]  # vols 5% < 15% < 20%
 
 
 def test_risk_parity_rejects_zero_variance() -> None:
     cov = pd.DataFrame(np.diag([0.04, 0.0]), index=["A", "B"], columns=["A", "B"])
+    with pytest.raises(ValueError, match="variance"):
+        risk_parity(cov, max_weight=1.0)
+
+
+@pytest.fixture
+def cov_one_safe() -> pd.DataFrame:
+    """Uncorrelated: A has 5% vol, B, C, D have 20%. Uncapped risk parity is
+    1/vol = 20, 5, 5, 5 -> A = 20/35 = 57%, above the 40% cap."""
+    tickers = ["A", "B", "C", "D"]
+    return pd.DataFrame(np.diag([0.0025, 0.04, 0.04, 0.04]), index=tickers, columns=tickers)
+
+
+def test_risk_parity_uncapped_breaches_40pct(cov_one_safe) -> None:
+    w = risk_parity(cov_one_safe, max_weight=1.0)
+    assert w["A"] == pytest.approx(20 / 35)
+
+
+def test_risk_parity_cap_hand_values(cov_one_safe) -> None:
+    # A is held at 40%; B, C, D are identical so they split the remaining 60% equally
+    w = risk_parity(cov_one_safe, max_weight=0.40)
+    np.testing.assert_allclose(w.to_numpy(), [0.4, 0.2, 0.2, 0.2], atol=1e-9)
+    rc = risk_contributions(w, cov_one_safe)
+    assert rc["A"] < rc["B"]  # the capped asset carries less risk than the others
+
+
+def test_risk_parity_cap_with_correlation(cov_corr) -> None:
+    uncapped = risk_parity(cov_corr, max_weight=1.0)
+    assert uncapped.max() > 0.6  # C (5% vol) wants most of the portfolio
+    w = risk_parity(cov_corr, max_weight=0.6)
+    assert w.sum() == pytest.approx(1.0)
+    assert w.max() == pytest.approx(0.6)
+    rc = risk_contributions(w, cov_corr)
+    assert rc["A"] == pytest.approx(rc["B"], rel=1e-8)  # uncapped assets still equal
+    assert rc["C"] < rc["A"]
+
+
+def test_risk_parity_cap_not_binding_is_unchanged(cov_corr) -> None:
+    pd.testing.assert_series_equal(risk_parity(cov_corr, 1.0), risk_parity(cov_corr, 0.99))
+
+
+def test_risk_parity_infeasible_cap_raises(cov3) -> None:
     with pytest.raises(ValueError):
-        risk_parity(cov)
+        risk_parity(cov3, max_weight=0.30)

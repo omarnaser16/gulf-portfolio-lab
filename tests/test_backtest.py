@@ -145,6 +145,7 @@ def test_optimised_strategies_give_valid_weights(make, random_returns: pd.DataFr
     assert w.sum() == pytest.approx(1.0)
     assert (w >= 0).all()
     assert list(w.index) == ["A", "B", "C"]
+    assert (w <= 0.40 + 1e-9).all()  # every strategy respects the default 40% cap
 
 
 def test_min_variance_strategy_favours_low_vol(random_returns: pd.DataFrame) -> None:

@@ -18,7 +18,7 @@ benchmarks:
 
 defaults:
   start: "2015-01-01"
-  end: null                        # null = up to the latest available date
+  end: "2026-09-30"                # fixed (inclusive) so results are reproducible
   periods_per_year: 252
   risk_free_fallback: 0.0          # annual rate used if ^IRX is unavailable
   max_weight: 0.40

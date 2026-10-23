@@ -45,7 +45,8 @@ def get_prices(
     start : str or datetime.date
         First date to include (inclusive), e.g. ``"2015-01-01"``.
     end : str or datetime.date, optional
-        Last date to include. ``None`` means up to the latest available date.
+        Last date to include (inclusive, unlike yfinance). ``None`` means up to the
+        latest available date.
     use_cache : bool, default True
         If True, read from and write to parquet files in ``cache_dir`` so that repeated
         calls do not hit the network.
@@ -73,7 +74,9 @@ def get_prices(
         logger.info("Loaded %s from cache", cache_path.name)
         return pd.read_parquet(cache_path)
 
-    raw = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)
+    # yfinance's end is exclusive; ours is inclusive, so ask for one extra day.
+    yf_end = None if end is None else pd.Timestamp(end) + pd.Timedelta(days=1)
+    raw = yf.download(tickers, start=start, end=yf_end, auto_adjust=True, progress=False)
     if raw is None or raw.empty:
         raise ValueError(f"yfinance returned no data for {tickers} from {start} to {end}")
 

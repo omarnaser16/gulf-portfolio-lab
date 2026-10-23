@@ -205,3 +205,9 @@ def test_load_universe_default_config() -> None:
     assert config["assets"] == ["KSA", "UAE", "QAT", "SPY", "EFA", "EEM", "AGG", "TLT", "GLD"]
     assert config["defaults"]["max_weight"] == 0.40
     assert config["non_assets"]["risk_free"] == "^IRX"
+
+
+def test_get_prices_end_date_is_inclusive(fake_yf, tmp_path) -> None:
+    # yfinance treats end as exclusive; our API promises "last date to include"
+    out = get_prices(["A", "B"], start="2024-01-01", end="2024-01-05", cache_dir=tmp_path)
+    assert out.index[-1] == pd.Timestamp("2024-01-05")
