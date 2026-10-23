@@ -1,4 +1,4 @@
-"""Synthetic price fixtures small enough to check by hand in Excel.
+"""Synthetic fixtures: price tables small enough to check by hand, and an agent context.
 
 ``prices_small`` (10 business days, 2-12 Jan 2024)::
 
@@ -21,6 +21,12 @@ Total return over the period: A = 106/100 - 1 = 0.06, B = 52.5/50 - 1 = 0.05.
 import numpy as np
 import pandas as pd
 import pytest
+
+from gpl import regime as rg
+from gpl.agent.tools import AnalystContext
+from gpl.data import load_universe
+
+CFG = load_universe()
 
 DATES_10 = pd.bdate_range("2024-01-01", periods=10)
 DATES_12 = pd.bdate_range("2024-01-01", periods=12)
@@ -153,4 +159,39 @@ def returns_small() -> pd.Series:
     """
     return pd.Series(
         [0.01, -0.02, 0.03, 0.00], index=pd.bdate_range("2024-01-02", periods=4), name="X"
+    )
+
+
+# ------------------------------------------------------------------- shared agent context
+
+
+@pytest.fixture(scope="session")
+def ctx() -> AnalystContext:
+    """Synthetic 9-ETF universe over ~6 years, plus synthetic regime data."""
+    idx = pd.bdate_range("2015-01-01", periods=1600)
+    rng = np.random.default_rng(11)
+    vols = np.linspace(0.004, 0.015, len(CFG["assets"]))
+    stress = 1 + 2 * (np.sin(np.arange(len(idx)) / 40) > 0.85)  # a stress spell every ~250 days
+    rets = rng.normal(0.0003, vols, size=(len(idx), len(vols))) * stress[:, None]
+    prices = pd.DataFrame(100 * np.cumprod(1 + rets, axis=0), index=idx, columns=CFG["assets"])
+    vix = pd.Series(
+        15 + 300 * pd.Series(rets[:, 3]).rolling(10, min_periods=1).std().to_numpy(), index=idx
+    )
+    settings = {
+        "max_weight": 0.40,
+        "cost_bps": 10.0,
+        "lookback": 126,
+        "rebalance": "ME",
+        "var_level": 0.95,
+        "regime": {**CFG["regime"], "min_train": 300},
+        "montecarlo": CFG["montecarlo"],
+    }
+    return AnalystContext(
+        prices=prices,
+        rf=pd.Series((1.02) ** (1 / 252) - 1, index=idx),
+        groups=CFG["groups"],
+        benchmarks=CFG["benchmarks"],
+        regime_features=rg.make_features(prices, vix),
+        regime_labels=rg.make_labels(prices["SPY"].pct_change().iloc[1:]),
+        settings=settings,
     )

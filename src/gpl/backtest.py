@@ -272,14 +272,16 @@ def spec_strategy(
     spec: OptimisationSpec,
     rf: float | pd.Series = 0.0,
     periods_per_year: int = PERIODS_PER_YEAR,
+    fallback: Mapping[str, float] | None = None,
 ) -> Strategy:
     """Re-optimise ``spec`` each rebalance on the trailing window only (walk-forward).
 
     If the constraints can't be met on a window, the previous weights are kept (that month
-    is recorded in ``strategy.infeasible_dates``); if they can't be met on the first window,
-    ``ValueError`` explains why.
+    is recorded in ``strategy.infeasible_dates``). Before the first window where they can be
+    met, ``fallback`` weights (e.g. the user's current portfolio) are held; without a
+    fallback, an infeasible first window raises ``ValueError`` explaining why.
     """
-    state: dict = {"last": None}
+    state: dict = {"last": None if fallback is None else pd.Series(fallback, dtype=float)}
 
     def strategy(window: pd.DataFrame) -> pd.Series:
         mu = window.mean() * periods_per_year

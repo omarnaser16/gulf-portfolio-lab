@@ -11,6 +11,7 @@ from gpl.plots import (
     equity_chart,
     fan_chart,
     frontier_chart,
+    paired_bars_chart,
     regime_chart,
     risk_contribution_chart,
     weights_chart,
@@ -109,3 +110,12 @@ def test_allocation_chart_groups_small_slices() -> None:
     assert len(labels) == 8 and labels[-1] == "Others (3)"
     assert fig.data[0].values[-1] == pytest.approx(0.10)
     assert list(allocation_chart(pd.Series({"A": 0.6, "B": 0.4})).data[0].labels) == ["A", "B"]
+
+
+def test_paired_bars_chart_current_vs_optimised() -> None:
+    now = pd.Series({"SPY": 0.5, "AGG": 0.5})
+    new = pd.Series({"SPY": 0.25, "AGG": 0.6, "KSA": 0.15})
+    fig = paired_bars_chart(now, new, ("Current", "Optimised"), "Weights")
+    assert [t.name for t in fig.data] == ["Current", "Optimised"]
+    assert list(fig.data[0].y) == ["KSA", "SPY", "AGG"]  # ordered by optimised weight
+    np.testing.assert_allclose(fig.data[0].x, [0.0, 0.5, 0.5])  # KSA not held now: 0

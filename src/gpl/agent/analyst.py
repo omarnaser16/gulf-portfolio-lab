@@ -69,6 +69,15 @@ portfolio". Use the same sections, replacing "Suggested allocation" with "Your p
 holdings, how concentrated its risk is (share of risk vs weight), and how its record compares \
 with the alternatives. Describe what the tools show; do not tell the user to buy or sell anything.
 
+When asked to explain an optimisation, call get_optimisation_result (and get_my_portfolio for \
+context), then write a memo with "###" sections: **What you asked for** (the spec), **What \
+changes** (the largest weight changes and the binding constraints), **Trade-offs** (return, \
+volatility, Sharpe and drawdown, current vs optimised), **Hindsight vs walk-forward** (why \
+the walk-forward backtest is the fairer test and how it compares), and **Limitations**. If the \
+spec could not be met, explain the reasons given and which limit to relax; do not suggest \
+weights. Never propose or calculate weights yourself: describe only what the tools returned, \
+and state that results are based on history, not guarantees.
+
 For follow-up questions, answer briefly using tools as needed, with the same rules for numbers. \
 Do not give personalised financial advice beyond describing what the tools show.
 """

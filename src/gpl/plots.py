@@ -299,19 +299,21 @@ def regime_chart(
     return fig
 
 
-def risk_contribution_chart(
-    weights: pd.Series, contributions: pd.Series, title: str = "Share of money vs share of risk"
+def paired_bars_chart(
+    first: pd.Series,
+    second: pd.Series,
+    names: tuple[str, str],
+    title: str,
+    sort_by_second: bool = True,
 ) -> go.Figure:
-    """Horizontal bars per holding: its weight and its share of portfolio risk."""
-    order = contributions.sort_values().index
+    """Horizontal bar pairs per item (e.g. weight vs share of risk, current vs optimised)."""
+    order = (second if sort_by_second else first).sort_values().index
     fig = go.Figure()
-    for color, (name, values) in zip(
-        SERIES_COLORS, [("Weight", weights), ("Share of risk", contributions)], strict=False
-    ):
+    for color, name, values in zip(SERIES_COLORS, names, (first, second), strict=False):
         fig.add_trace(
             go.Bar(
                 y=list(order),
-                x=values.reindex(order),
+                x=values.reindex(order).fillna(0.0),
                 name=name,
                 orientation="h",
                 marker={"color": color, "line": {"color": SURFACE, "width": 2}},
@@ -323,6 +325,13 @@ def risk_contribution_chart(
     fig.update_xaxes(tickformat=PCT, gridcolor=GRID)
     fig.update_yaxes(tickformat="")
     return fig
+
+
+def risk_contribution_chart(
+    weights: pd.Series, contributions: pd.Series, title: str = "Share of money vs share of risk"
+) -> go.Figure:
+    """Horizontal bars per holding: its weight and its share of portfolio risk."""
+    return paired_bars_chart(weights, contributions, ("Weight", "Share of risk"), title)
 
 
 def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure:

@@ -17,7 +17,7 @@ import pandas as pd
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.data import clean_prices, get_prices, get_risk_free, load_assets, to_returns
-from gpl.metrics import PERIODS_PER_YEAR, summary_table
+from gpl.metrics import PERIODS_PER_YEAR, max_drawdown, summary_table
 from gpl.montecarlo import (
     goal_probability,
     path_max_drawdowns,
@@ -26,8 +26,10 @@ from gpl.montecarlo import (
     to_real,
 )
 from gpl.optimise import (
+    OptimisationSpec,
     max_sharpe,
     min_variance,
+    optimise,
     portfolio_performance,
     risk_contributions,
     risk_parity,
@@ -68,6 +70,7 @@ class AnalystContext:
     universe: Sequence[str] | None = None  # strategy universe; None = every loaded column
     user_portfolio: Mapping[str, float] | None = None  # ticker -> weight (sums to 1)
     asset_notes: pd.DataFrame | None = None  # data.load_assets history (currency, start date)
+    optimisation: dict | None = None  # latest run_optimisation report (set by the app)
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -409,6 +412,131 @@ def get_my_portfolio(ctx: AnalystContext) -> dict:
     }
 
 
+def run_optimisation(
+    ctx: AnalystContext, spec: OptimisationSpec, current: Mapping[str, float]
+) -> tuple[dict, pd.Series | None]:
+    """Optimise the user's holdings for ``spec`` and compare with their current weights.
+
+    Every number comes from gpl functions: ``optimise`` (full-sample estimates), the
+    backtester for after-cost results (current weights, optimised weights held fixed, the
+    spec re-optimised monthly on past data only, and 60/40), and ``max_drawdown``.
+
+    Returns the report (formatted, JSON-serialisable; also what the analyst sees) and the
+    optimised weights (None if the spec can't be met).
+    """
+    from gpl.agent.spec import describe_spec
+
+    holdings = list(current)
+    rets = ctx.all_returns[holdings]
+    mu, cov = rets.mean() * ctx.periods, rets.cov() * ctx.periods
+    rf_daily = ctx.rf.loc[rets.index[0] :]
+    rf_annual = float((1 + rf_daily).prod() ** (PERIODS_PER_YEAR / len(rf_daily)) - 1)
+    result = optimise(mu, cov, spec, rf_annual)
+    w_now = pd.Series(current, dtype=float)
+
+    def in_sample(w: pd.Series) -> dict:
+        ret, vol = portfolio_performance(w, mu, cov)
+        return {
+            "expected_return": pct(ret),
+            "volatility": pct(vol),
+            "sharpe": num((ret - rf_annual) / vol) if vol > 0 else "n/a",
+            "max_drawdown": pct(max_drawdown(rets @ w.reindex(holdings).fillna(0))),
+        }
+
+    report: dict[str, Any] = {
+        "spec": describe_spec(spec),
+        "feasible": result.feasible,
+        "reasons_if_not_feasible": result.reasons,
+        "estimation_sample": f"{rets.index[0].date()} to {rets.index[-1].date()}",
+        "why_this_sample": "It is the common history of your holdings: it starts when the most "
+        "recently listed holding's data starts. This is expected, not a data problem.",
+        "in_sample_historical": {"Current": in_sample(w_now)},
+        "binding_constraints": result.binding,
+    }
+    if result.feasible:
+        w_opt = result.weights
+        report["weights"] = {
+            t: {
+                "current": pct(w_now.get(t, 0.0)),
+                "optimised": pct(w_opt[t]),
+                "change": f"{(w_opt[t] - w_now.get(t, 0.0)) * 100:+.2f} pp",
+            }
+            for t in holdings
+        }
+        report["in_sample_historical"]["Optimised"] = in_sample(w_opt)
+
+    run = dict(
+        rebalance=ctx.settings["rebalance"],
+        lookback=ctx.settings["lookback"],
+        cost_bps=ctx.settings["cost_bps"],
+    )
+    results, notes = {}, []
+    try:
+        results["Current"] = bt.run_backtest(ctx.prices, bt.fixed_weights(current), **run)
+        if result.feasible:
+            results["Optimised (hindsight)"] = bt.run_backtest(
+                ctx.prices, bt.fixed_weights(result.weights.to_dict()), **run
+            )
+            walk = bt.spec_strategy(spec, rf=ctx.rf, periods_per_year=ctx.periods, fallback=current)
+            try:
+                results["Optimised (walk-forward)"] = bt.run_backtest(
+                    ctx.prices[holdings], walk, **run
+                )
+                if walk.infeasible_dates:
+                    months = len(walk.infeasible_dates)
+                    total = len(results["Optimised (hindsight)"].weights)
+                    notes.append(
+                        f"Walk-forward: the limits couldn't be met with the data available in "
+                        f"{months} of {total} months (first: {walk.infeasible_dates[0].date()}). "
+                        "In those months the previous weights were kept, or your current weights "
+                        "before the first month the limits could be met."
+                    )
+            except ValueError as e:
+                notes.append(f"Walk-forward not available: {e}")
+        if {"SPY", "AGG"} <= set(ctx.prices.columns):
+            results["60/40 (SPY/AGG)"] = ctx.backtest("60/40 (SPY/AGG)")
+    except ValueError as e:
+        notes.append(f"Backtests not available: {e}")
+    if results:
+        frame = pd.DataFrame({n: r.returns for n, r in results.items()})
+        rows = _metrics_rows(
+            summary_table(
+                frame, rf=ctx.rf, level=ctx.settings["var_level"], periods_per_year=ctx.periods
+            )
+        )
+        for n, r in results.items():
+            rows[n]["turnover_per_year"] = times(r.turnover.iloc[1:].mean() * 12)
+        first = next(iter(results.values())).equity.index
+        report["backtests_after_costs"] = {
+            n: {
+                k: rows[n][k]
+                for k in (
+                    "cagr",
+                    "annual_volatility",
+                    "sharpe",
+                    "max_drawdown",
+                    "turnover_per_year",
+                )
+            }
+            for n in results
+        }
+        report["backtest_period"] = f"{first[0].date()} to {first[-1].date()}"
+    report["notes"] = notes
+    report["caveats"] = (
+        "In-sample figures and the 'hindsight' backtest use the same history the weights were "
+        "fitted on, so they flatter the optimised portfolio. The walk-forward backtest "
+        "re-optimises each month using only data available at the time and is the fairer test. "
+        "All results are based on history and are not a guarantee of future returns."
+    )
+    return report, (result.weights if result.feasible else None)
+
+
+def get_optimisation_result(ctx: AnalystContext) -> dict:
+    if not ctx.optimisation:
+        raise ToolError("no optimisation has been run yet on the Portfolio tab")
+    return ctx.optimisation
+
+
 def get_regime_view(ctx: AnalystContext) -> dict:
     r = ctx.settings["regime"]
     p = ctx.p_stressed().dropna()
@@ -523,6 +651,13 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "get_optimisation_result",
+            "The optimisation the user confirmed on the Portfolio tab: the spec in plain words, "
+            "whether it could be met (and why not), current vs optimised weights, historical "
+            "and after-cost backtest comparisons (hindsight and walk-forward) and caveats.",
+            {},
+        ),
+        tool(
             "get_regime_view",
             "Latest probability that next month is a stressed market, the model's out-of-sample "
             "track record vs a simple volatility rule, and caveats.",
@@ -538,6 +673,7 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "backtest_strategies": backtest_strategies,
     "simulate_future": simulate_future,
     "get_my_portfolio": get_my_portfolio,
+    "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
 }
 

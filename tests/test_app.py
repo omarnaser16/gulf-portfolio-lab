@@ -5,6 +5,7 @@ import re
 import sys
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -508,3 +509,129 @@ def test_analyst_writes_a_memo_about_my_portfolio(analyst_app) -> None:
         "My portfolio"
         in tools["backtest_strategies"]["input_schema"]["properties"]["strategies"]["items"]["enum"]
     )
+
+
+# ---------------------------------------------------------------------------------- Optimise
+
+GOALS_TEXT = "max 15% vol, at least 15% GCC, no single asset over 45%, maximise Sharpe"
+
+
+def _spec_call(**overrides) -> SimpleNamespace:
+    draft = {
+        "objective": "max_sharpe",
+        "max_weight_pct": 45,
+        "asset_limits": [],
+        "group_limits": [{"group": "GCC", "min_pct": 15, "max_pct": None}],
+        "max_volatility_pct": 15,
+        "min_return_pct": None,
+        "unmapped_requests": [],
+        "summary": "Maximise Sharpe; volatility at most 15%; at least 15% GCC; max 45% per asset.",
+    }
+    return tool_use("s1", "propose_spec", {**draft, **overrides})
+
+
+@pytest.fixture
+def optimise_app(monkeypatch, tmp_path):
+    def make(script: list) -> tuple[AppTest, FakeClient]:
+        client = FakeClient(script)
+        monkeypatch.setattr(yf, "download", synthetic_download)
+        monkeypatch.setattr(yf, "Ticker", FakeTicker)
+        monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(agent, "has_credentials", lambda: True)
+        monkeypatch.setattr(agent, "make_client", lambda: client)
+        st.cache_data.clear()
+        at = AppTest.from_file(APP, default_timeout=240)
+        at.run()
+        return at, client
+
+    return make
+
+
+def _results(at: AppTest) -> dict[str, pd.DataFrame]:
+    out = {}
+    for t in at.table:
+        cols = set(t.value.columns)
+        if {"Current", "Optimised", "Change"} <= cols:
+            out["weights"] = t.value
+        elif "Turnover / yr" in cols and "Optimised (hindsight)" in t.value.index:
+            out["backtests"] = t.value
+    return out
+
+
+def test_set_limits_myself_and_run(optimise_app) -> None:
+    at, client = optimise_app([])
+    at.button(key="ws_manual").click().run()
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    results = _results(at)
+    assert list(results["weights"].index) == ["SPY", "AGG", "GLD", "KSA"]
+    assert set(results["backtests"].index) >= {
+        "Current",
+        "Optimised (hindsight)",
+        "Optimised (walk-forward)",
+        "60/40 (SPY/AGG)",
+    }
+    assert any("based on history and are not a guarantee" in i.value for i in at.info)
+    assert client.requests == []  # no AI involved on the manual path
+
+
+def test_ai_turns_goals_into_a_spec_the_user_confirms(optimise_app) -> None:
+    at, client = optimise_app([response([_spec_call(min_return_pct=7)], "tool_use")])
+    at.text_area(key="ws_goals").set_value(GOALS_TEXT)
+    at.button(key="ws_interpret").click().run()
+    assert not at.exception, at.exception
+    assert any("The AI understood" in i.value for i in at.info)
+    assert any("not in your text" in w.value and "7%" in w.value for w in at.warning)
+    plan = next(m.value for m in at.markdown if m.value.startswith("You are about to optimise for"))
+    assert "Group GCC: at least 15.00%" in plan and "Volatility at most 15.00% a year" in plan
+    assert not _results(at)  # nothing runs until the user presses Run
+    at.button(key="ws_run_opt").click().run()
+    weights = _results(at)["weights"]
+    gcc = float(weights.loc["KSA", "Optimised"].rstrip("%"))
+    assert gcc >= 15.0 - 1e-6  # KSA is the only GCC holding
+    assert all(float(v.rstrip("%")) <= 45.0 + 1e-6 for v in weights["Optimised"])
+
+
+def test_impossible_limits_are_explained_without_weights(optimise_app) -> None:
+    impossible = _spec_call(
+        max_weight_pct=20,
+        group_limits=[{"group": "GCC", "min_pct": 90, "max_pct": None}],
+        max_volatility_pct=None,
+    )
+    at, _ = optimise_app([response([impossible], "tool_use")])
+    at.text_area(key="ws_goals").set_value("at least 90% GCC, no asset over 20%")
+    at.button(key="ws_interpret").click().run()
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    error = " ".join(e.value for e in at.error)
+    assert "can't all be met" in error and "Group 'GCC' needs at least 90.00%" in error
+    assert "weights" not in _results(at)
+
+
+def test_optimisation_memo_uses_the_stored_result(optimise_app) -> None:
+    at, client = optimise_app(
+        [
+            response([_spec_call()], "tool_use"),
+            response([tool_use("t1", "get_optimisation_result", {})], "tool_use"),
+            response(
+                [text("### What changes\\nThe optimiser moved weight toward bonds.")], "end_turn"
+            ),
+        ]
+    )
+    at.text_area(key="ws_goals").set_value(GOALS_TEXT)
+    at.button(key="ws_interpret").click().run()
+    at.button(key="ws_run_opt").click().run()
+    at.button(key="ws_opt_memo").click().run()
+    assert not at.exception, at.exception
+    memo_request = client.requests[1]
+    assert "get_optimisation_result" in [t["name"] for t in memo_request["tools"]]
+    tool_result = client.requests[2]["messages"][-1]["content"][0]
+    assert '"feasible": true' in tool_result["content"]
+    assert any("moved weight toward bonds" in m.value for m in at.markdown)
+
+
+def test_interpret_with_empty_goals_explains(optimise_app) -> None:
+    at, client = optimise_app([])
+    at.button(key="ws_interpret").click().run()
+    assert any("Describe your goals first" in w.value for w in at.warning)
+    assert client.requests == []

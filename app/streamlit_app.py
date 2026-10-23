@@ -21,7 +21,8 @@ from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
-from gpl.agent.tools import AnalystContext
+from gpl.agent.spec import describe_spec, propose_spec, spec_from_draft
+from gpl.agent.tools import AnalystContext, run_optimisation
 from gpl.data import (
     AssetData,
     DataUnavailable,
@@ -56,6 +57,7 @@ from gpl.plots import (
     equity_chart,
     fan_chart,
     frontier_chart,
+    paired_bars_chart,
     regime_chart,
     risk_contribution_chart,
     weights_chart,
@@ -415,6 +417,336 @@ SHORT_SAMPLE = (
     "date, or choose a shorter estimation window in the sidebar."
 )
 
+A = CFG["agent"]
+settings_key = (tickers, loaded, start, end, day, max_weight, cost_bps, lookback, my_key)
+
+
+def shared_context() -> AnalystContext:
+    """One agent context per settings, shared by the Analyst tab and the optimiser."""
+    if st.session_state.get("ctx_key") != settings_key:
+        regime_data = load_regime(end, day)
+        ctx = AnalystContext(
+            prices=data.prices,
+            rf=rf,
+            groups=CFG["groups"],
+            benchmarks=CFG["benchmarks"],
+            regime_features=regime_data["features"],
+            regime_labels=regime_data["labels"],
+            settings={
+                "max_weight": max_weight,
+                "cost_bps": cost_bps,
+                "lookback": lookback,
+                "periods_per_year": periods,
+                "rebalance": D["rebalance"],
+                "var_level": D["var_level"],
+                "regime": R,
+                "montecarlo": MC,
+            },
+            universe=universe,
+            user_portfolio=my_weights if portfolio_ok else None,
+            asset_notes=data.history,
+        )
+        ctx._cache["p_stressed"] = regime_data["p_stressed"]  # already computed
+        st.session_state.ctx = ctx
+        st.session_state.ctx_key = settings_key
+        st.session_state.pop("ws_opt", None)  # an optimisation belongs to the old holdings
+    return st.session_state.ctx
+
+
+def ask_analyst(analyst: agent.Analyst, question: str) -> dict:
+    """One question to the analyst; returns a chat turn (the reply, or a readable error)."""
+    try:
+        with st.spinner("The analyst is calling tools and writing…"):
+            return {"role": "assistant", "reply": analyst.ask(question)}
+    except anthropic.AuthenticationError:
+        return {"role": "error", "text": "The API key was rejected."}
+    except anthropic.RateLimitError:
+        return {"role": "error", "text": "Rate limited; try again in a minute."}
+    except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
+        return {"role": "error", "text": f"API error: {e}"}
+
+
+def render_reply(reply: agent.AnalystReply) -> None:
+    """Memo text, unverified-number warning, cost line and audit trail."""
+    st.markdown(reply.text)
+    if reply.unverified:
+        st.warning(
+            "These figures did not come from any tool result, so treat them with suspicion: "
+            + ", ".join(f"`{n}`" for n in reply.unverified)
+        )
+    cost = agent.estimate_cost(reply, A["price_per_mtok"])
+    st.caption(
+        f"{len(reply.tool_calls)} tool calls · {reply.input_tokens:,} input + "
+        f"{reply.output_tokens:,} output tokens · about ${cost:.4f}"
+    )
+    with st.expander(f"Audit trail: {len(reply.tool_calls)} tool calls"):
+        for call in reply.tool_calls:
+            st.markdown(
+                f"**`{call.name}`**({json.dumps(call.input)})"
+                + (" ⚠️ error" if call.is_error else "")
+            )
+            st.json(call.output, expanded=False)
+
+
+OBJECTIVE_NAMES = {
+    "max_sharpe": "Maximise Sharpe ratio",
+    "min_variance": "Minimise volatility",
+    "max_return": "Maximise return",
+    "target_volatility": "Highest return for a volatility cap",
+    "target_return": "Lowest volatility for a return floor",
+}
+BLANK_DRAFT = {
+    "objective": "max_sharpe",
+    "max_weight_pct": None,
+    "asset_limits": [],
+    "group_limits": [],
+    "max_volatility_pct": None,
+    "min_return_pct": None,
+    "unmapped_requests": [],
+    "summary": "",
+}
+
+
+def _limits_table(rows: list[dict], key_name: str, names: list[str]) -> pd.DataFrame:
+    by_name = {r[key_name]: r for r in rows}
+    return pd.DataFrame(
+        {
+            "Min %": [by_name.get(n, {}).get("min_pct") for n in names],
+            "Max %": [by_name.get(n, {}).get("max_pct") for n in names],
+        },
+        index=pd.Index(names, name=key_name.capitalize()),
+        dtype="float",
+    )
+
+
+def _limits_rows(table: pd.DataFrame, key_name: str) -> list[dict]:
+    rows = []
+    for name, r in table.iterrows():
+        lo = None if pd.isna(r["Min %"]) else float(r["Min %"])
+        hi = None if pd.isna(r["Max %"]) else float(r["Max %"])
+        if lo is not None or hi is not None:
+            rows.append({key_name: name, "min_pct": lo, "max_pct": hi})
+    return rows
+
+
+def render_optimise() -> None:
+    """Goals in plain English -> spec the user confirms -> optimiser -> comparison and memo."""
+    if not portfolio_ok or len(my_weights) < 2:
+        st.info("Add at least two holdings with price history on the Holdings tab.")
+        return
+    if not enough_history:
+        st.warning(SHORT_SAMPLE)
+        return
+    holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
+    st.markdown("**1. Describe your goals**")
+    goals = st.text_area(
+        "Goals in plain English",
+        key="ws_goals",
+        placeholder="e.g. max 12% vol, at least 20% GCC, no single asset over 25%, maximise Sharpe",
+        help="The AI only turns this into limits you can check; it never chooses weights.",
+    )
+    c1, c2 = st.columns(2)
+    ai_ok = agent.has_credentials()
+    if c1.button(
+        "Interpret with AI",
+        key="ws_interpret",
+        type="primary",
+        disabled=not ai_ok,  # not tied to the text: typed text only registers on blur
+        help=None if ai_ok else "Needs an API key (see the Analyst tab).",
+    ):
+        if not goals.strip():
+            st.warning("Describe your goals first, e.g. 'max 12% vol, at least 20% GCC'.")
+        else:
+            try:
+                with st.spinner("Turning your goals into a specification…"):
+                    proposal = propose_spec(
+                        agent.make_client(), A["model"], goals, holding_groups, effort="low"
+                    )
+                st.session_state.ws_spec = {
+                    "draft": proposal.draft,
+                    "proposal": proposal,
+                    "v": time_key(),
+                }
+                st.session_state.pop("ws_opt", None)
+            except (ValueError, anthropic.APIError) as e:
+                st.error(str(e))
+    if c2.button("Set the limits myself", key="ws_manual"):
+        st.session_state.ws_spec = {"draft": dict(BLANK_DRAFT), "proposal": None, "v": time_key()}
+        st.session_state.pop("ws_opt", None)
+
+    spec_state = st.session_state.get("ws_spec")
+    if not spec_state:
+        return
+    draft, proposal, v = spec_state["draft"], spec_state["proposal"], spec_state["v"]
+
+    def as_float(value):  # the model writes integers (25); number inputs need floats
+        return None if value is None else float(value)
+
+    st.markdown("**2. Check and edit the specification**")
+    if proposal:
+        if proposal.summary:
+            st.info(f"**The AI understood:** {proposal.summary}")
+        for request in proposal.unmapped:
+            st.warning(f"Not included (can't be expressed as a limit): “{request}”")
+        if proposal.numbers_not_in_goals:
+            st.warning(
+                "These numbers are not in your text, please check them: "
+                + ", ".join(proposal.numbers_not_in_goals)
+            )
+    objective = st.selectbox(
+        "Objective",
+        list(OBJECTIVE_NAMES),
+        format_func=OBJECTIVE_NAMES.get,
+        index=list(OBJECTIVE_NAMES).index(draft.get("objective") or "max_sharpe"),
+        key=f"ws_obj_{v}",
+    )
+    n1, n2, n3 = st.columns(3)
+    max_w = n1.number_input(
+        "Max per asset (%)",
+        0.0,
+        100.0,
+        as_float(draft.get("max_weight_pct")),
+        1.0,
+        key=f"ws_maxw_{v}",
+        placeholder="no limit",
+    )
+    max_vol = n2.number_input(
+        "Max volatility (% a year)",
+        0.0,
+        200.0,
+        as_float(draft.get("max_volatility_pct")),
+        0.5,
+        key=f"ws_maxvol_{v}",
+        placeholder="no limit",
+    )
+    min_ret = n3.number_input(
+        "Min return (% a year)",
+        -100.0,
+        200.0,
+        as_float(draft.get("min_return_pct")),
+        0.5,
+        key=f"ws_minret_{v}",
+        placeholder="no limit",
+    )
+    g1, g2 = st.columns(2)
+    g1.caption("Group limits (blank = none)")
+    groups_present = sorted(set(holding_groups.values()))
+    group_table = g1.data_editor(
+        _limits_table(draft.get("group_limits", []), "group", groups_present),
+        key=f"ws_groups_{v}",
+        width="stretch",
+    )
+    g2.caption("Asset limits (blank = none)")
+    asset_table = g2.data_editor(
+        _limits_table(draft.get("asset_limits", []), "ticker", list(my_weights)),
+        key=f"ws_assets_{v}",
+        width="stretch",
+    )
+    edited = {
+        **draft,
+        "objective": objective,
+        "max_weight_pct": max_w,
+        "max_volatility_pct": max_vol,
+        "min_return_pct": min_ret,
+        "group_limits": _limits_rows(group_table, "group"),
+        "asset_limits": _limits_rows(asset_table, "ticker"),
+    }
+    try:
+        spec = spec_from_draft(edited, holding_groups)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    st.markdown(
+        "You are about to optimise for:\n" + "\n".join(f"- {line}" for line in describe_spec(spec))
+    )
+    if st.button("Run optimisation", key="ws_run_opt", type="primary"):
+        ctx = shared_context()
+        with st.spinner("Optimising and backtesting…"):
+            report, weights = run_optimisation(ctx, spec, my_weights)
+        ctx.optimisation = report
+        st.session_state.ws_opt = {"report": report, "weights": weights, "memo": None}
+
+    result = st.session_state.get("ws_opt")
+    if not result:
+        return
+    report, weights = result["report"], result["weights"]
+    st.markdown("**3. Results**")
+    if not report["feasible"]:
+        st.error(
+            "**These limits can't all be met.**\n"
+            + "\n".join(f"- {r}" for r in report["reasons_if_not_feasible"])
+            + "\n\nRelax one of them and run again. No weights are shown."
+        )
+    else:
+        now = pd.Series(my_weights)
+        table = pd.DataFrame(report["weights"]).T.rename(
+            columns={"current": "Current", "optimised": "Optimised", "change": "Change"}
+        )
+        w1, w2 = st.columns([2, 3])
+        w1.table(table)
+        w2.plotly_chart(
+            paired_bars_chart(
+                now, weights, ("Current", "Optimised"), "Current vs optimised weights"
+            ),
+            width="stretch",
+        )
+        if report["binding_constraints"]:
+            st.caption("Binding limits: " + "; ".join(report["binding_constraints"]) + ".")
+        hist = pd.DataFrame(report["in_sample_historical"]).T.rename(
+            columns={
+                "expected_return": "Return (ann.)",
+                "volatility": "Volatility (ann.)",
+                "sharpe": "Sharpe",
+                "max_drawdown": "Max drawdown",
+            }
+        )
+        st.markdown(f"**Historical, in sample ({report['estimation_sample']})**")
+        st.table(hist)
+    if "backtests_after_costs" in report:
+        bt_table = pd.DataFrame(report["backtests_after_costs"]).T.rename(
+            columns={
+                "cagr": "CAGR",
+                "annual_volatility": "Volatility (ann.)",
+                "sharpe": "Sharpe",
+                "max_drawdown": "Max drawdown",
+                "turnover_per_year": "Turnover / yr",
+            }
+        )
+        st.markdown(f"**Backtests after costs ({report['backtest_period']})**")
+        st.table(bt_table)
+    for note in report["notes"]:
+        st.caption(note)
+    st.info(report["caveats"])
+
+    if ai_ok and st.button("Explain the changes (AI memo)", key="ws_opt_memo"):
+        memo_analyst = agent.Analyst(
+            shared_context(),
+            agent.make_client(),
+            model=A["model"],
+            max_tokens=A["max_tokens"],
+            effort=A["effort"],
+            max_tool_rounds=A["max_tool_rounds"],
+        )
+        result["memo"] = ask_analyst(
+            memo_analyst,
+            "Please explain the optimisation I just ran on the Portfolio tab: what changes, the "
+            "trade-offs, and how much to trust the results.",
+        )
+    memo = result.get("memo")
+    if memo:
+        if memo["role"] == "error":
+            st.error(memo["text"])
+        else:
+            with st.chat_message("assistant"):
+                render_reply(memo["reply"])
+
+
+def time_key() -> int:
+    """A fresh widget-key suffix so a new draft resets the spec form."""
+    st.session_state["ws_spec_counter"] = st.session_state.get("ws_spec_counter", 0) + 1
+    return st.session_state["ws_spec_counter"]
+
+
 tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
     ["Portfolio", "Assets", "Frontier", "Backtest", "Monte Carlo", "Regime", "Analyst"]
 )
@@ -620,7 +952,7 @@ with tab_mine:
             )
 
     with sec_opt:
-        st.info("AI-driven optimisation is coming next.")
+        render_optimise()
 
 with tab_mc:
     st.subheader("Monte Carlo: where could today's weights go?")
@@ -837,7 +1169,6 @@ with tab_regime:
     )
 
 with tab_agent:
-    A = CFG["agent"]
     st.subheader("AI analyst")
     st.caption(
         f"Describe an investor profile. The analyst ({A['model']}) calls this dashboard's own "
@@ -851,33 +1182,9 @@ with tab_agent:
             "root. On Streamlit Community Cloud, add it under *App settings → Secrets*."
         )
     else:
-        settings_key = (tickers, loaded, start, end, day, max_weight, cost_bps, lookback, my_key)
         if st.session_state.get("analyst_key") != settings_key:
-            regime_data = load_regime(end, day)
-            ctx = AnalystContext(
-                prices=data.prices,
-                rf=rf,
-                groups=CFG["groups"],
-                benchmarks=CFG["benchmarks"],
-                regime_features=regime_data["features"],
-                regime_labels=regime_data["labels"],
-                settings={
-                    "max_weight": max_weight,
-                    "cost_bps": cost_bps,
-                    "lookback": lookback,
-                    "periods_per_year": periods,
-                    "rebalance": D["rebalance"],
-                    "var_level": D["var_level"],
-                    "regime": R,
-                    "montecarlo": MC,
-                },
-                universe=universe,
-                user_portfolio=my_weights if portfolio_ok else None,
-                asset_notes=data.history,
-            )
-            ctx._cache["p_stressed"] = regime_data["p_stressed"]  # already computed above
             st.session_state.analyst = agent.Analyst(
-                ctx,
+                shared_context(),
                 agent.make_client(),
                 model=A["model"],
                 max_tokens=A["max_tokens"],
@@ -904,9 +1211,9 @@ with tab_agent:
                 "Write memo about my portfolio",
                 key="write_portfolio_memo",
                 disabled=not portfolio_ok,
-                help="Uses the holdings on the My portfolio tab."
+                help="Uses the holdings on the Portfolio tab."
                 if portfolio_ok
-                else "Enter valid holdings on the My portfolio tab first.",
+                else "Enter valid holdings on the Portfolio tab first.",
             )
         else:
             profile, start_memo, portfolio_memo = None, False, False
@@ -916,18 +1223,7 @@ with tab_agent:
 
         def ask(question: str) -> None:
             st.session_state.chat.append({"role": "user", "text": question})
-            try:
-                with st.spinner("The analyst is calling tools and writing…"):
-                    reply = st.session_state.analyst.ask(question)
-                st.session_state.chat.append({"role": "assistant", "reply": reply})
-            except anthropic.AuthenticationError:
-                st.session_state.chat.append({"role": "error", "text": "The API key was rejected."})
-            except anthropic.RateLimitError:
-                st.session_state.chat.append(
-                    {"role": "error", "text": "Rate limited; try again in a minute."}
-                )
-            except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
-                st.session_state.chat.append({"role": "error", "text": f"API error: {e}"})
+            st.session_state.chat.append(ask_analyst(st.session_state.analyst, question))
 
         if start_memo and profile:
             ask(profile)
@@ -935,7 +1231,7 @@ with tab_agent:
         if portfolio_memo:
             holdings = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
             ask(
-                f"Please review my portfolio ({holdings}), entered on the My portfolio tab. "
+                f"Please review my portfolio ({holdings}), entered on the Portfolio tab. "
                 f"About me: {profile}"
             )
             st.rerun()
@@ -946,26 +1242,8 @@ with tab_agent:
             elif turn["role"] == "error":
                 st.error(turn["text"])
             else:
-                reply = turn["reply"]
                 with st.chat_message("assistant"):
-                    st.markdown(reply.text)
-                    if reply.unverified:
-                        st.warning(
-                            "These figures did not come from any tool result, so treat them with "
-                            "suspicion: " + ", ".join(f"`{n}`" for n in reply.unverified)
-                        )
-                    cost = agent.estimate_cost(reply, A["price_per_mtok"])
-                    st.caption(
-                        f"{len(reply.tool_calls)} tool calls · {reply.input_tokens:,} input + "
-                        f"{reply.output_tokens:,} output tokens · about ${cost:.4f}"
-                    )
-                    with st.expander(f"Audit trail: {len(reply.tool_calls)} tool calls"):
-                        for call in reply.tool_calls:
-                            st.markdown(
-                                f"**`{call.name}`**({json.dumps(call.input)})"
-                                + (" ⚠️ error" if call.is_error else "")
-                            )
-                            st.json(call.output, expanded=False)
+                    render_reply(turn["reply"])
 
         if st.session_state.chat:
             follow_up = st.chat_input(

@@ -244,3 +244,16 @@ def test_spec_strategy_keeps_last_weights_when_a_window_fails(random_returns: pd
     stormy = random_returns.iloc[120:240] * 6  # far too volatile for a 12% cap
     assert strategy(stormy).equals(first)
     assert strategy.infeasible_dates == [stormy.index[-1]]
+
+
+def test_spec_strategy_holds_fallback_until_limits_can_be_met(random_returns: pd.DataFrame) -> None:
+    strategy = spec_strategy(
+        OptimisationSpec("min_variance", max_volatility=0.12),
+        fallback={"A": 0.2, "B": 0.3, "C": 0.5},
+    )
+    stormy = random_returns.iloc[:120] * 6  # the cap can't be met on this window
+    held = strategy(stormy)
+    assert held.to_dict() == {"A": 0.2, "B": 0.3, "C": 0.5}
+    assert strategy.infeasible_dates == [stormy.index[-1]]
+    calm = strategy(random_returns.iloc[120:240])
+    assert calm.to_dict() != held.to_dict()  # switches once the limits can be met
