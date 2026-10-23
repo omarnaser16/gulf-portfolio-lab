@@ -10,6 +10,7 @@ from gpl.plots import (
     equity_chart,
     fan_chart,
     frontier_chart,
+    regime_chart,
     weights_chart,
 )
 
@@ -51,3 +52,13 @@ def test_fan_chart_has_bands_and_median() -> None:
     fig = fan_chart(paths)
     assert fig.data[-1].name == "Median"
     assert len(fig.data) == 5
+
+
+def test_regime_chart_shades_realised_stress() -> None:
+    idx = pd.bdate_range("2024-01-01", periods=6)
+    p = pd.Series([0.1, 0.6, 0.7, 0.2, 0.1, 0.8], index=idx)
+    realised = pd.Series([0, 1, 1, 0, 0, 1], index=idx)
+    fig = regime_chart(p, 0.5, realised)
+    rects = [s for s in fig.layout.shapes if s.type == "rect"]
+    assert len(rects) == 2  # two stressed stretches
+    assert fig.data[0].name == "P(stressed)"

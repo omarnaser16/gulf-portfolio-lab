@@ -225,3 +225,38 @@ def risk_parity_strategy(max_weight: float = 0.40) -> Strategy:
         return risk_parity(window.cov() * PERIODS_PER_YEAR, max_weight)
 
     return strategy
+
+
+def regime_switch_strategy(
+    calm: Strategy,
+    stressed: Strategy,
+    p_stressed: pd.Series,
+    threshold: float = 0.5,
+) -> Strategy:
+    """Build a strategy that switches to a defensive one when stress is forecast.
+
+    Parameters
+    ----------
+    calm : Strategy
+        Used when the latest P(stressed) is below ``threshold``.
+    stressed : Strategy
+        Used when the latest P(stressed) is at or above ``threshold`` (e.g. min variance).
+    p_stressed : pd.Series
+        Daily out-of-sample probabilities, e.g. from ``regime.walk_forward_probabilities``.
+        Only the latest non-NaN value **on or before** the window's last date is read.
+    threshold : float, default 0.5
+        Probability at which to switch.
+
+    Returns
+    -------
+    Strategy
+        Falls back to ``calm`` until the first probability is available.
+    """
+
+    def strategy(window: pd.DataFrame) -> pd.Series:
+        known = p_stressed.loc[: window.index[-1]].dropna()
+        if not known.empty and known.iloc[-1] >= threshold:
+            return stressed(window)
+        return calm(window)
+
+    return strategy

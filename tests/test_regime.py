@@ -13,6 +13,7 @@ from gpl.regime import (
     fit_model,
     make_features,
     make_labels,
+    naive_stress_signal,
     predict_regime,
     walk_forward_probabilities,
 )
@@ -219,3 +220,23 @@ def test_walk_forward_starts_after_min_train(separable) -> None:
     assert x.index.get_loc(first) - 20 >= 500
     assert p.loc[first:].notna().all()
     assert p.dropna().between(0, 1).all()
+
+
+# -------------------------------------------------------------------------- naive signal
+
+
+def test_naive_signal_fires_once_volatility_is_high(block_returns: pd.Series) -> None:
+    feats = pd.DataFrame({"vol_21": block_returns.rolling(21).std()})
+    signal = naive_stress_signal(feats)
+    assert signal.iloc[:271].isna().all()
+    assert signal.iloc[399] == 0.0  # stress hasn't started: a backward-looking rule can't see it
+    assert signal.iloc[410] == 1.0  # ten wild days in: now it fires
+
+
+def test_naive_signal_uses_only_the_past(market) -> None:
+    prices, vix = market
+    feats = make_features(prices, vix)
+    base = naive_stress_signal(feats)
+    t = 700
+    truncated = naive_stress_signal(feats.iloc[: t + 1])
+    pd.testing.assert_series_equal(truncated, base.iloc[: t + 1])

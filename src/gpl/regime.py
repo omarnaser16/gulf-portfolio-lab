@@ -343,3 +343,31 @@ def walk_forward_probabilities(
         fitted = _new_model(model, seed).fit(x.to_numpy(), y.to_numpy().astype(int))
         p.iloc[pos:stop] = predict_regime(fitted, block).to_numpy()
     return p
+
+
+def naive_stress_signal(
+    features: pd.DataFrame, quantile: float = 0.80, window: int = 252
+) -> pd.Series:
+    """Rule-based baseline: "stressed" when trailing 21-day volatility is already high.
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        Output of ``make_features`` (uses ``vol_21``).
+    quantile : float, default 0.80
+        Same threshold quantile as the labels.
+    window : int, default 252
+        Rolling window for the threshold.
+
+    Returns
+    -------
+    pd.Series
+        1.0 when ``vol_21`` at *t* is above its rolling ``quantile`` up to *t*, else 0.0;
+        NaN until the threshold is available. A "volatility persists" rule with no model,
+        so the ML forecast has to beat it to be worth its complexity.
+    """
+    vol = features["vol_21"]
+    threshold = vol.rolling(window).quantile(quantile)
+    signal = (vol > threshold).astype(float)
+    signal[threshold.isna()] = np.nan
+    return signal.rename("p_stressed")

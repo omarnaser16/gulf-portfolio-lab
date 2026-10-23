@@ -14,6 +14,7 @@ from gpl.backtest import (
     fixed_weights,
     max_sharpe_strategy,
     min_variance_strategy,
+    regime_switch_strategy,
     risk_parity_strategy,
     run_backtest,
 )
@@ -162,3 +163,44 @@ def test_max_sharpe_strategy_ignores_future_rf(random_returns: pd.DataFrame) -> 
     w_series = max_sharpe_strategy(rf=daily)(random_returns)
     w_float = max_sharpe_strategy(rf=0.02)(random_returns)
     np.testing.assert_allclose(w_series.to_numpy(), w_float.to_numpy(), atol=1e-6)
+
+
+# -------------------------------------------------------------------------- regime switch
+
+CALM = fixed_weights({"A": 1.0})
+STRESSED = fixed_weights({"B": 1.0})
+
+
+def _p(values: dict[str, float]) -> pd.Series:
+    return pd.Series(values, dtype=float).rename(index=pd.Timestamp)
+
+
+def test_regime_switch_picks_by_threshold() -> None:
+    p = _p({"2024-01-31": 0.2, "2024-02-29": 0.7})
+    res = run_backtest(flat_prices(), regime_switch_strategy(CALM, STRESSED, p), lookback=5)
+    assert res.weights.loc["2024-01-31", "A"] == 1.0  # 0.2 < 0.5: calm
+    assert res.weights.loc["2024-02-29", "B"] == 1.0  # 0.7 >= 0.5: stressed
+
+
+def test_regime_switch_uses_latest_known_probability() -> None:
+    # Daily probabilities: high only on 1 Feb. At 29 Feb the latest value is 0.1 -> calm.
+    p = pd.Series(0.1, index=DATES)
+    p.loc["2024-02-01"] = 0.9
+    w = regime_switch_strategy(CALM, STRESSED, p)(
+        pd.DataFrame(columns=["A", "B"], index=DATES[:42])
+    )
+    assert w["A"] == 1.0  # window ends 29 Feb (index 41)
+
+
+def test_regime_switch_never_reads_future_probabilities() -> None:
+    # p jumps to 1.0 the day AFTER the window ends: must still be calm
+    p = pd.Series(0.0, index=DATES)
+    p.loc["2024-03-01":] = 1.0
+    window = pd.DataFrame(0.0, columns=["A", "B"], index=DATES[DATES <= "2024-02-29"])
+    assert regime_switch_strategy(CALM, STRESSED, p)(window)["A"] == 1.0
+
+
+def test_regime_switch_without_signal_stays_calm() -> None:
+    p = pd.Series([np.nan, 0.9], index=pd.to_datetime(["2024-01-02", "2024-12-31"]))
+    window = pd.DataFrame(0.0, columns=["A", "B"], index=DATES[:20])
+    assert regime_switch_strategy(CALM, STRESSED, p)(window)["A"] == 1.0

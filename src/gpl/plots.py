@@ -209,3 +209,57 @@ def fan_chart(
     if start is None:
         fig.update_xaxes(title="Years")
     return fig
+
+
+def _runs(flags: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Start and end dates of consecutive True stretches."""
+    flags = flags.fillna(False).astype(bool)
+    starts = flags & ~flags.shift(1, fill_value=False)
+    ends = flags & ~flags.shift(-1, fill_value=False)
+    return list(zip(flags.index[starts], flags.index[ends], strict=True))
+
+
+def regime_chart(
+    p_stressed: pd.Series,
+    threshold: float = 0.5,
+    realised: pd.Series | None = None,
+    title: str = "Probability of a stressed month ahead",
+) -> go.Figure:
+    """P(stressed) line with the decision threshold; realised stress shaded in grey.
+
+    ``realised`` is the 0/1 label series (what actually happened next month).
+    """
+    fig = go.Figure(
+        go.Scatter(
+            x=p_stressed.index,
+            y=p_stressed,
+            name="P(stressed)",
+            mode="lines",
+            line={"color": SERIES_COLORS[0], "width": 2},
+            hovertemplate="%{y:.0%}",
+        )
+    )
+    fig.add_hline(
+        y=threshold,
+        line={"color": TEXT_SECONDARY, "width": 1, "dash": "dash"},
+        annotation_text=f"threshold {threshold:.0%}",
+        annotation_font_color=TEXT_SECONDARY,
+    )
+    if realised is not None:
+        for start, end in _runs(realised.reindex(p_stressed.index) == 1):
+            fig.add_vrect(
+                x0=start, x1=end, fillcolor=GRID, opacity=0.8, line_width=0, layer="below"
+            )
+        # legend entry for the shading
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                name="Actually stressed",
+                marker={"color": GRID, "size": 12, "symbol": "square"},
+            )
+        )
+    fig = _base_layout(fig, title, "P(stressed)", ".0%")
+    fig.update_yaxes(range=[0, 1])
+    return fig
