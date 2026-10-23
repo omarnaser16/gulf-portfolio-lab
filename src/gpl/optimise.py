@@ -155,7 +155,7 @@ def max_sharpe(
     rf: float = 0.0,
     max_weight: float = DEFAULT_MAX_WEIGHT,
 ) -> pd.Series:
-    """Long-only maximum-Sharpe (tangency) portfolio (SLSQP).
+    """Long-only maximum-Sharpe (tangency) portfolio.
 
     Parameters
     ----------
@@ -177,19 +177,104 @@ def max_sharpe(
     ------
     ValueError
         If no feasible portfolio exists, or the optimiser fails.
+
+    Notes
+    -----
+    Maximising a ratio directly is a non-convex problem that SLSQP can fail on (e.g. when
+    the cap forces weight into assets with negative excess returns). When some feasible
+    portfolio beats ``rf``, the problem is solved in its equivalent convex form instead
+    (Cornuejols & Tutuncu): with ``y = k * w`` for a scale ``k > 0``,
+
+        minimise  y' S y   subject to   (mu - rf)' y = 1,  sum(y) = k,  0 <= y <= cap * k,
+
+    and ``w = y / k``. If no portfolio beats ``rf`` (or the convex solve fails), the ratio
+    is maximised directly from several starting points.
     """
+    _check_feasible(len(cov), max_weight)
     sigma = cov.to_numpy()
     m = mu.reindex(cov.index).to_numpy()
+    excess = m - rf
+    best_excess = float(_max_return_weights(m, max_weight) @ excess)
+    if best_excess > 1e-12:
+        try:
+            # Dividing by best_excess only rescales y (w = y / k is unchanged) but keeps the
+            # problem well-scaled when the best excess return is tiny.
+            return _max_sharpe_convex(sigma, excess / best_excess, cov.index, max_weight)
+        except ValueError:
+            pass  # numerically awkward case: fall through to the multi-start direct method
+    return _max_sharpe_direct(sigma, excess, cov.index, max_weight)
+
+
+def _max_sharpe_convex(
+    sigma: np.ndarray, excess: np.ndarray, index: pd.Index, max_weight: float
+) -> pd.Series:
+    """Tangency portfolio via the convex quadratic reformulation. Variables z = [y, k]."""
+    n = len(index)
+    w0 = _max_return_weights(excess, max_weight)  # feasible, positive excess return
+    y0 = w0 / (w0 @ excess)
+    z0 = np.append(y0, y0.sum())
+    constraints = [
+        {
+            "type": "eq",
+            "fun": lambda z: z[:n] @ excess - 1,
+            "jac": lambda z: np.append(excess, 0.0),
+        },
+        {
+            "type": "eq",
+            "fun": lambda z: z[:n].sum() - z[n],
+            "jac": lambda z: np.append(np.ones(n), -1.0),
+        },
+        {  # y_i <= cap * k  for every asset
+            "type": "ineq",
+            "fun": lambda z: max_weight * z[n] - z[:n],
+            "jac": lambda z: np.hstack([-np.eye(n), np.full((n, 1), max_weight)]),
+        },
+    ]
+    result = minimize(
+        lambda z: z[:n] @ sigma @ z[:n],
+        x0=z0,
+        jac=lambda z: np.append(2 * sigma @ z[:n], 0.0),
+        method="SLSQP",
+        bounds=[(0.0, None)] * (n + 1),
+        constraints=constraints,
+        options={"ftol": 1e-14, "maxiter": 1000},
+    )
+    if not result.success or result.x[n] <= 0:
+        raise ValueError(f"max Sharpe optimiser failed: {result.message}")
+    return _checked_weights(result.x[:n] / result.x[n], index, max_weight)
+
+
+def _max_sharpe_direct(
+    sigma: np.ndarray, excess: np.ndarray, index: pd.Index, max_weight: float
+) -> pd.Series:
+    """Maximise the (non-positive) Sharpe ratio directly, keeping the best of several starts."""
+    n = len(index)
 
     def neg_sharpe(w: np.ndarray) -> float:
-        return -(w @ m - rf) / np.sqrt(w @ sigma @ w)
+        return -(w @ excess) / np.sqrt(w @ sigma @ w)
 
     def neg_sharpe_grad(w: np.ndarray) -> np.ndarray:
-        excess, var = w @ m - rf, w @ sigma @ w
+        ex, var = w @ excess, w @ sigma @ w
         vol = np.sqrt(var)
-        return -(m / vol - excess * (sigma @ w) / (var * vol))
+        return -(excess / vol - ex * (sigma @ w) / (var * vol))
 
-    return _solve(neg_sharpe, neg_sharpe_grad, cov.index, max_weight)
+    starts = [
+        np.full(n, 1 / n),
+        _max_return_weights(excess, max_weight),
+        min_variance(pd.DataFrame(sigma, index=index, columns=index), max_weight).to_numpy(),
+    ]
+    best, errors = None, []
+    for x0 in starts:
+        try:
+            w = _solve(neg_sharpe, neg_sharpe_grad, index, max_weight, x0=x0)
+        except ValueError as e:
+            errors.append(str(e))
+            continue
+        if best is None or neg_sharpe(w.to_numpy()) < neg_sharpe(best.to_numpy()):
+            best = w
+    if best is None:
+        raise ValueError(f"max Sharpe optimiser failed from every start: {errors}")
+    return best
 
 
 def efficient_frontier(

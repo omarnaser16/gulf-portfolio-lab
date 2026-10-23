@@ -13,6 +13,8 @@ import pytest
 
 from gpl.optimise import (
     _checked_weights,
+    _max_sharpe_convex,
+    _max_sharpe_direct,
     efficient_frontier,
     max_sharpe,
     min_variance,
@@ -278,3 +280,95 @@ def test_infeasible_solver_output_is_refused_not_rescaled() -> None:
         _checked_weights(np.array([0.4, 0.36, 0.0]), idx, max_weight=0.4)
     ok = _checked_weights(np.array([0.4, 0.6 + 1e-12, -1e-17]), idx, max_weight=0.6)
     assert ok.min() == 0.0 and ok.sum() == pytest.approx(1.0)
+
+
+# ------------------------------------------------------------ max Sharpe robustness
+
+
+def _sharpe(w, mu, cov, rf) -> float:
+    ret, vol = portfolio_performance(w, mu, cov)
+    return (ret - rf) / vol
+
+
+def _random_capped_weights(n: int, cap: float, count: int, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    w = rng.dirichlet(np.full(n, 0.7), size=count * 20)
+    return w[(w <= cap).all(axis=1)][:count]
+
+
+@pytest.fixture
+def real_failure() -> tuple[pd.Series, pd.DataFrame, float]:
+    """UAE/EFA/EEM/TLT, Jul 2019 - Feb 2020: only TLT beats cash, but the 40% cap forces
+    60% into the three losers. The old direct SLSQP stopped with 'Positive directional
+    derivative for linesearch' here."""
+    tickers = ["UAE", "EFA", "EEM", "TLT"]
+    mu = pd.Series([-0.1581484568, -0.0644774643, -0.0591035754, 0.2710953974], index=tickers)
+    cov = pd.DataFrame(
+        [
+            [0.025450625048, 0.007714029665, 0.009868591104, -0.003017476861],
+            [0.007714029665, 0.016027649846, 0.017563373096, -0.008715909001],
+            [0.009868591104, 0.017563373096, 0.026583668993, -0.011675665788],
+            [-0.003017476861, -0.008715909001, -0.011675665788, 0.019860062782],
+        ],
+        index=tickers,
+        columns=tickers,
+    )
+    return mu, cov, 0.0169999807
+
+
+def test_max_sharpe_solves_the_real_failure(real_failure) -> None:
+    mu, cov, rf = real_failure
+    w = max_sharpe(mu, cov, rf=rf, max_weight=0.40)
+    assert w.sum() == pytest.approx(1.0)
+    assert w.max() <= 0.40 + 1e-9 and w.min() >= 0
+    assert w["TLT"] == pytest.approx(0.40)  # the only winner is held at the cap
+    best = _sharpe(w, mu, cov, rf)
+    for candidate in _random_capped_weights(4, 0.40, 5_000, seed=0):
+        assert _sharpe(candidate, mu, cov, rf) <= best + 1e-9
+
+
+def test_max_sharpe_when_nothing_beats_cash() -> None:
+    # Every asset earns less than rf: the best Sharpe is negative (fallback path)
+    mu = pd.Series([0.01, 0.02, 0.00], index=TICKERS)
+    cov = pd.DataFrame(np.diag([0.04, 0.01, 0.02]), index=TICKERS, columns=TICKERS)
+    w = max_sharpe(mu, cov, rf=0.05, max_weight=0.5)
+    assert w.sum() == pytest.approx(1.0)
+    assert w.max() <= 0.5 + 1e-9
+    best = _sharpe(w, mu, cov, 0.05)
+    for candidate in _random_capped_weights(3, 0.5, 2_000, seed=1):
+        assert _sharpe(candidate, mu, cov, 0.05) <= best + 1e-6
+
+
+@pytest.mark.parametrize("seed", range(10))
+@pytest.mark.parametrize("max_weight", [0.40, 1.0])
+def test_convex_and_direct_max_sharpe_agree(seed: int, max_weight: float) -> None:
+    mu, cov = _random_problem(n=4 + seed % 6, seed=100 + seed)
+    excess = (mu - 0.02).to_numpy()
+    if (np.sort(excess)[::-1][: int(np.ceil(1 / max_weight))] <= 0).all():
+        pytest.skip("no positive-excess portfolio")
+    convex = _max_sharpe_convex(cov.to_numpy(), excess, cov.index, max_weight)
+    direct = _max_sharpe_direct(cov.to_numpy(), excess, cov.index, max_weight)
+    assert _sharpe(convex, mu, cov, 0.02) >= _sharpe(direct, mu, cov, 0.02) - 1e-7
+
+
+def test_max_sharpe_with_tiny_best_excess_return() -> None:
+    """AGG/EEM/UAE, May 2018 - Feb 2023: the best capped portfolio beats cash by only
+    ~0.8%/yr, which made the unnormalised convex form badly scaled and fail."""
+    tickers = ["AGG", "EEM", "UAE"]
+    mu = pd.Series([0.0080370023, 0.0081492811, 0.0423251646], index=tickers)
+    cov = pd.DataFrame(
+        [
+            [0.003553674548, 0.001885184512, 0.001013237371],
+            [0.001885184512, 0.053662777528, 0.025534816664],
+            [0.001013237371, 0.025534816664, 0.04600561191],
+        ],
+        index=tickers,
+        columns=tickers,
+    )
+    rf = 0.013393065
+    w = max_sharpe(mu, cov, rf=rf, max_weight=0.40)
+    assert w.sum() == pytest.approx(1.0)
+    assert w.max() <= 0.40 + 1e-9 and w.min() >= 0
+    best = _sharpe(w, mu, cov, rf)
+    for candidate in _random_capped_weights(3, 0.40, 5_000, seed=2):
+        assert _sharpe(candidate, mu, cov, rf) <= best + 1e-9
