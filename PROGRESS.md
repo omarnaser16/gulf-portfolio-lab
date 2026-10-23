@@ -169,3 +169,27 @@ days; the work itself was done in a series of sessions.
   market quotes; and a portfolio's risk can be very different from its weights (SPY at 50% of the
   money was 79% of the risk).
 - **Next:** deploy on Streamlit Community Cloud; answer the outstanding quizzes.
+
+## Portfolio workstation — 2026-10-23 · search, holdings, screen, AI-assisted optimisation
+- **Directed:** I asked for a mini portfolio workstation (like Bloomberg PORT) as the first tab, built
+  around my own portfolio, with an optimiser I can drive in plain English, where the AI turns my goals
+  into limits I confirm and never invents weights. I approved `streamlit-searchbox` and merging the
+  old My portfolio tab into it.
+- **Built by Claude Code:** a constrained optimiser (five objectives, per-asset and group limits,
+  volatility cap, return floor, exact feasibility checks with plain-language reasons); security
+  search and live quotes; the workstation (holdings table in USD or %, allocation chart, screen with
+  correlation to the rest, analyse & backtest); goals → spec → confirm → optimise, with current vs
+  optimised weights, hindsight and walk-forward backtests, and a memo.
+- **Live test:** "max 12% vol, at least 20% GCC, no single asset over 25%, maximise Sharpe" on SPY,
+  AGG, GLD, Aramco and Emaar was read correctly. Walk-forward after costs: 14.45% CAGR, Sharpe 1.00 vs
+  11.90% and 0.87 for my current mix, and below the hindsight 1.08. An impossible request (60% GCC with
+  8% volatility) was refused with the reason: the lowest volatility allowed was 12.31%.
+- **Caught:** a quote lookup for a currency looped forever; the walk-forward failed outright when the
+  first month couldn't meet the limits (it now keeps my current weights and counts those months); the
+  Interpret button stayed disabled until the text box lost focus; a live memo questioned the sample
+  dates, so the report now explains them.
+- **Learned:** an optimiser should say *why* limits can't be met, not just fail; hindsight backtests
+  flatter, walk-forward is the fair test; with four holdings and a 25% cap there is only one possible
+  portfolio, so "optimised" can have a lower Sharpe than what I hold.
+- **Status:** 417 tests passing.
+- **Next:** deploy on Streamlit Community Cloud; answer the outstanding quizzes.
