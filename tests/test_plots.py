@@ -73,3 +73,17 @@ def test_frontier_labels_point_away_from_the_line() -> None:
     assert on.ax < 0 and on.ay < 0  # up-left: the empty side of the frontier
     assert inside.ax > 0 and inside.ay > 0  # down-right: away from the curve
     assert all(t.mode == "markers" for t in fig.data[1:])  # no text glued to markers
+
+
+def test_percent_axes_use_two_decimals() -> None:
+    dd = drawdown_chart(pd.DataFrame({"EW": [0, -0.1, -0.05, 0, 0]}, index=IDX))
+    assert dd.layout.yaxis.tickformat == ".2%"
+    front = frontier_chart(pd.DataFrame({"ret": [0.04, 0.06], "vol": [0.05, 0.08]}))
+    assert front.layout.xaxis.tickformat == ".2%" and front.layout.yaxis.tickformat == ".2%"
+
+
+def test_regime_threshold_is_in_the_legend_not_on_the_data() -> None:
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    fig = regime_chart(pd.Series([0.1, 0.6, 0.7, 0.2], index=idx), 0.5)
+    assert "Threshold 50.00%" in [t.name for t in fig.data]
+    assert not [a for a in fig.layout.annotations if "hreshold" in (a.text or "")]

@@ -11,6 +11,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from formatting import pct, show_metrics_table, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
@@ -43,20 +44,6 @@ GROUP_LABELS = {
     "global_equity": "Global equity",
     "bonds": "Bonds",
     "real_assets": "Gold",
-}
-LEVEL = f"{D['var_level']:.0%}"
-# summary_table column -> (label on screen, number format). Order = column order on screen.
-TABLE_COLUMNS = {
-    "ann_return": ("Return (ann.)", "percent"),
-    "cagr": ("CAGR", "percent"),
-    "ann_vol": ("Volatility (ann.)", "percent"),
-    "sharpe": ("Sharpe", "%.2f"),
-    "sortino": ("Sortino", "%.2f"),
-    "max_drawdown": ("Max drawdown", "percent"),
-    "annual_turnover": ("Turnover / yr", "%.2f×"),
-    "hist_var": (f"VaR {LEVEL} (historical)", "percent"),
-    "param_var": (f"VaR {LEVEL} (normal)", "percent"),
-    "expected_shortfall": (f"Expected shortfall {LEVEL}", "percent"),
 }
 DISCLAIMER = (
     "Educational project, **not investment advice**. "
@@ -147,17 +134,6 @@ def run_backtests(
 # -------------------------------------------------------------------------- presentation
 
 
-def show_table(table: pd.DataFrame) -> None:
-    """Metrics table with readable headers; drops start/end/n_obs (the sample is captioned)."""
-    columns = [c for c in TABLE_COLUMNS if c in table.columns]
-    shown = table[columns].rename(columns={c: TABLE_COLUMNS[c][0] for c in columns})
-    config = {
-        TABLE_COLUMNS[c][0]: st.column_config.NumberColumn(format=TABLE_COLUMNS[c][1])
-        for c in columns
-    }
-    st.dataframe(shown, column_config=config, width="stretch")
-
-
 def first_eight(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.shape[1] > len(SERIES_COLORS):
         st.caption(f"Charts show the first {len(SERIES_COLORS)} series; the table has all of them.")
@@ -207,7 +183,7 @@ if len(assets) < 2:
     st.stop()
 if max_weight * len(assets) < 1:
     st.error(
-        f"A {max_weight:.0%} cap cannot hold {len(assets)} assets fully invested. Raise the cap."
+        f"A {pct(max_weight)} cap cannot hold {len(assets)} assets fully invested. Raise the cap."
     )
     st.stop()
 if start >= end:
@@ -234,12 +210,13 @@ tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
 
 with tab_assets:
     st.subheader("Risk and return by asset")
-    show_table(
-        summary_table(returns, rf=rf, level=D["var_level"]).sort_values("sharpe", ascending=False)
+    show_metrics_table(
+        summary_table(returns, rf=rf, level=D["var_level"]).sort_values("sharpe", ascending=False),
+        D["var_level"],
     )
     st.caption(
         f"Full sample above. Annualised over 252 days. VaR and expected shortfall: 1-day, "
-        f"{LEVEL}, shown as positive losses."
+        f"{D['var_level']:.0%} confidence, shown as positive losses."
     )
 
 with tab_frontier:
@@ -249,7 +226,7 @@ with tab_frontier:
         "the time. The backtest tab is the honest test."
     )
     st.caption(
-        f"Every portfolio here is long-only with at most **{max_weight:.0%}** per asset (sidebar)."
+        f"Every portfolio here is long-only with at most **{pct(max_weight)}** per asset (sidebar)."
     )
     mu, cov = returns.mean() * 252, returns.cov() * 252
     rf_annual = float(
@@ -268,11 +245,7 @@ with tab_frontier:
     st.plotly_chart(
         frontier_chart(efficient_frontier(mu, cov, 40, max_weight), points), width="stretch"
     )
-    st.dataframe(
-        pd.DataFrame(portfolios).T,
-        column_config={t: st.column_config.NumberColumn(format="percent") for t in assets},
-        width="stretch",
-    )
+    st.dataframe(style_percent(pd.DataFrame(portfolios).T), width="stretch")
 
 with tab_backtest:
     if not names:
@@ -299,7 +272,7 @@ with tab_backtest:
             f"Monthly rebalancing on a trailing {lookback}-day window; new weights apply the next "
             f"day; {cost_bps:g} bps per unit of turnover."
         )
-        show_table(table.sort_values("sharpe", ascending=False))
+        show_metrics_table(table.sort_values("sharpe", ascending=False), D["var_level"])
         st.caption(
             f"**Backtest period: {first_day:%d %b %Y} – {prices.index[-1]:%d %b %Y}.** Each "
             f"strategy needs {lookback} trading days of history before its first rebalance, so the "
@@ -307,8 +280,10 @@ with tab_backtest:
             "therefore differ from the Assets tab, which uses the full sample."
         )
         st.caption(
-            f"Strategies hold at most **{max_weight:.0%}** per asset (sidebar). Benchmarks are "
-            f"fixed by definition: {SIXTY_FORTY} holds 60% SPY and 40% AGG; SPY holds 100%."
+            f"Strategies hold at most **{pct(max_weight)}** per asset (sidebar). Benchmarks are "
+            f"fixed by definition: {SIXTY_FORTY} holds "
+            + " and ".join(f"{pct(w)} {t}" for t, w in CFG["benchmarks"]["sixty_forty"].items())
+            + f"; SPY holds {pct(CFG['benchmarks']['spy']['SPY'])}."
         )
         equity = first_eight(pd.DataFrame({n: r.equity for n, r in results.items()}))
         st.plotly_chart(equity_chart(equity), width="stretch")
@@ -356,10 +331,10 @@ with tab_mc:
         paths = simulate_paths(returns, weights, 252 * years, n_paths, method=method, seed=seed)
         stats = terminal_stats(paths)
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric(f"P(≥ {target:g}×)", f"{goal_probability(paths, target):.0%}")
+        m1.metric(f"P(≥ {target:g}×)", pct(goal_probability(paths, target)))
         m2.metric("Median outcome", f"{stats['p50']:.2f}×")
         m3.metric("Bad case (5th pct)", f"{stats['p5']:.2f}×")
-        m4.metric("P(lose money)", f"{1 - goal_probability(paths, 1.0):.0%}")
+        m4.metric("P(lose money)", pct(1 - goal_probability(paths, 1.0)))
         st.plotly_chart(
             fan_chart(paths, title=f"{mc_strategy}: simulated growth of $1"), width="stretch"
         )
@@ -376,38 +351,48 @@ with tab_regime:
     conf = regime["report"]["confusion"].to_numpy()
     tn, fp, fn, tp = conf.ravel()
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric(f"P(stressed) on {p.index[-1]:%d %b %Y}", f"{p.iloc[-1]:.0%}")
-    m2.metric("Recall (stressed caught)", f"{tp / (tp + fn):.0%}")
-    m3.metric("Precision (calls right)", f"{tp / (tp + fp):.0%}")
+    m1.metric(f"P(stressed) on {p.index[-1]:%d %b %Y}", pct(p.iloc[-1]))
+    m2.metric("Recall (stressed caught)", pct(tp / (tp + fn)))
+    m3.metric("Precision (calls right)", pct(tp / (tp + fp)))
     m4.metric(
-        "Accuracy vs always-calm",
-        f"{(tp + tn) / conf.sum():.0%}",
-        f"{(tp + tn) / conf.sum() - (tn + fp) / conf.sum():+.0%}",
+        "Accuracy",
+        pct((tp + tn) / conf.sum()),
+        f"{((tp + tn) - (tn + fp)) / conf.sum() * 100:+.2f} pp vs always-calm",
         delta_color="normal",
     )
     st.plotly_chart(regime_chart(p, threshold, regime["labels"]), width="stretch")
     st.caption(
         f"Stressed = SPY's volatility over the next {R['horizon']} trading days is above the "
-        f"{R['quantile']:.0%} percentile of the past year. "
+        f"{R['quantile'] * 100:.0f}th percentile of the past year. "
         f"{R['model'].replace('_', ' ').title()} model, "
         "refit each month on labels already known, scored on 5 chronological folds with a "
         f"{R['horizon']}-day gap. Grey = months that turned out stressed."
     )
-    st.dataframe(
-        folds[
-            [
-                "test_start",
-                "test_end",
-                "stressed_share",
-                "precision",
-                "recall",
-                "accuracy",
-                "baseline_accuracy",
-            ]
-        ],
-        width="stretch",
-        hide_index=True,
+    fold_table = folds[
+        [
+            "test_start",
+            "test_end",
+            "stressed_share",
+            "precision",
+            "recall",
+            "accuracy",
+            "baseline_accuracy",
+        ]
+    ].rename(
+        columns={
+            "test_start": "Test from",
+            "test_end": "Test to",
+            "stressed_share": "Stressed days",
+            "precision": "Precision",
+            "recall": "Recall",
+            "accuracy": "Accuracy",
+            "baseline_accuracy": "Always-calm accuracy",
+        }
     )
+    fold_table[["Test from", "Test to"]] = fold_table[["Test from", "Test to"]].apply(
+        lambda col: col.dt.strftime("%d %b %Y")
+    )
+    st.dataframe(style_percent(fold_table), width="stretch", hide_index=True)
 
 with tab_agent:
     st.subheader("AI analyst")

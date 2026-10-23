@@ -1,5 +1,7 @@
 """Plotly chart helpers shared by notebooks and the Streamlit dashboard.
 
+Percentages always show exactly two decimals (axis ticks, hovers, labels).
+
 Presentation only: these functions take results from the finance modules and return
 ``plotly.graph_objects.Figure`` objects. They never compute finance numbers themselves
 beyond reshaping (e.g. summing weights within an asset group).
@@ -28,6 +30,7 @@ SURFACE = "#fcfcfb"
 TEXT_PRIMARY = "#0b0b0b"
 TEXT_SECONDARY = "#52514e"
 GRID = "#e6e5e0"
+PCT = ".2%"  # d3 format: 0.09 -> 9.00%
 SEQUENTIAL_BLUE = ["#cfe0f6", "#8fb8ea", "#2a78d6"]  # light -> dark, one hue
 
 
@@ -81,10 +84,10 @@ def drawdown_chart(drawdowns: pd.DataFrame, title: str = "Drawdown from peak") -
                 name=str(name),
                 mode="lines",
                 line={"color": color, "width": 2},
-                hovertemplate="%{y:.1%}",
+                hovertemplate="%{y:.2%}",
             )
         )
-    return _base_layout(fig, title, "Drawdown", ".0%")
+    return _base_layout(fig, title, "Drawdown", PCT)
 
 
 def weights_chart(
@@ -112,10 +115,10 @@ def weights_chart(
                 stackgroup="weights",
                 line={"color": SURFACE, "width": 1, "shape": "hv"},  # surface gap between fills
                 fillcolor=color,
-                hovertemplate="%{y:.0%}",
+                hovertemplate="%{y:.2%}",
             )
         )
-    fig = _base_layout(fig, title, "Weight", ".0%")
+    fig = _base_layout(fig, title, "Weight", PCT)
     fig.update_yaxes(range=[0, 1])
     return fig
 
@@ -147,7 +150,7 @@ def frontier_chart(
             name="Frontier",
             mode="lines",
             line={"color": SERIES_COLORS[0], "width": 2},
-            hovertemplate="vol %{x:.1%}<br>return %{y:.1%}<extra></extra>",
+            hovertemplate="vol %{x:.2%}<br>return %{y:.2%}<extra></extra>",
         )
     )
     for color, (name, (vol, ret)) in zip(SERIES_COLORS[1:], portfolios.items(), strict=False):
@@ -158,7 +161,7 @@ def frontier_chart(
                 name=name,
                 mode="markers",
                 marker={"color": color, "size": 10, "line": {"color": SURFACE, "width": 2}},
-                hovertemplate="vol %{x:.1%}<br>return %{y:.1%}",
+                hovertemplate="vol %{x:.2%}<br>return %{y:.2%}",
             )
         )
         up_left = _on_frontier(frontier, vol, ret)
@@ -177,8 +180,8 @@ def frontier_chart(
             bgcolor=SURFACE,
             borderpad=2,
         )
-    fig = _base_layout(fig, title, "Expected return (annual)", ".0%")
-    fig.update_xaxes(title="Volatility (annual)", tickformat=".0%")
+    fig = _base_layout(fig, title, "Expected return (annual)", PCT)
+    fig.update_xaxes(title="Volatility (annual)", tickformat=PCT)
     fig.update_layout(hovermode="closest")
     return fig
 
@@ -258,14 +261,19 @@ def regime_chart(
             name="P(stressed)",
             mode="lines",
             line={"color": SERIES_COLORS[0], "width": 2},
-            hovertemplate="%{y:.0%}",
+            hovertemplate="%{y:.2%}",
         )
     )
-    fig.add_hline(
-        y=threshold,
-        line={"color": TEXT_SECONDARY, "width": 1, "dash": "dash"},
-        annotation_text=f"threshold {threshold:.0%}",
-        annotation_font_color=TEXT_SECONDARY,
+    # Threshold as a dashed line with a legend entry (an in-plot label collided with the data).
+    fig.add_hline(y=threshold, line={"color": TEXT_SECONDARY, "width": 1, "dash": "dash"})
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            name=f"Threshold {threshold:.2%}",
+            line={"color": TEXT_SECONDARY, "width": 1, "dash": "dash"},
+        )
     )
     if realised is not None:
         for start, end in _runs(realised.reindex(p_stressed.index) == 1):
@@ -282,6 +290,6 @@ def regime_chart(
                 marker={"color": GRID, "size": 12, "symbol": "square"},
             )
         )
-    fig = _base_layout(fig, title, "P(stressed)", ".0%")
+    fig = _base_layout(fig, title, "P(stressed)", PCT)
     fig.update_yaxes(range=[0, 1])
     return fig

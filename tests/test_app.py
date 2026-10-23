@@ -1,6 +1,7 @@
 """Headless test of the Streamlit dashboard: synthetic data, no network, temp cache."""
 
 import json
+import re
 import zlib
 from pathlib import Path
 
@@ -59,7 +60,8 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Regime",
         "Analyst",
     ]
-    assert len(app.dataframe) >= 4  # assets, frontier weights, strategies, regime folds
+    # metric tables (assets, strategies) are st.table; frontier weights and folds are dataframes
+    assert len(app.table) == 2 and len(app.dataframe) == 2
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -92,11 +94,12 @@ def test_frontier_tab_follows_the_sidebar_cap(app: AppTest, cap: float) -> None:
     weights = _frontier_weights(app)
     assert (weights.max(axis=1) <= cap + 1e-9).all(), weights.max(axis=1)
     np.testing.assert_allclose(weights.sum(axis=1), 1.0)
-    assert any(f"{cap:.0%}" in c.value for c in app.caption)  # the cap in use is shown
+    assert any(f"{cap:.2%}" in c.value for c in app.caption)  # the cap in use is shown
 
 
 def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
-    return [df.value for df in app.dataframe if "Sharpe" in df.value.columns]
+    """Assets and backtest metric tables (static st.table, so headers can wrap)."""
+    return [t.value for t in app.table if "Sharpe" in t.value.columns]
 
 
 def test_metric_tables_are_readable(app: AppTest) -> None:
@@ -121,3 +124,19 @@ def test_weights_chart_uses_readable_group_names(app: AppTest) -> None:
         names |= {t.get("name") for t in json.loads(chart.proto.spec)["data"]}
     assert {"GCC equity", "Global equity", "Bonds", "Gold"} <= names
     assert not {"gcc_equity", "real_assets"} & names
+
+
+def test_every_percentage_metric_has_two_decimals(app: AppTest) -> None:
+    percents = [m.value for m in app.metric if m.value.endswith("%")]
+    assert len(percents) >= 6  # Monte Carlo and Regime headline numbers
+    assert all(re.fullmatch(r"-?\d+\.\d{2}%", v) for v in percents), percents
+    assert all("pp vs always-calm" in m.delta for m in app.metric if m.label == "Accuracy")
+
+
+def test_cap_caption_uses_two_decimals(app: AppTest) -> None:
+    assert any("at most **40.00%** per asset" in c.value for c in app.caption)
+
+
+def test_benchmark_caption_uses_two_decimals(app: AppTest) -> None:
+    text = " ".join(c.value for c in app.caption)
+    assert "holds 60.00% SPY and 40.00% AGG; SPY holds 100.00%" in text
