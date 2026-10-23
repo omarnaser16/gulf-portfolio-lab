@@ -53,7 +53,8 @@ def get_prices(
     Raises
     ------
     ValueError
-        If ``tickers`` is empty, or if no data is returned for any ticker.
+        If ``tickers`` is empty, or if any ticker comes back with no data
+        (yfinance returns an all-NaN column instead of raising).
     """
     raise NotImplementedError
 
