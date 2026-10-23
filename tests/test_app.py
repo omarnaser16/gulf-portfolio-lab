@@ -110,9 +110,23 @@ def test_regime_toggle_adds_regime_strategies(app: AppTest) -> None:
     assert "Equal weight + regime" in names
 
 
-def test_infeasible_cap_shows_error(app: AppTest) -> None:
-    app.slider(key="max_weight").set_value(0.10).run()  # 10% x 9 assets < 100%
-    assert app.error
+def test_too_low_cap_explains_instead_of_stopping(app: AppTest) -> None:
+    app.slider(key="max_weight").set_value(0.20).run()  # 20% x 4 holdings < 100%
+    assert not app.exception, app.exception
+    assert any("can't hold 4 holdings" in i.value for i in app.info)
+    assert app.dataframe  # the Portfolio tab still works, so the cap or holdings can be fixed
+
+
+def test_sidebar_has_no_asset_picker_and_holdings_drive_the_tabs(app: AppTest) -> None:
+    keys = {w.key for w in app.sidebar.get("multiselect") + app.sidebar.get("text_input")}
+    assert not {"presets", "custom_tickers"} & keys
+    assert not any(s.key == "max_weight" for s in app.sidebar.slider)
+    assert app.slider(key="max_weight").label == "Max weight per asset (optimiser limit)"
+    assets_table = _metric_tables(app)[0]
+    assert set(assets_table.index) == {"SPY", "AGG", "GLD", "KSA"}  # the default holdings
+    _set_holdings(app, [{"ticker": "SPY", "group": "Global equity", "value": 100.0}])
+    assert not app.exception, app.exception
+    assert any("Add at least two holdings" in i.value for i in app.info)
 
 
 def _frontier_weights(app: AppTest) -> pd.DataFrame:
@@ -125,8 +139,8 @@ def _frontier_weights(app: AppTest) -> pd.DataFrame:
     return tables[0]
 
 
-@pytest.mark.parametrize("cap", [0.15, 0.30, 0.75])
-def test_frontier_tab_follows_the_sidebar_cap(app: AppTest, cap: float) -> None:
+@pytest.mark.parametrize("cap", [0.30, 0.50, 0.75])
+def test_frontier_tab_follows_the_cap(app: AppTest, cap: float) -> None:
     app.slider(key="max_weight").set_value(cap).run()
     assert not app.exception, app.exception
     weights = _frontier_weights(app)
@@ -345,8 +359,15 @@ def test_latest_data_is_the_default_with_as_of_line(app: AppTest) -> None:
     assert any("Data as of 30 Sep 2026" in m.value and "README" in m.value for m in app.markdown)
 
 
-def test_invalid_typed_ticker_gets_a_friendly_warning(app: AppTest) -> None:
-    app.text_input(key="custom_tickers").set_value("NOPE.AE").run()
+def test_invalid_holding_gets_a_friendly_warning(app: AppTest) -> None:
+    _set_holdings(
+        app,
+        [
+            {"ticker": "SPY", "group": "Global equity", "value": 50.0},
+            {"ticker": "AGG", "group": "Bonds", "value": 30.0},
+            {"ticker": "NOPE.AE", "group": "GCC", "value": 20.0},
+        ],
+    )
     assert not app.exception, app.exception
     warning = " ".join(w.value for w in app.warning)
     assert "NOPE.AE" in warning and "no data on yahoo finance" in warning
@@ -354,7 +375,8 @@ def test_invalid_typed_ticker_gets_a_friendly_warning(app: AppTest) -> None:
 
 
 def test_gcc_preset_converts_and_aligns_calendars(app: AppTest) -> None:
-    app.multiselect(key="presets").set_value(["GCC stocks"]).run()
+    app.selectbox(key="ws_preset").set_value("GCC stocks")
+    app.button(key="ws_preset_go").click().run()
     assert not app.exception, app.exception
     info = " ".join(i.value for i in app.info)
     assert "Sunday to Thursday" in info and "periods a year instead of 252" in info
@@ -365,7 +387,13 @@ def test_gcc_preset_converts_and_aligns_calendars(app: AppTest) -> None:
 
 
 def test_short_history_warning(app: AppTest) -> None:
-    app.text_input(key="custom_tickers").set_value("NEWCO").run()
+    _set_holdings(
+        app,
+        [
+            {"ticker": "SPY", "group": "Global equity", "value": 50.0},
+            {"ticker": "NEWCO", "group": "Other", "value": 50.0},
+        ],
+    )
     assert not app.exception, app.exception
     assert any("NEWCO" in w.value and "trading days of history" in w.value for w in app.warning)
     # the common sample is now too short for a backtest: explained, not a crash
