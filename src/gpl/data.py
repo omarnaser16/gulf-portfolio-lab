@@ -535,3 +535,114 @@ def load_assets(
         prices.index[-1] if len(prices) else None,
         loaded_at,
     )
+
+
+# ------------------------------------------------------------------- search and live quotes
+
+SEARCH_TYPES = {"EQUITY": "Stock", "ETF": "ETF", "MUTUALFUND": "Fund", "INDEX": "Index"}
+
+
+def search_securities(query: str, max_results: int = 8) -> list[dict]:
+    """Securities matching a name or ticker on Yahoo Finance.
+
+    Returns a list of ``{"symbol", "name", "exchange", "type"}`` for stocks, ETFs, funds and
+    indices (futures, currencies and news are dropped). Empty for queries under 2 characters
+    or if Yahoo can't be reached; search is a convenience, so it never raises.
+    """
+    if len((query or "").strip()) < 2:
+        return []
+    try:
+        quotes = yf.Search(query.strip(), max_results=max_results, news_count=0).quotes
+    except Exception as e:  # network or Yahoo error: no suggestions
+        logger.warning("Search for %r failed: %s", query, e)
+        return []
+    results = []
+    for q in quotes:
+        kind = SEARCH_TYPES.get(q.get("quoteType", ""))
+        if kind and q.get("symbol"):
+            results.append(
+                {
+                    "symbol": q["symbol"],
+                    "name": q.get("longname") or q.get("shortname") or q["symbol"],
+                    "exchange": q.get("exchDisp") or q.get("exchange", ""),
+                    "type": kind,
+                }
+            )
+    return results
+
+
+@dataclass
+class Quote:
+    """Latest price of one security, in its own currency and in USD."""
+
+    symbol: str
+    name: str
+    exchange: str
+    quote_type: str
+    currency: str
+    price: float
+    price_usd: float
+    as_of: str  # market time of the price, in the exchange's time zone
+
+
+def usd_value(amount: float, currency: str, usd_per_unit: float | None = None) -> float:
+    """Convert one amount in ``currency`` (possibly a sub-unit) to USD.
+
+    Pegged currencies use ``PEGS``; others need ``usd_per_unit`` (local units per USD as
+    quoted by Yahoo ``C=X``).
+    """
+    base, divisor = SUBUNITS.get(currency, (currency, 1))
+    amount = amount / divisor
+    if base == "USD":
+        return amount
+    if base in PEGS:
+        return amount / PEGS[base]
+    if usd_per_unit is None:
+        raise ValueError(f"no exchange rate for {base}")
+    return amount / usd_per_unit
+
+
+def _latest_rate(currency: str) -> float | None:
+    """Latest Yahoo rate ``{currency}=X`` (units of ``currency`` per USD), or None."""
+    try:
+        rate = yf.Ticker(f"{currency}=X").info["regularMarketPrice"]
+    except Exception:
+        return None
+    return float(rate) if rate else None
+
+
+def latest_quote(ticker: str) -> Quote | None:
+    """Latest price, name and market time from Yahoo; ``None`` if the ticker has no quote."""
+    from datetime import UTC, datetime
+    from zoneinfo import ZoneInfo
+
+    try:
+        info = yf.Ticker(ticker).info
+        price, currency = info["regularMarketPrice"], info["currency"]
+    except Exception:
+        return None
+    if price is None or currency is None:
+        return None
+    base = SUBUNITS.get(currency, (currency, 1))[0]
+    rate = None
+    if base not in ("USD", *PEGS):
+        rate = _latest_rate(base)  # read as a plain rate: an FX quote's own currency is base
+        if rate is None:
+            return None
+    stamp = info.get("regularMarketTime")
+    zone = info.get("exchangeTimezoneName") or "UTC"
+    as_of = (
+        datetime.fromtimestamp(stamp, UTC).astimezone(ZoneInfo(zone)).strftime("%d %b %Y %H:%M %Z")
+        if stamp
+        else "unknown"
+    )
+    return Quote(
+        symbol=ticker,
+        name=info.get("longName") or info.get("shortName") or ticker,
+        exchange=info.get("fullExchangeName") or info.get("exchange", ""),
+        quote_type=info.get("quoteType", ""),
+        currency=currency,
+        price=float(price),
+        price_usd=usd_value(float(price), currency, rate),
+        as_of=as_of,
+    )

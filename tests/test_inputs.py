@@ -56,3 +56,36 @@ def test_parse_holdings_amounts_and_duplicates() -> None:
 
 def test_parse_holdings_empty() -> None:
     assert parse_holdings("") == ({}, [], "")
+
+
+# ------------------------------------------------------------------- workstation holdings
+
+from inputs import guess_group, normalise_holdings  # noqa: E402
+
+CONFIG = {"gcc_equity": ["KSA"], "bonds": ["AGG"], "real_assets": ["GLD"], "global_equity": ["SPY"]}
+
+
+def test_guess_group() -> None:
+    assert guess_group("KSA", "NYSEArca", "ETF", "iShares MSCI Saudi Arabia", CONFIG) == "GCC"
+    assert guess_group("2222.SR", "Saudi", "Stock", "Saudi Arabian Oil Co.", CONFIG) == "GCC"
+    assert guess_group("XYZ", "DFM", "Stock", "Some Dubai Co", CONFIG) == "GCC"
+    assert (
+        guess_group("IEF", "NasdaqGM", "ETF", "iShares 7-10 Year Treasury Bond ETF", CONFIG)
+        == "Bonds"
+    )
+    assert guess_group("IAU", "NYSEArca", "ETF", "iShares Gold Trust", CONFIG) == "Gold"
+    assert guess_group("AAPL", "NasdaqGS", "Stock", "Apple Inc.", CONFIG) == "Global equity"
+    assert guess_group("^GSPC", "SNP", "Index", "S&P 500", CONFIG) == "Other"
+
+
+def test_normalise_holdings_usd_and_pct() -> None:
+    assert normalise_holdings({"SPY": 6000, "AGG": 4000}, "usd") == (
+        {"SPY": 0.6, "AGG": 0.4},
+        [],
+        "",
+    )
+    w, problems, note = normalise_holdings({"SPY": 50, "AGG": 45, "GLD": 0}, "pct")
+    assert w == {"SPY": 50 / 95, "AGG": 45 / 95}
+    assert problems == ["GLD: enter a positive weight."]
+    assert note == "Weights add up to 95.00%, so they were scaled to 100.00%."
+    assert normalise_holdings({}, "usd") == ({}, [], "")

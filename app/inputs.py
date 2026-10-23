@@ -80,3 +80,75 @@ def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], 
         note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
     weights = {t: v / total for t, v in holdings.items()} if total else {}
     return weights, problems, note
+
+
+# ------------------------------------------------------------------- workstation holdings
+
+GROUPS = ["GCC", "Global equity", "Bonds", "Gold", "Other"]
+CONFIG_GROUP = {
+    "gcc_equity": "GCC",
+    "global_equity": "Global equity",
+    "bonds": "Bonds",
+    "real_assets": "Gold",
+}
+GCC_EXCHANGES = {
+    "saudi",
+    "sau",
+    "dfm",
+    "dubai",
+    "adx",
+    "abu dhabi",
+    "doh",
+    "qatar",
+    "kuw",
+    "kuwait",
+    "bah",
+    "bahrain",
+    "msm",
+    "muscat",
+}
+BOND_WORDS = ("bond", "treasury", "aggregate", "fixed income", "sukuk", "t-bill", "gilt")
+
+
+def guess_group(
+    symbol: str,
+    exchange: str,
+    quote_type: str,
+    name: str,
+    config_groups: Mapping[str, Sequence[str]],
+) -> str:
+    """Best guess of a holding's group; the user can change it in the holdings table."""
+    for key, members in config_groups.items():
+        if symbol in members and key in CONFIG_GROUP:
+            return CONFIG_GROUP[key]
+    if symbol.upper().endswith(GCC_SUFFIXES) or (exchange or "").lower() in GCC_EXCHANGES:
+        return "GCC"
+    lowered = (name or "").lower()
+    if any(w in lowered for w in BOND_WORDS):
+        return "Bonds"
+    if "gold" in lowered:
+        return "Gold"
+    if quote_type in ("Stock", "ETF", "Fund", "EQUITY", "MUTUALFUND"):
+        return "Global equity"
+    return "Other"
+
+
+def normalise_holdings(
+    values: Mapping[str, float], mode: str
+) -> tuple[dict[str, float], list[str], str]:
+    """Holding values (USD amounts or % weights) -> weights summing to 1.
+
+    Returns weights, problems (non-positive or missing values; those holdings are left out)
+    and a note when percentages had to be rescaled to 100%.
+    """
+    problems = [
+        f"{t}: enter a positive {'amount' if mode == 'usd' else 'weight'}."
+        for t, v in values.items()
+        if v is None or not v > 0
+    ]
+    valid = {t: float(v) for t, v in values.items() if v is not None and v > 0}
+    total = sum(valid.values())
+    note = ""
+    if valid and mode == "pct" and abs(total - 100) > 0.01:
+        note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
+    return ({t: v / total for t, v in valid.items()} if total else {}), problems, note

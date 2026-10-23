@@ -313,3 +313,32 @@ def summary_table(
         }
     )
     return table
+
+
+def correlation_to_rest(returns: pd.DataFrame, weights: pd.Series) -> pd.Series:
+    """Correlation of each holding with the rest of the portfolio (excluding itself).
+
+    Parameters
+    ----------
+    returns : pd.DataFrame
+        Simple returns, one column per holding.
+    weights : pd.Series
+        Portfolio weights indexed by ticker.
+
+    Returns
+    -------
+    pd.Series
+        For each holding, the correlation between its returns and the returns of the other
+        holdings combined at their relative weights. A low or negative value means the
+        holding diversifies the rest; NaN if the portfolio has only one holding.
+    """
+    weights = weights.reindex(returns.columns).fillna(0.0)
+    out = {}
+    for t in returns.columns:
+        rest = weights.drop(t)
+        if rest.sum() <= 0:
+            out[t] = np.nan
+            continue
+        rest_returns = returns[rest.index] @ (rest / rest.sum())
+        out[t] = returns[t].corr(rest_returns)
+    return pd.Series(out, name="correlation_to_rest")
