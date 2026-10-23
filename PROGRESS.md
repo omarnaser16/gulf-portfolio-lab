@@ -106,3 +106,8 @@
   Sharpe 0.39 (was 0.42; static equal weight 0.49). The Week 2 strategy numbers above are now out of date.
 - **Learned:** class weights trade calibration for recall; ROC AUC doesn't care about calibration,
   Brier does. A threshold only means something if the probabilities are calibrated.
+- **Notebook 02 updated** with the new numbers and a key-results summary; every figure in the text is
+  printed by the notebook itself. New finding: 2022 *was* clearly stressed (55.38% of days), but the
+  model's month-end probability crossed 50% back and forth (Jan above, Feb–Mar below, Apr above, May
+  below, Jun above), so equal weight + regime whipsawed: 0.44% in costs vs 0.04% and −13.18% vs
+  −12.57% for static. A gradual or two-month rule might help (untested).
