@@ -43,7 +43,11 @@ def test_held_up() -> None:
 def test_max_risk_adjusted_picks_highest_walk_forward_sharpe() -> None:
     rec = recommend("max_risk_adjusted", table(BASE))
     assert rec.choice == "Max Sharpe" and rec.ranking[0] == "Max Sharpe"
-    assert "Highest walk-forward Sharpe" in rec.rule and rec.reasons[0].startswith("Max Sharpe")
+    assert "Highest walk-forward Sharpe" in rec.rule
+    assert (
+        rec.reasons[0]
+        == "Max Sharpe ranks first under the rule: highest walk-forward Sharpe ratio after costs."
+    )
 
 
 def test_a_method_that_did_not_hold_up_is_skipped() -> None:

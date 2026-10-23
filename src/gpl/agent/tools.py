@@ -16,8 +16,23 @@ import pandas as pd
 
 from gpl import backtest as bt
 from gpl import regime as rg
-from gpl.data import clean_prices, get_prices, get_risk_free, load_assets, to_returns
-from gpl.metrics import PERIODS_PER_YEAR, max_drawdown, summary_table
+from gpl.data import (
+    BenchmarkData,
+    clean_prices,
+    get_prices,
+    get_risk_free,
+    load_assets,
+    to_returns,
+)
+from gpl.metrics import (
+    PERIODS_PER_YEAR,
+    annualised_volatility,
+    benchmark_metrics,
+    beta,
+    correlation_clusters,
+    max_drawdown,
+    summary_table,
+)
 from gpl.montecarlo import (
     goal_probability,
     path_max_drawdowns,
@@ -27,6 +42,7 @@ from gpl.montecarlo import (
 )
 from gpl.optimise import (
     OptimisationSpec,
+    ledoit_wolf_cov,
     max_sharpe,
     min_variance,
     optimise,
@@ -70,7 +86,9 @@ class AnalystContext:
     universe: Sequence[str] | None = None  # strategy universe; None = every loaded column
     user_portfolio: Mapping[str, float] | None = None  # ticker -> weight (sums to 1)
     asset_notes: pd.DataFrame | None = None  # data.load_assets history (currency, start date)
-    optimisation: dict | None = None  # latest run_optimisation report (set by the app)
+    optimisation: dict | None = None  # latest optimisation report (set by the app)
+    benchmark: BenchmarkData | None = None  # the benchmark chosen on the Portfolio tab
+    diagnosis: dict | None = None  # latest diagnose_portfolio report (set by the app)
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -194,6 +212,7 @@ def build_context(
             "var_level": d["var_level"],
             "regime": r,
             "montecarlo": cfg["montecarlo"],
+            "optimise_lab": cfg.get("optimise_lab", {}),
         },
         universe=[t for t in universe if t in data.prices.columns],
         user_portfolio=dict(portfolio) if portfolio else None,
@@ -531,6 +550,282 @@ def run_optimisation(
     return report, (result.weights if result.feasible else None)
 
 
+def _run_settings(ctx: AnalystContext) -> dict:
+    return dict(
+        rebalance=ctx.settings["rebalance"],
+        lookback=ctx.settings["lookback"],
+        cost_bps=ctx.settings["cost_bps"],
+    )
+
+
+def _rf_annual(ctx: AnalystContext, since: pd.Timestamp) -> float:
+    """Average risk-free rate since ``since``, compounded to a year."""
+    rf_daily = ctx.rf.loc[since:]
+    return float((1 + rf_daily).prod() ** (PERIODS_PER_YEAR / len(rf_daily)) - 1)
+
+
+def _benchmark_rows(
+    ctx: AnalystContext, port: pd.Series, bench: BenchmarkData
+) -> tuple[dict, dict]:
+    """Formatted portfolio-vs-benchmark statistics (``gpl.metrics.benchmark_metrics``)."""
+    rel = benchmark_metrics(port, bench.returns, ctx.rf, ctx.periods, not bench.is_cash)
+    dates = port.index.intersection(bench.returns.index)
+    table = summary_table(
+        pd.DataFrame({"Your portfolio": port.loc[dates], "Benchmark": bench.returns.loc[dates]}),
+        rf=ctx.rf,
+        periods_per_year=ctx.periods,
+    )
+    absolute = {
+        n: {
+            "cagr": pct(table.loc[n, "cagr"]),
+            "annual_volatility": pct(table.loc[n, "ann_vol"]),
+            "sharpe": num(table.loc[n, "sharpe"]),
+            "max_drawdown": pct(table.loc[n, "max_drawdown"]),
+        }
+        for n in table.index
+    }
+    na = "not defined (cash has no market risk)"
+
+    def fmt(x: float, as_pct: bool) -> str:
+        if pd.isna(x):
+            return na if bench.is_cash else "n/a"
+        return pct(x) if as_pct else num(x)
+
+    relative = {
+        "beta": fmt(rel["beta"], False),
+        "alpha_annual_jensen": fmt(rel["alpha"], True),
+        "tracking_error": fmt(rel["tracking_error"], True),
+        "information_ratio": fmt(rel["information_ratio"], False),
+        "up_capture": fmt(rel["up_capture"], True),
+        "down_capture": fmt(rel["down_capture"], True),
+        "correlation": fmt(rel["correlation"], False),
+        "period": f"{rel['start'].date()} to {rel['end'].date()}",
+    }
+    return absolute, relative
+
+
+def diagnose_portfolio(ctx: AnalystContext, current: Mapping[str, float]) -> dict:
+    """Diagnose the user's holdings: risk by holding, clusters, and the chosen benchmark.
+
+    Wraps ``summary_table``, ``beta``, ``risk_contributions``, ``correlation_clusters`` and
+    ``benchmark_metrics``. Per-holding figures use the full common sample; the comparison with
+    the benchmark uses the current weights rebalanced monthly after costs (as the backtests do).
+    """
+    w = pd.Series(current, dtype=float)
+    holdings = list(w.index)
+    rets = ctx.all_returns[holdings]
+    table = summary_table(rets, rf=ctx.rf, periods_per_year=ctx.periods)
+    shares = risk_contributions(w, rets.cov())
+    bench = ctx.benchmark
+    betas = (
+        beta(rets.loc[rets.index.intersection(bench.returns.index)], bench.returns)
+        if bench is not None and not bench.is_cash  # cash has no market risk: beta undefined
+        else pd.Series(np.nan, index=holdings)
+    )
+    threshold = ctx.settings.get("optimise_lab", {}).get("cluster_threshold", 0.70)
+    clusters = [
+        {
+            "holdings": c["members"],
+            "average_correlation": num(c["average_correlation"]),
+            "share_of_money": pct(w[c["members"]].sum()),
+            "share_of_risk": pct(shares[c["members"]].sum()),
+        }
+        for c in correlation_clusters(rets, threshold)
+    ]
+    report: dict[str, Any] = {
+        "sample": f"{rets.index[0].date()} to {rets.index[-1].date()}",
+        "holdings": {
+            t: {
+                "weight": pct(w[t]),
+                "share_of_risk": pct(shares[t]),
+                "annual_volatility": pct(table.loc[t, "ann_vol"]),
+                "sharpe": num(table.loc[t, "sharpe"]),
+                "beta_to_benchmark": "n/a" if pd.isna(betas[t]) else num(betas[t]),
+            }
+            for t in holdings
+        },
+        "correlation_clusters": clusters,
+        "cluster_rule": f"holdings whose average pairwise correlation is at least {threshold:.2f}",
+    }
+    if bench is not None:
+        port = bt.run_backtest(
+            ctx.prices[holdings], bt.fixed_weights(current), **_run_settings(ctx)
+        ).returns.iloc[1:]
+        absolute, relative = _benchmark_rows(ctx, port, bench)
+        report["benchmark"] = {"name": bench.name, "represents": bench.represents}
+        report["vs_benchmark"] = {"absolute": absolute, "relative": relative}
+        report["benchmark_notes"] = bench.notes
+    return report
+
+
+@dataclass
+class CandidateRun:
+    """What the Optimise tab draws besides the report: equity curves and latest weights."""
+
+    equity: pd.DataFrame
+    latest_weights: pd.DataFrame  # rows = Current + candidates, columns = holdings
+    recommendation: Any  # gpl.recommend.Recommendation
+
+
+def run_candidates(
+    ctx: AnalystContext,
+    goal: str,
+    limits: OptimisationSpec,
+    current: Mapping[str, float],
+    target: float | None = None,
+) -> tuple[dict, CandidateRun]:
+    """Run every candidate method within ``limits``, walk-forward after costs, and recommend one.
+
+    Covariances use Ledoit-Wolf shrinkage (each month on that month's window only). Expected
+    returns are window means. The recommendation is made by ``gpl.recommend.recommend``, a
+    fixed rule per goal; this function only formats its inputs and outputs.
+    """
+    from gpl.agent.spec import describe_spec
+    from gpl.recommend import (
+        BENCHMARK,
+        CANDIDATES,
+        CURRENT,
+        GOALS,
+        KEEP,
+        candidate_specs,
+        recommend,
+        volatility_target,
+    )
+
+    lab = ctx.settings.get("optimise_lab", {})
+    holdings = list(current)
+    rets = ctx.all_returns[holdings]
+    mu = rets.mean() * ctx.periods
+    cov, shrinkage = ledoit_wolf_cov(rets, ctx.periods)
+    rf_annual = _rf_annual(ctx, rets.index[0])
+    run = _run_settings(ctx)
+    prices = ctx.prices[holdings]
+
+    results = {CURRENT: bt.run_backtest(prices, bt.fixed_weights(current), **run)}
+    period = results[CURRENT].returns.index
+    bench = ctx.benchmark
+    bench_returns = None if bench is None else bench.returns.reindex(period).dropna()
+    current_vol = float(annualised_volatility(results[CURRENT].returns, ctx.periods))
+    bench_vol = (
+        None if bench_returns is None else float(annualised_volatility(bench_returns, ctx.periods))
+    )
+    vol_target = volatility_target(goal, target, current_vol, bench_vol, limits.max_volatility)
+    specs = candidate_specs(limits, vol_target)
+
+    in_sample, feasible, reasons, infeasible_months = {}, {}, {}, {}
+    for name, spec in specs.items():
+        full = optimise(mu, cov, spec, rf_annual)
+        feasible[name], reasons[name] = full.feasible, full.reasons
+        in_sample[name] = full.sharpe if full.feasible else float("nan")
+        if not full.feasible:
+            continue
+        walk = bt.spec_strategy(
+            spec,
+            rf=ctx.rf,
+            periods_per_year=ctx.periods,
+            fallback=current,
+            cov_method="ledoit_wolf",
+        )
+        results[name] = bt.run_backtest(prices, walk, **run)
+        infeasible_months[name] = len(walk.infeasible_dates)
+
+    frame = pd.DataFrame({n: r.returns for n, r in results.items()})
+    if bench_returns is not None:
+        frame[BENCHMARK] = bench_returns
+    frame = frame.dropna()
+    metrics = summary_table(frame, rf=ctx.rf, periods_per_year=ctx.periods)
+    w_now = pd.Series(current, dtype=float)
+    current_in_sample = portfolio_performance(w_now, mu, cov)
+    table = pd.DataFrame(
+        {
+            "cagr": metrics["cagr"],
+            "volatility": metrics["ann_vol"],
+            "sharpe": metrics["sharpe"],
+            "max_drawdown": metrics["max_drawdown"],
+        }
+    )
+    table["in_sample_sharpe"] = pd.Series(in_sample)
+    table.loc[CURRENT, "in_sample_sharpe"] = (current_in_sample[0] - rf_annual) / current_in_sample[
+        1
+    ]
+    table["feasible"] = [n in feasible and feasible[n] for n in table.index]
+    rec = recommend(
+        goal,
+        table,
+        target,
+        tolerance=lab.get("volatility_tolerance", 0.005),
+        held_up_ratio=lab.get("held_up_ratio", 0.5),
+    )
+
+    months = len(results[CURRENT].weights)
+    rows = {}
+    for name in table.index:
+        row = {
+            "cagr": pct(table.loc[name, "cagr"]),
+            "annual_volatility": pct(table.loc[name, "volatility"]),
+            "sharpe": num(table.loc[name, "sharpe"]),
+            "max_drawdown": pct(table.loc[name, "max_drawdown"]),
+        }
+        if name in results:
+            row["turnover_per_year"] = times(results[name].turnover.iloc[1:].mean() * 12)
+        if name in CANDIDATES:
+            row["in_sample_sharpe"] = num(in_sample[name])
+            row["held_up_out_of_sample"] = "yes" if rec.held_up.get(name) else "no"
+            row["months_limits_not_met"] = f"{infeasible_months[name]} of {months}"
+        rows[name] = row
+    latest = pd.DataFrame(
+        {n: r.weights.iloc[-1] for n, r in results.items() if n != CURRENT}
+    ).T.reindex(columns=holdings)
+    latest.loc[CURRENT] = w_now.reindex(holdings)
+    latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
+
+    report: dict[str, Any] = {
+        "goal": GOALS[goal],
+        "target": None if target is None else pct(target),
+        "limits": describe_spec(limits)[1:],  # without the objective line
+        "candidates": {n: CANDIDATES[n] for n in specs},
+        "volatility_target_for_target_volatility_candidate": pct(vol_target),
+        "covariance": f"Ledoit-Wolf shrinkage (intensity {shrinkage:.2f} on the full sample; "
+        "re-estimated each month on the trailing window only)",
+        "walk_forward_after_costs": rows,
+        "backtest_period": f"{frame.index[0].date()} to {frame.index[-1].date()}",
+        "infeasible_candidates": {n: reasons[n] for n in specs if not feasible[n]},
+        "recommendation": {
+            "choice": rec.choice,
+            "rule": rec.rule,
+            "reasons": rec.reasons,
+            "ranking_under_the_rule": rec.ranking,
+        },
+        "caveats": (
+            "Walk-forward results re-optimise each month using only data available at the "
+            "time, after trading costs. They are historical and risk-adjusted, not a forecast "
+            "or a promise of higher returns. Choosing the best of several methods on the same "
+            "period is itself a mild form of hindsight. Expected returns are historical means "
+            "(only the covariance is shrunk), and the target-volatility level is set from the "
+            "whole period."
+        ),
+    }
+    if bench is not None:
+        report["benchmark"] = {"name": bench.name, "represents": bench.represents}
+    if rec.choice != KEEP:
+        report["recommended_latest_weights"] = {
+            t: {
+                "current": pct(w_now[t]),
+                "recommended": pct(latest.loc[rec.choice, t]),
+                "change": f"{(latest.loc[rec.choice, t] - w_now[t]) * 100:+.2f} pp",
+            }
+            for t in holdings
+        }
+    equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns})
+    return report, CandidateRun(equity, latest, rec)
+
+
+def get_portfolio_diagnosis(ctx: AnalystContext) -> dict:
+    if ctx.diagnosis is None:
+        raise ToolError("no diagnosis yet: open the Optimise section of the Portfolio tab")
+    return ctx.diagnosis
+
+
 def get_optimisation_result(ctx: AnalystContext) -> dict:
     if not ctx.optimisation:
         raise ToolError("no optimisation has been run yet on the Portfolio tab")
@@ -651,10 +946,20 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "get_portfolio_diagnosis",
+            "Diagnosis of the user's portfolio from the Optimise section: each holding's weight, "
+            "share of risk, volatility, Sharpe and beta to the chosen benchmark; clusters of "
+            "holdings that move together; and the portfolio vs the benchmark (CAGR, volatility, "
+            "Sharpe, max drawdown, beta, alpha, tracking error, information ratio, capture, "
+            "correlation).",
+            {},
+        ),
+        tool(
             "get_optimisation_result",
-            "The optimisation the user confirmed on the Portfolio tab: the spec in plain words, "
-            "whether it could be met (and why not), current vs optimised weights, historical "
-            "and after-cost backtest comparisons (hindsight and walk-forward) and caveats.",
+            "The candidate methods run on the Portfolio tab for the user's goal and limits: "
+            "each method's walk-forward results after costs vs the current portfolio and the "
+            "benchmark, whether it held up out of sample, the recommendation chosen by a fixed "
+            "rule (with the rule and reasons), the recommended weights vs current, and caveats.",
             {},
         ),
         tool(
@@ -673,6 +978,7 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "backtest_strategies": backtest_strategies,
     "simulate_future": simulate_future,
     "get_my_portfolio": get_my_portfolio,
+    "get_portfolio_diagnosis": get_portfolio_diagnosis,
     "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
 }

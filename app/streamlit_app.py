@@ -945,7 +945,7 @@ with tab_mine:
                     rf,
                     D["var_level"],
                     periods,
-                    None if bench is None else bench.returns,
+                    None if bench is None or bench.is_cash else bench.returns,
                 ),
                 holding_names,
                 bench_name,

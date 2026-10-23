@@ -508,3 +508,35 @@ def correlation_clusters(returns: pd.DataFrame, threshold: float = 0.70) -> list
         avg = float(sub[np.triu_indices(len(members), 1)].mean())
         clusters.append({"members": members, "average_correlation": avg})
     return sorted(clusters, key=lambda c: (-len(c["members"]), -c["average_correlation"]))
+
+
+def benchmark_metrics(
+    returns: pd.Series,
+    benchmark: pd.Series,
+    rf: float | pd.Series = 0.0,
+    periods_per_year: int = PERIODS_PER_YEAR,
+    market_risk: bool = True,
+) -> dict[str, float]:
+    """Portfolio-vs-benchmark statistics on the dates both cover (unformatted).
+
+    Keys: ``beta``, ``alpha``, ``tracking_error``, ``information_ratio``, ``up_capture``,
+    ``down_capture``, ``correlation``, plus ``start``/``end`` of the shared period. Beta,
+    alpha, capture and correlation are NaN against a benchmark with no market risk: pass
+    ``market_risk=False`` for cash, whose small day-to-day rate changes would otherwise give
+    meaningless values (e.g. a 355% "up capture").
+    """
+    dates = returns.index.intersection(benchmark.index)
+    r, b = returns.loc[dates], benchmark.loc[dates]
+    moves = market_risk and b.std(ddof=1) > _ZERO_TOL
+    nan = float("nan")
+    return {
+        "beta": beta(r, b) if moves else nan,
+        "alpha": alpha(r, b, rf, periods_per_year) if moves else nan,
+        "tracking_error": tracking_error(r, b, periods_per_year),
+        "information_ratio": information_ratio(r, b, periods_per_year),
+        "up_capture": up_capture(r, b) if moves else nan,
+        "down_capture": down_capture(r, b) if moves else nan,
+        "correlation": float(r.corr(b)) if moves else nan,
+        "start": dates[0],
+        "end": dates[-1],
+    }

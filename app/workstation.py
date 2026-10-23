@@ -21,16 +21,12 @@ from streamlit_searchbox import st_searchbox
 
 from formatting import pct
 from gpl.metrics import (
-    alpha,
+    benchmark_metrics,
     beta,
     calmar_ratio,
     correlation_to_rest,
-    down_capture,
-    information_ratio,
     summary_table,
-    tracking_error,
     trailing_return,
-    up_capture,
 )
 from gpl.optimise import risk_contributions
 from gpl.plots import allocation_chart
@@ -410,31 +406,39 @@ def benchmark_comparison(
 ) -> pd.DataFrame:
     """Portfolio vs benchmark on the dates both cover, formatted. Every figure from ``gpl``.
 
-    Relative measures (beta, alpha, tracking error, information ratio, capture, correlation)
-    describe the portfolio against the benchmark, so the benchmark column shows '–'. Against
-    cash, beta, correlation and capture are not defined (cash has no market risk).
+    Relative measures describe the portfolio against the benchmark, so the benchmark column
+    shows '–'. Against cash, beta, alpha, correlation and capture are not defined (cash has no
+    market risk).
     """
     dates = portfolio.index.intersection(benchmark.index)
-    p, b = portfolio.loc[dates], benchmark.loc[dates]
-    both = pd.DataFrame({"Your portfolio": p, "Benchmark": b})
+    both = pd.DataFrame({"Your portfolio": portfolio.loc[dates], "Benchmark": benchmark.loc[dates]})
     table = summary_table(both, rf=rf, periods_per_year=periods)
+    rel = benchmark_metrics(portfolio, benchmark, rf, periods, market_risk=not is_cash)
     na = "n/a (cash has no market risk)"
-    rows = {
-        "Return (CAGR)": table["cagr"].map(pct),
-        "Volatility (ann.)": table["ann_vol"].map(pct),
-        "Sharpe": table["sharpe"].map("{:.2f}".format),
-        "Max drawdown": table["max_drawdown"].map(pct),
-    }
+
+    def ratio(x: float) -> str:
+        return na if is_cash and pd.isna(x) else ("–" if pd.isna(x) else f"{x:.2f}")
+
+    def share(x: float) -> str:
+        return na if is_cash and pd.isna(x) else ("–" if pd.isna(x) else pct(x))
+
+    out = pd.DataFrame(
+        {
+            "Return (CAGR)": table["cagr"].map(pct),
+            "Volatility (ann.)": table["ann_vol"].map(pct),
+            "Sharpe": table["sharpe"].map("{:.2f}".format),
+            "Max drawdown": table["max_drawdown"].map(pct),
+        }
+    ).T
     relative = {
-        "Beta": na if is_cash else f"{beta(p, b):.2f}",
-        "Alpha (ann., Jensen)": na if is_cash else pct(alpha(p, b, rf, periods)),
-        "Tracking error (ann.)": pct(tracking_error(p, b, periods)),
-        "Information ratio": f"{information_ratio(p, b, periods):.2f}",
-        "Up capture": na if is_cash else pct(up_capture(p, b)),
-        "Down capture": na if is_cash else pct(down_capture(p, b)),
-        "Correlation": na if is_cash else f"{p.corr(b):.2f}",
+        "Beta": ratio(rel["beta"]),
+        "Alpha (ann., Jensen)": share(rel["alpha"]),
+        "Tracking error (ann.)": share(rel["tracking_error"]),
+        "Information ratio": ratio(rel["information_ratio"]),
+        "Up capture": share(rel["up_capture"]),
+        "Down capture": share(rel["down_capture"]),
+        "Correlation": ratio(rel["correlation"]),
     }
-    out = pd.DataFrame(rows).T
     for name, value in relative.items():
         out.loc[name] = [value, "–"]
     return out

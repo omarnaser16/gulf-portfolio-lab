@@ -250,5 +250,5 @@ def recommend(
             "portfolio over the same period."
         )
         return Recommendation(KEEP, rule, reasons, ranking, survived)
-    reasons.insert(0, f"{pick} fits the goal best under the rule: {rule}")
+    reasons.insert(0, f"{pick} ranks first under the rule: {rule[0].lower()}{rule[1:]}")
     return Recommendation(pick, rule, reasons, ranking, survived)

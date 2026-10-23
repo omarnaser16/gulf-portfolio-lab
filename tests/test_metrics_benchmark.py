@@ -6,6 +6,7 @@ import pytest
 
 from gpl.metrics import (
     alpha,
+    benchmark_metrics,
     beta,
     calmar_ratio,
     correlation_clusters,
@@ -104,3 +105,18 @@ def test_correlation_clusters() -> None:
     assert clusters[0]["average_correlation"] == pytest.approx(frame["SPY"].corr(frame["URTH"]))
     assert correlation_clusters(frame[["SPY"]]) == []
     assert correlation_clusters(frame, threshold=0.999) == []
+
+
+def test_benchmark_metrics_bundle_and_cash() -> None:
+    out = benchmark_metrics(R, B)
+    assert out["beta"] == pytest.approx(beta(R, B)) and out["up_capture"] == pytest.approx(1.0)
+    assert out["down_capture"] == pytest.approx(0.875) and out["start"] == IDX[0]
+    cash = benchmark_metrics(R, pd.Series(0.0001, index=IDX))
+    assert all(np.isnan(cash[k]) for k in ("beta", "alpha", "up_capture", "correlation"))
+    assert cash["tracking_error"] > 0  # still defined: how far you stray from cash
+    # a real T-bill series drifts a little each day; it still has no market risk
+    drifting = pd.Series([0.0001, 0.00011, 0.000105, 0.0001], index=IDX)
+    raw = benchmark_metrics(R, drifting)
+    assert not np.isnan(raw["beta"])  # numerically defined, but meaningless
+    cash = benchmark_metrics(R, drifting, market_risk=False)
+    assert all(np.isnan(cash[k]) for k in ("beta", "alpha", "up_capture", "correlation"))

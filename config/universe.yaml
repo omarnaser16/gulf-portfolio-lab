@@ -94,3 +94,9 @@ benchmark_choices:
   "Cash (13-week T-bills)":
     cash: true
     represents: "13-week US Treasury bills (^IRX), the same rate used for Sharpe ratios; no fund fees."
+
+# Optimise tab: candidate methods judged walk-forward, after costs (see gpl/recommend.py).
+optimise_lab:
+  cluster_threshold: 0.70          # holdings with average correlation >= this form a cluster
+  volatility_tolerance: 0.005      # 0.50 pp: "about the same" / "on target" volatility
+  held_up_ratio: 0.50              # keeps >= 50% of its in-sample Sharpe out of sample
