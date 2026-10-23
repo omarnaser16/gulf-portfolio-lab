@@ -22,6 +22,8 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
+RISK_FREE_TICKER = "^IRX"
+PERIODS_PER_YEAR = 252
 
 
 def get_prices(
@@ -213,6 +215,15 @@ def get_risk_free(
     pd.Series
         Daily risk-free rate as a decimal, named ``"rf"``. ``^IRX`` is quoted as an
         annual percentage (``5.2`` means 5.2%), so it is divided by 100 and converted
-        with ``(1 + rf) ** (1 / 252) - 1``.
+        with ``(1 + rf) ** (1 / 252) - 1``. Missing days are forward-filled as in
+        ``clean_prices``.
+
+    Notes
+    -----
+    ``^IRX`` is a discount yield rather than a true compounding yield; the difference is a
+    few basis points and is ignored here.
     """
-    raise NotImplementedError
+    irx = clean_prices(get_prices([RISK_FREE_TICKER], start, end, use_cache, cache_dir))
+    annual = irx[RISK_FREE_TICKER] / 100
+    daily = (1 + annual) ** (1 / PERIODS_PER_YEAR) - 1
+    return daily.rename("rf")

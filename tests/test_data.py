@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 import yfinance as yf
 
-from gpl.data import clean_prices, get_prices, to_returns
+from gpl.data import clean_prices, get_prices, get_risk_free, to_returns
 
 # --------------------------------------------------------------------------- to_returns
 
@@ -164,3 +164,34 @@ def test_get_prices_without_cache_always_downloads(fake_yf, tmp_path) -> None:
     get_prices(["A", "B"], start="2024-01-01", use_cache=False, cache_dir=tmp_path)
     assert len(fake_yf.calls) == 2
     assert not list(tmp_path.glob("*.parquet"))
+
+
+# ------------------------------------------------------------------------ get_risk_free
+
+
+@pytest.fixture
+def fake_irx(monkeypatch: pytest.MonkeyPatch, fake_irx_download):
+    monkeypatch.setattr(yf, "download", fake_irx_download)
+    return fake_irx_download
+
+
+def test_get_risk_free_converts_percent_to_daily(fake_irx, tmp_path) -> None:
+    rf = get_risk_free(start="2024-01-01", cache_dir=tmp_path)
+    assert isinstance(rf, pd.Series)
+    assert rf.name == "rf"
+    assert fake_irx.calls[0]["tickers"] == ["^IRX"]
+    # 5.0 means 5% a year: daily = 1.05^(1/252) - 1 = 0.00019363
+    assert rf.loc["2024-01-01"] == pytest.approx(1.05 ** (1 / 252) - 1)
+    assert rf.loc["2024-01-04"] == pytest.approx(1.04 ** (1 / 252) - 1)
+
+
+def test_get_risk_free_compounds_back_to_annual(fake_irx, tmp_path) -> None:
+    rf = get_risk_free(start="2024-01-01", cache_dir=tmp_path)
+    assert (1 + rf.loc["2024-01-01"]) ** 252 - 1 == pytest.approx(0.05)
+
+
+def test_get_risk_free_fills_missing_day(fake_irx, tmp_path) -> None:
+    rf = get_risk_free(start="2024-01-01", cache_dir=tmp_path)
+    assert len(rf) == 5
+    assert rf.notna().all()
+    assert rf.loc["2024-01-03"] == rf.loc["2024-01-02"]

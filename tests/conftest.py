@@ -117,3 +117,40 @@ class FakeYfDownload:
 def fake_yf_download(prices_small: pd.DataFrame) -> FakeYfDownload:
     """A ``FakeYfDownload`` serving ``prices_small``. Use with ``monkeypatch``."""
     return FakeYfDownload(prices_small)
+
+
+@pytest.fixture
+def fake_irx_download() -> FakeYfDownload:
+    """A ``FakeYfDownload`` serving ``^IRX`` (annual T-bill yield in percent), 5 days.
+
+    ::
+
+        date        ^IRX
+        2024-01-01  5.0
+        2024-01-02  5.0
+        2024-01-03  NaN    <- missing day, should be forward-filled to 5.0
+        2024-01-04  4.0
+        2024-01-05  4.0
+    """
+    irx = pd.DataFrame(
+        {"^IRX": [5.0, 5.0, np.nan, 4.0, 4.0]}, index=pd.bdate_range("2024-01-01", periods=5)
+    )
+    return FakeYfDownload(irx)
+
+
+@pytest.fixture
+def returns_small() -> pd.Series:
+    """Four daily returns, small enough for metrics by hand.
+
+    ::
+
+        r = [0.01, -0.02, 0.03, 0.00]
+        mean        = 0.005
+        sample std  = sqrt(((0.005)^2 + (-0.025)^2 + (0.025)^2 + (-0.005)^2) / 3)
+                    = sqrt(0.0013 / 3) = 0.0208167
+        growth      = 1.01 * 0.98 * 1.03 * 1.00 = 1.019494
+        downside    = sqrt((0 + 0.02^2 + 0 + 0) / 4) = 0.01   (target 0)
+    """
+    return pd.Series(
+        [0.01, -0.02, 0.03, 0.00], index=pd.bdate_range("2024-01-02", periods=4), name="X"
+    )

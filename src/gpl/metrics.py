@@ -10,12 +10,33 @@ Inputs are simple daily returns, either a ``pd.Series`` (one asset or strategy) 
 Shortfall are 1-day figures reported as positive losses. Max drawdown is negative.
 """
 
+import numpy as np
 import pandas as pd
 
 type Returns = pd.Series | pd.DataFrame
 type Scalar = float | pd.Series
 
 PERIODS_PER_YEAR = 252
+_ZERO_TOL = 1e-12  # risk below this is treated as zero (constant returns)
+
+
+def _excess_returns(returns: Returns, rf: float | pd.Series, periods_per_year: int) -> Returns:
+    """Subtract the daily risk-free rate. A float ``rf`` is annual; a Series is daily."""
+    if isinstance(rf, pd.Series):
+        daily_rf = rf.reindex(returns.index).ffill()
+        if daily_rf.isna().any():
+            raise ValueError("rf series does not cover the start of the returns period")
+        if isinstance(returns, pd.DataFrame):
+            return returns.sub(daily_rf, axis=0)
+        return returns - daily_rf
+    return returns - ((1 + rf) ** (1 / periods_per_year) - 1)
+
+
+def _safe_divide(numerator: Scalar, denominator: Scalar) -> Scalar:
+    """Ratio that is NaN, not inf, where the denominator (a risk measure) is ~zero."""
+    if isinstance(denominator, pd.Series):
+        return numerator / denominator.where(denominator > _ZERO_TOL)
+    return float(numerator / denominator) if denominator > _ZERO_TOL else float("nan")
 
 
 def annualised_return(returns: Returns, periods_per_year: int = PERIODS_PER_YEAR) -> Scalar:
@@ -33,7 +54,7 @@ def annualised_return(returns: Returns, periods_per_year: int = PERIODS_PER_YEAR
     float or pd.Series
         ``mean(r) * periods_per_year``.
     """
-    raise NotImplementedError
+    return returns.mean() * periods_per_year
 
 
 def cagr(returns: Returns, periods_per_year: int = PERIODS_PER_YEAR) -> Scalar:
@@ -51,7 +72,14 @@ def cagr(returns: Returns, periods_per_year: int = PERIODS_PER_YEAR) -> Scalar:
     float or pd.Series
         ``prod(1 + r) ** (periods_per_year / n) - 1`` where ``n`` is the number of returns.
     """
-    raise NotImplementedError
+    n = returns.count()  # non-NaN observations
+    growth = (1 + returns).prod()  # NaNs are skipped
+    if isinstance(n, pd.Series):
+        # Empty column -> NaN, not a fake 0% (numpy says 1 ** nan == 1).
+        return (growth ** (periods_per_year / n) - 1).where(n > 0)
+    if n == 0:
+        return float("nan")
+    return growth ** (periods_per_year / n) - 1
 
 
 def annualised_volatility(returns: Returns, periods_per_year: int = PERIODS_PER_YEAR) -> Scalar:
@@ -69,7 +97,7 @@ def annualised_volatility(returns: Returns, periods_per_year: int = PERIODS_PER_
     float or pd.Series
         ``std(r, ddof=1) * sqrt(periods_per_year)``.
     """
-    raise NotImplementedError
+    return returns.std(ddof=1) * np.sqrt(periods_per_year)
 
 
 def sharpe_ratio(
@@ -96,7 +124,11 @@ def sharpe_ratio(
         Annualised mean excess return divided by annualised volatility of excess returns.
         NaN where volatility is zero.
     """
-    raise NotImplementedError
+    excess = _excess_returns(returns, rf, periods_per_year)
+    return _safe_divide(
+        annualised_return(excess, periods_per_year),
+        annualised_volatility(excess, periods_per_year),
+    )
 
 
 def sortino_ratio(
@@ -122,7 +154,9 @@ def sortino_ratio(
         ``sqrt(mean(min(r - rf, 0) ** 2)) * sqrt(periods_per_year)``.
         NaN where downside deviation is zero.
     """
-    raise NotImplementedError
+    excess = _excess_returns(returns, rf, periods_per_year)
+    downside = np.sqrt((excess.clip(upper=0) ** 2).mean()) * np.sqrt(periods_per_year)
+    return _safe_divide(annualised_return(excess, periods_per_year), downside)
 
 
 def drawdown_series(returns: Returns) -> Returns:
