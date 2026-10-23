@@ -12,6 +12,7 @@ Shortfall are 1-day figures reported as positive losses. Max drawdown is negativ
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 type Returns = pd.Series | pd.DataFrame
 type Scalar = float | pd.Series
@@ -30,6 +31,11 @@ def _excess_returns(returns: Returns, rf: float | pd.Series, periods_per_year: i
             return returns.sub(daily_rf, axis=0)
         return returns - daily_rf
     return returns - ((1 + rf) ** (1 / periods_per_year) - 1)
+
+
+def _check_level(level: float) -> None:
+    if not 0 < level < 1:
+        raise ValueError(f"level must be between 0 and 1, got {level}")
 
 
 def _safe_divide(numerator: Scalar, denominator: Scalar) -> Scalar:
@@ -173,7 +179,10 @@ def drawdown_series(returns: Returns) -> Returns:
         Same shape as ``returns``. ``wealth / running_max(wealth) - 1``, so values are
         ``<= 0``, and 0 at a new high. Wealth starts at 1 before the first return.
     """
-    raise NotImplementedError
+    wealth = (1 + returns).cumprod()
+    # Include the starting wealth of 1, so a loss on day one counts as a drawdown.
+    peak = wealth.cummax().clip(lower=1.0)
+    return wealth / peak - 1
 
 
 def max_drawdown(returns: Returns) -> Scalar:
@@ -189,7 +198,7 @@ def max_drawdown(returns: Returns) -> Scalar:
     float or pd.Series
         Minimum of ``drawdown_series``, a negative number (e.g. ``-0.34``) or 0.
     """
-    raise NotImplementedError
+    return drawdown_series(returns).min()
 
 
 def historical_var(returns: Returns, level: float = 0.95) -> Scalar:
@@ -207,7 +216,8 @@ def historical_var(returns: Returns, level: float = 0.95) -> Scalar:
     float or pd.Series
         Minus the ``1 - level`` empirical quantile of returns, a **positive loss**.
     """
-    raise NotImplementedError
+    _check_level(level)
+    return -returns.quantile(1 - level)
 
 
 def parametric_var(returns: Returns, level: float = 0.95) -> Scalar:
@@ -225,7 +235,9 @@ def parametric_var(returns: Returns, level: float = 0.95) -> Scalar:
     float or pd.Series
         ``-(mean + z * std)`` with ``z = norm.ppf(1 - level)``, a **positive loss**.
     """
-    raise NotImplementedError
+    _check_level(level)
+    z = norm.ppf(1 - level)  # e.g. -1.645 at 95%
+    return -(returns.mean() + z * returns.std(ddof=1))
 
 
 def expected_shortfall(returns: Returns, level: float = 0.95) -> Scalar:
@@ -244,7 +256,9 @@ def expected_shortfall(returns: Returns, level: float = 0.95) -> Scalar:
         Minus the mean of returns at or below the ``1 - level`` quantile, a
         **positive loss**. Always ``>= historical_var`` at the same level.
     """
-    raise NotImplementedError
+    _check_level(level)
+    cutoff = returns.quantile(1 - level)
+    return -returns.where(returns <= cutoff).mean()
 
 
 def summary_table(
@@ -270,4 +284,21 @@ def summary_table(
         ``sharpe``, ``sortino``, ``max_drawdown``, ``hist_var``, ``param_var``,
         ``expected_shortfall``, ``start``, ``end``, ``n_obs``.
     """
-    raise NotImplementedError
+    frame = returns.to_frame() if isinstance(returns, pd.Series) else returns
+    table = pd.DataFrame(
+        {
+            "ann_return": annualised_return(frame),
+            "cagr": cagr(frame),
+            "ann_vol": annualised_volatility(frame),
+            "sharpe": sharpe_ratio(frame, rf),
+            "sortino": sortino_ratio(frame, rf),
+            "max_drawdown": max_drawdown(frame),
+            "hist_var": historical_var(frame, level),
+            "param_var": parametric_var(frame, level),
+            "expected_shortfall": expected_shortfall(frame, level),
+            "start": frame.apply(lambda col: col.first_valid_index()),
+            "end": frame.apply(lambda col: col.last_valid_index()),
+            "n_obs": frame.count(),
+        }
+    )
+    return table
