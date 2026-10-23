@@ -17,7 +17,9 @@ from gpl.backtest import (
     regime_switch_strategy,
     risk_parity_strategy,
     run_backtest,
+    spec_strategy,
 )
+from gpl.optimise import OptimisationSpec
 
 DATES = pd.bdate_range("2024-01-01", "2024-03-29")  # 65 business days
 
@@ -215,3 +217,30 @@ def test_max_sharpe_strategy_periods_per_year_scale(random_returns: pd.DataFrame
     c = max_sharpe_strategy(rf=0.03, max_weight=1.0, periods_per_year=252)(random_returns)
     d = max_sharpe_strategy(rf=0.03, max_weight=1.0, periods_per_year=120)(random_returns)
     assert not np.allclose(c.to_numpy(), d.to_numpy(), atol=1e-3)
+
+
+# ------------------------------------------------------------------ spec walk-forward strategy
+
+
+def test_spec_strategy_respects_limits_each_month(random_returns: pd.DataFrame) -> None:
+    spec = OptimisationSpec(
+        "max_sharpe", max_weight=0.6, groups={"A": "GCC"}, group_bounds={"GCC": (0.3, None)}
+    )
+    prices = 100 * (1 + random_returns).cumprod()
+    res = run_backtest(prices, spec_strategy(spec), lookback=60, cost_bps=0)
+    assert (res.weights["A"] >= 0.3 - 1e-6).all()
+    assert (res.weights.max(axis=1) <= 0.6 + 1e-6).all()
+
+
+def test_spec_strategy_infeasible_first_window_explains(random_returns: pd.DataFrame) -> None:
+    impossible = OptimisationSpec("min_variance", max_volatility=0.001)
+    with pytest.raises(ValueError, match="lowest volatility"):
+        spec_strategy(impossible)(random_returns)
+
+
+def test_spec_strategy_keeps_last_weights_when_a_window_fails(random_returns: pd.DataFrame) -> None:
+    strategy = spec_strategy(OptimisationSpec("min_variance", max_volatility=0.12))
+    first = strategy(random_returns.iloc[:120])  # calm enough to meet the cap
+    stormy = random_returns.iloc[120:240] * 6  # far too volatile for a 12% cap
+    assert strategy(stormy).equals(first)
+    assert strategy.infeasible_dates == [stormy.index[-1]]

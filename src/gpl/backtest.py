@@ -14,7 +14,7 @@ import pandas as pd
 
 from gpl.data import to_returns
 from gpl.metrics import PERIODS_PER_YEAR
-from gpl.optimise import max_sharpe, min_variance, risk_parity
+from gpl.optimise import OptimisationSpec, max_sharpe, min_variance, optimise, risk_parity
 
 type Strategy = Callable[[pd.DataFrame], pd.Series]
 """Maps a trailing window of daily returns (rows = dates, columns = tickers) to target
@@ -265,4 +265,35 @@ def regime_switch_strategy(
             return stressed(window)
         return calm(window)
 
+    return strategy
+
+
+def spec_strategy(
+    spec: OptimisationSpec,
+    rf: float | pd.Series = 0.0,
+    periods_per_year: int = PERIODS_PER_YEAR,
+) -> Strategy:
+    """Re-optimise ``spec`` each rebalance on the trailing window only (walk-forward).
+
+    If the constraints can't be met on a window, the previous weights are kept (that month
+    is recorded in ``strategy.infeasible_dates``); if they can't be met on the first window,
+    ``ValueError`` explains why.
+    """
+    state: dict = {"last": None}
+
+    def strategy(window: pd.DataFrame) -> pd.Series:
+        mu = window.mean() * periods_per_year
+        cov = window.cov() * periods_per_year
+        result = optimise(mu, cov, spec, _annual_rf_at(rf, window.index[-1]))
+        if result.feasible:
+            state["last"] = result.weights
+        elif state["last"] is None:
+            raise ValueError(
+                "constraints can't be met on the first window: " + " ".join(result.reasons)
+            )
+        else:
+            strategy.infeasible_dates.append(window.index[-1])
+        return state["last"]
+
+    strategy.infeasible_dates = []
     return strategy

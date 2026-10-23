@@ -9,11 +9,13 @@ covariance ``pd.DataFrame``, both indexed by ticker. Weights are long-only, sum 
 are returned as a ``pd.Series`` indexed by ticker. Default max weight is 0.40 per asset.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Literal
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import linprog, minimize
 
 type Weights = pd.Series | np.ndarray
 
@@ -449,3 +451,355 @@ def risk_parity(
         capped |= w > max_weight + 1e-10
         w = _capped_equal_risk(sigma, capped, max_weight, tol, max_iter)
     return _checked_weights(w, cov.index, max_weight)
+
+
+# ------------------------------------------------------------- constrained optimisation
+
+Objective = Literal[
+    "max_sharpe", "min_variance", "max_return", "target_volatility", "target_return"
+]
+OBJECTIVES: tuple[str, ...] = (
+    "max_sharpe",
+    "min_variance",
+    "max_return",
+    "target_volatility",
+    "target_return",
+)
+_TOL = 1e-6
+
+
+@dataclass(frozen=True)
+class OptimisationSpec:
+    """What to optimise and under which constraints (all weights and rates as fractions).
+
+    Attributes
+    ----------
+    objective : str
+        ``max_sharpe``; ``min_variance``; ``max_return``; ``target_volatility`` (highest return
+        with volatility at most ``max_volatility``); ``target_return`` (lowest volatility with
+        return at least ``min_return``).
+    max_weight : float
+        Cap on every asset (1.0 = no cap).
+    asset_bounds : mapping
+        Ticker -> (minimum, maximum); either may be ``None``.
+    groups : mapping
+        Ticker -> group name, e.g. ``{"2222.SR": "GCC"}``.
+    group_bounds : mapping
+        Group -> (minimum, maximum) total weight; either may be ``None``.
+    max_volatility, min_return : float, optional
+        Annual volatility cap and return floor, applied with any objective.
+    """
+
+    objective: Objective = "max_sharpe"
+    max_weight: float = 1.0
+    asset_bounds: Mapping[str, tuple[float | None, float | None]] = field(default_factory=dict)
+    groups: Mapping[str, str] = field(default_factory=dict)
+    group_bounds: Mapping[str, tuple[float | None, float | None]] = field(default_factory=dict)
+    max_volatility: float | None = None
+    min_return: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.objective not in OBJECTIVES:
+            raise ValueError(f"objective must be one of {OBJECTIVES}, got {self.objective!r}")
+        if self.objective == "target_volatility" and self.max_volatility is None:
+            raise ValueError("target_volatility needs max_volatility")
+        if self.objective == "target_return" and self.min_return is None:
+            raise ValueError("target_return needs min_return")
+        if not 0 < self.max_weight <= 1:
+            raise ValueError("max_weight must be in (0, 1]")
+
+
+@dataclass
+class OptimisationResult:
+    """Outcome of ``optimise``: weights and statistics, or the reasons it is infeasible."""
+
+    feasible: bool
+    weights: pd.Series | None
+    reasons: list[str]
+    expected_return: float | None = None
+    volatility: float | None = None
+    sharpe: float | None = None
+    binding: list[str] = field(default_factory=list)
+
+
+def _linear_constraints(
+    spec: OptimisationSpec, index: pd.Index
+) -> tuple[
+    np.ndarray, np.ndarray, list[tuple[str, np.ndarray, float | None, float | None]], list[str]
+]:
+    """Per-asset lower/upper bounds, group rows (name, indicator, min, max) and early reasons."""
+    n = len(index)
+    lo, hi = np.zeros(n), np.full(n, spec.max_weight)
+    reasons = []
+    unknown = sorted(set(spec.asset_bounds) - set(index))
+    if unknown:
+        reasons.append(f"Limits were given for assets not in the portfolio: {', '.join(unknown)}.")
+    for i, t in enumerate(index):
+        a_lo, a_hi = spec.asset_bounds.get(t, (None, None))
+        lo[i] = max(0.0, a_lo or 0.0)
+        hi[i] = min(spec.max_weight, 1.0 if a_hi is None else a_hi)
+        if lo[i] > hi[i] + _TOL:
+            reasons.append(f"{t}: minimum {lo[i]:.2%} is above its maximum {hi[i]:.2%}.")
+    rows = []
+    for g, (g_lo, g_hi) in spec.group_bounds.items():
+        member = np.array([spec.groups.get(t) == g for t in index], dtype=float)
+        if not member.any():
+            if (g_lo or 0) > 0:
+                reasons.append(
+                    f"Group '{g}' must hold at least {g_lo:.2%}, but no holding is in it."
+                )
+            continue
+        rows.append((g, member, g_lo, g_hi))
+        if g_lo is not None and g_lo > member @ hi + _TOL:
+            reasons.append(
+                f"Group '{g}' needs at least {g_lo:.2%}, but its assets' caps allow only "
+                f"{member @ hi:.2%}."
+            )
+        if g_hi is not None and g_hi < member @ lo - _TOL:
+            reasons.append(
+                f"Group '{g}' is capped at {g_hi:.2%}, but its assets' minimums add up to "
+                f"{member @ lo:.2%}."
+            )
+    if lo.sum() > 1 + _TOL:
+        reasons.append(f"Asset minimums add up to {lo.sum():.2%}, more than 100%.")
+    if hi.sum() < 1 - _TOL:
+        reasons.append(
+            f"Asset caps add up to only {hi.sum():.2%}, so the portfolio can't be fully invested."
+        )
+    group_mins = sum((g_lo or 0) for _, _, g_lo, _ in rows)
+    if group_mins > 1 + _TOL:
+        reasons.append(f"Group minimums add up to {group_mins:.2%}, more than 100%.")
+    return lo, hi, rows, reasons
+
+
+def _lp(c: np.ndarray, lo, hi, rows, extra_ub=None) -> np.ndarray | None:
+    """Solve min c·w over the linear constraints (sum = 1, bounds, groups); None if infeasible."""
+    n = len(c)
+    a_ub, b_ub = [], []
+    for _, member, g_lo, g_hi in rows:
+        if g_hi is not None:
+            a_ub.append(member)
+            b_ub.append(g_hi)
+        if g_lo is not None:
+            a_ub.append(-member)
+            b_ub.append(-g_lo)
+    if extra_ub is not None:
+        a_ub.append(extra_ub[0])
+        b_ub.append(extra_ub[1])
+    res = linprog(
+        c,
+        A_ub=np.array(a_ub) if a_ub else None,
+        b_ub=np.array(b_ub) if b_ub else None,
+        A_eq=np.ones((1, n)),
+        b_eq=[1.0],
+        bounds=list(zip(lo, hi, strict=True)),
+        method="highs",
+    )
+    return res.x if res.success else None
+
+
+def _slsqp(objective, gradient, x0, lo, hi, rows, extra=()) -> np.ndarray | None:
+    cons = [{"type": "eq", "fun": lambda w: w.sum() - 1, "jac": lambda w: np.ones(len(w))}]
+    for _, member, g_lo, g_hi in rows:
+        if g_lo is not None:
+            cons.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda w, m=member, b=g_lo: m @ w - b,
+                    "jac": lambda w, m=member: m,
+                }
+            )
+        if g_hi is not None:
+            cons.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda w, m=member, b=g_hi: b - m @ w,
+                    "jac": lambda w, m=member: -m,
+                }
+            )
+    cons += list(extra)
+    res = minimize(
+        objective,
+        x0=x0,
+        jac=gradient,
+        method="SLSQP",
+        bounds=list(zip(lo, hi, strict=True)),
+        constraints=cons,
+        options={"ftol": 1e-12, "maxiter": 2000},
+    )
+    return res.x if res.success else None
+
+
+def _satisfies(w, lo, hi, rows, sigma, m, spec, tol=1e-5) -> bool:
+    if w is None or abs(w.sum() - 1) > tol or (w < lo - tol).any() or (w > hi + tol).any():
+        return False
+    for _, member, g_lo, g_hi in rows:
+        if (g_lo is not None and member @ w < g_lo - tol) or (
+            g_hi is not None and member @ w > g_hi + tol
+        ):
+            return False
+    if spec.max_volatility is not None and np.sqrt(w @ sigma @ w) > spec.max_volatility + tol:
+        return False
+    return not (spec.min_return is not None and w @ m < spec.min_return - tol)
+
+
+def optimise(
+    mu: pd.Series, cov: pd.DataFrame, spec: OptimisationSpec, rf: float = 0.0
+) -> OptimisationResult:
+    """Optimise weights for ``spec``, or explain in plain language why it can't be done.
+
+    Parameters
+    ----------
+    mu : pd.Series
+        Annualised expected returns.
+    cov : pd.DataFrame
+        Annualised covariance matrix.
+    spec : OptimisationSpec
+        Objective and constraints.
+    rf : float, default 0.0
+        Annual risk-free rate (for the Sharpe objective and the reported Sharpe).
+
+    Returns
+    -------
+    OptimisationResult
+        ``feasible=True`` with weights, expected return, volatility, Sharpe and the binding
+        constraints; or ``feasible=False`` with ``reasons``. Weights that break a constraint
+        are never returned or rescaled.
+
+    Notes
+    -----
+    Feasibility is checked exactly before solving: linear limits with a linear programme,
+    the volatility cap against the lowest volatility the limits allow, and the return floor
+    against the highest return they allow.
+    """
+    index = cov.index
+    sigma, m = cov.to_numpy(), mu.reindex(index).to_numpy()
+    lo, hi, rows, reasons = _linear_constraints(spec, index)
+    if reasons:
+        return OptimisationResult(False, None, reasons)
+    start = _lp(np.zeros(len(index)), lo, hi, rows)
+    if start is None:
+        return OptimisationResult(
+            False, None, ["The asset and group limits can't all be met at the same time."]
+        )
+
+    def variance(w):
+        return w @ sigma @ w
+
+    def variance_grad(w):
+        return 2 * sigma @ w
+
+    floor = (
+        []
+        if spec.min_return is None
+        else [{"type": "ineq", "fun": lambda w: w @ m - spec.min_return, "jac": lambda w: m}]
+    )
+    vol_cap = (
+        []
+        if spec.max_volatility is None
+        else [
+            {
+                "type": "ineq",
+                "fun": lambda w: spec.max_volatility**2 - w @ sigma @ w,
+                "jac": lambda w: -2 * sigma @ w,
+            }
+        ]
+    )
+    best_return = _lp(-m, lo, hi, rows)
+    if spec.min_return is not None and best_return @ m < spec.min_return - _TOL:
+        return OptimisationResult(
+            False,
+            None,
+            [
+                f"The highest return these limits allow is {best_return @ m:.2%} a year "
+                f"(historical), below the {spec.min_return:.2%} floor."
+            ],
+        )
+    if spec.max_volatility is not None:
+        lowest = _slsqp(variance, variance_grad, start, lo, hi, rows, floor)
+        if lowest is None:
+            return OptimisationResult(False, None, ["The optimiser could not solve this problem."])
+        if np.sqrt(variance(lowest)) > spec.max_volatility + _TOL:
+            needs = " together with the return floor" if spec.min_return is not None else ""
+            return OptimisationResult(
+                False,
+                None,
+                [
+                    f"The lowest volatility these limits allow{needs} is "
+                    f"{np.sqrt(variance(lowest)):.2%} a year, above the "
+                    f"{spec.max_volatility:.2%} cap."
+                ],
+            )
+
+    match spec.objective:
+        case "min_variance" | "target_return":
+            w = _slsqp(variance, variance_grad, start, lo, hi, rows, floor + vol_cap)
+        case "max_return" | "target_volatility":
+            if spec.max_volatility is None:
+                w = best_return
+            else:
+                w = _slsqp(lambda w: -(w @ m), lambda w: -m, start, lo, hi, rows, floor + vol_cap)
+        case "max_sharpe":
+            w = _constrained_max_sharpe(sigma, m, rf, start, lo, hi, rows, floor + vol_cap)
+    if not _satisfies(w, lo, hi, rows, sigma, m, spec):
+        return OptimisationResult(
+            False, None, ["The optimiser could not find weights meeting every limit."]
+        )
+
+    w = np.clip(w, 0.0, None)
+    weights = pd.Series(w / w.sum(), index=index)
+    ret, vol = float(weights @ m), float(np.sqrt(weights @ sigma @ weights))
+    return OptimisationResult(
+        True,
+        weights,
+        [],
+        ret,
+        vol,
+        (ret - rf) / vol if vol > 0 else None,
+        _binding(weights.to_numpy(), lo, hi, rows, vol, ret, spec, index),
+    )
+
+
+def _constrained_max_sharpe(sigma, m, rf, start, lo, hi, rows, extra) -> np.ndarray | None:
+    """Max Sharpe under general constraints: best of several SLSQP starts (incl. the LP point)."""
+    excess = m - rf
+
+    def neg_sharpe(w):
+        return -(w @ excess) / np.sqrt(w @ sigma @ w)
+
+    def neg_sharpe_grad(w):
+        ex, var = w @ excess, w @ sigma @ w
+        vol = np.sqrt(var)
+        return -(excess / vol - ex * (sigma @ w) / (var * vol))
+
+    starts = [start, _lp(-m, lo, hi, rows)]
+    mv = _slsqp(lambda w: w @ sigma @ w, lambda w: 2 * sigma @ w, start, lo, hi, rows, extra)
+    if mv is not None:
+        starts.append(mv)
+    best = None
+    for x0 in [s for s in starts if s is not None]:
+        w = _slsqp(neg_sharpe, neg_sharpe_grad, x0, lo, hi, rows, extra)
+        if w is not None and (best is None or neg_sharpe(w) < neg_sharpe(best)):
+            best = w
+    return best
+
+
+def _binding(w, lo, hi, rows, vol, ret, spec, index, tol=1e-4) -> list[str]:
+    """Human-readable list of the constraints the solution sits on."""
+    out = []
+    for i, t in enumerate(index):
+        if w[i] >= hi[i] - tol and hi[i] < 1 - tol:
+            out.append(f"{t} at its {hi[i]:.2%} maximum")
+        elif w[i] <= lo[i] + tol and lo[i] > tol:
+            out.append(f"{t} at its {lo[i]:.2%} minimum")
+    for g, member, g_lo, g_hi in rows:
+        total = member @ w
+        if g_lo is not None and abs(total - g_lo) < tol:
+            out.append(f"group '{g}' at its {g_lo:.2%} minimum")
+        if g_hi is not None and abs(total - g_hi) < tol:
+            out.append(f"group '{g}' at its {g_hi:.2%} maximum")
+    if spec.max_volatility is not None and abs(vol - spec.max_volatility) < tol:
+        out.append(f"volatility at the {spec.max_volatility:.2%} cap")
+    if spec.min_return is not None and abs(ret - spec.min_return) < tol:
+        out.append(f"return at the {spec.min_return:.2%} floor")
+    return out
