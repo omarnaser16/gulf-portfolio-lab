@@ -114,7 +114,7 @@ weight history, Monte Carlo fan chart, regime probability chart, and a chat pane
 
 ## 5. Plan
 
-### Week 1 — finance core (I write it; Claude tutors)
+### Week 1 — finance core (Claude writes and explains it; I learn to explain it)
 | Day | Work |
 |-----|------|
 | 1 | Repo, venv, `pyproject`, skeleton, synthetic fixtures; `data.py` |

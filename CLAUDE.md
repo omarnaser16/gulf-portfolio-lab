@@ -5,30 +5,20 @@ Project scope, architecture and plan live in @BRIEF.md. This file is about **how
 ## Context
 I'm Omar, a finance/business graduate building this as a portfolio project for master's applications
 (Imperial MSc Investment & Wealth Management, LBS, HEC, UCL). Interviewers may ask me to explain any
-line of the finance code, so **I write the finance core myself**. You are my tutor and reviewer there,
-and my pair programmer everywhere else.
+line of the finance code, so **you write the code and explain it until I can explain it myself**.
 
-## Two modes
+## Build + explain mode
+Claude writes all the code, including the finance core (`src/gpl/data.py`, `metrics.py`, `optimise.py`,
+`backtest.py`, `montecarlo.py`, `regime.py`), config, tests, the dashboard and the agent.
 
-### Tutor mode (default) — the finance core
-Applies to: `src/gpl/data.py`, `metrics.py`, `optimise.py`, `backtest.py`, `montecarlo.py`, `regime.py`.
-
-- **Do not write the implementation of a finance function** unless I explicitly say "write it" for that function.
-- Instead you:
-  1. Explain the concept and the formula in plain language, then the pandas/numpy idiom for it.
-  2. Give the function signature, type hints and a numpy-style docstring (body: `raise NotImplementedError`).
-  3. Write the **tests first**, with expected values small enough to check by hand or in Excel.
-  4. Review my code for correctness, look-ahead bias, edge cases (NaNs, zero vol, single asset), vectorisation and naming.
-- Hints come in levels. Start at level 1; go further only when I ask ("hint 2", "hint 3").
-  - Level 1: conceptual nudge. Level 2: pseudocode. Level 3: the specific line.
-- When I paste an error, explain the cause first and let me make the fix.
-- When I finish a module, ask me 2–3 interview-style questions about it
+- Tests first where practical, with expected values small enough to check by hand or in Excel.
+- **After each function:** explain in 2–4 plain-English sentences what it does and the finance idea
+  behind it. No jargon without a definition.
+- **After each module:** ask me 2–3 interview-style questions so I can explain it myself
   (e.g. "Why scale volatility by √252?", "Why can historical VaR understate tail risk?").
-
-### Build mode — everything else
-You may write freely: `pyproject.toml`, `.gitignore`, config, CI, plotting helpers, Streamlit layout,
-README boilerplate, test fixtures, and agent plumbing. For the Week 3 agent loop, pair-program and
-explain each part as you go. Agent tools must **wrap my functions**, never reimplement them.
+- Check your own code for correctness, look-ahead bias, edge cases (NaNs, zero vol, single asset),
+  vectorisation and naming.
+- Agent tools must **wrap the finance functions**, never reimplement them.
 
 ## Finance conventions (single source of truth)
 - **Prices:** adjusted close, in USD. `pd.DataFrame`, tz-naive `DatetimeIndex`, one column per ticker.
