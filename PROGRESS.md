@@ -111,3 +111,17 @@
   model's month-end probability crossed 50% back and forth (Jan above, Feb–Mar below, Apr above, May
   below, Jun above), so equal weight + regime whipsawed: 0.44% in costs vs 0.04% and −13.18% vs
   −12.57% for static. A gradual or two-month rule might help (untested).
+
+## Week 3 — 2026-10-23 · AI analyst, chat panel, README
+- **Built:** a tool-use agent (Claude Haiku 5.5 by default, set in config) with six tools that wrap my
+  engine; a memo writer whose numbers must be copied from tool results and cite the tool; a number
+  checker that flags any figure no tool returned; an Analyst tab with example profiles, follow-up chat,
+  audit trail and cost line; and the README. Added `anthropic` and `python-dotenv` (approved).
+- **Live runs:** a moderate 10-year Dubai profile took 5 tool calls, about 15,500 + 2,700 tokens, about
+  $0.003 and 23 seconds. The memo recommended 60/40 with every figure cited.
+- **Caught:** the first live memo said "a 20–30% fall", which no tool produced, and the checker missed
+  it because a date ("2026-09-30") contained a 30. Fixed: only figures with units or decimals count as
+  quotable.
+- **Learned:** "the LLM never calculates" needs enforcing in code, not just in the prompt. Tools should
+  return formatted numbers so there is nothing to round. Test the agent loop with a scripted fake model.
+- **Next:** push to GitHub and deploy on Streamlit Community Cloud; then answer the quizzes.
