@@ -58,7 +58,8 @@ with one or two alternatives.
 5. **Current market regime** - the regime view, including its modest track record.
 6. **Risks and limitations** - sample period, short GCC ETF history, hindsight in \
 optimise_portfolio, regime whipsaw, and anything specific to this investor.
-Keep the memo under 600 words. For currency: all figures are in USD; SAR, AED, QAR, BHD and OMR \
+Use "###" for section headings and no title above them. Keep the memo under 600 words. For \
+currency: all figures are in USD; SAR, AED, QAR, BHD and OMR \
 are pegged to the US dollar, so a Gulf investor in these USD assets carries little currency risk, \
 while the Kuwaiti dinar is pegged to a basket.
 

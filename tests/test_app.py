@@ -13,6 +13,8 @@ import yfinance as yf
 from streamlit.testing.v1 import AppTest
 
 import gpl.data
+from gpl.agent import analyst as agent
+from test_agent import FakeClient, response, text, tool_use
 
 APP = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
 
@@ -44,6 +46,7 @@ def synthetic_download(tickers, start=None, end=None, **kwargs) -> pd.DataFrame:
 def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
     monkeypatch.setattr(yf, "download", synthetic_download)
     monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(agent, "has_credentials", lambda: False)  # independent of a local .env
     st.cache_data.clear()
     at = AppTest.from_file(APP, default_timeout=180)
     at.run()
@@ -234,3 +237,57 @@ def test_regime_caption_states_history_and_relative_definition(app: AppTest) -> 
     caption = next(c.value for c in app.caption if "regime model uses" in c.value)
     assert "SPY, AGG and VIX history from **Jan 2005**" in caption
     assert "'Stressed' is relative:" in caption
+
+
+# ---------------------------------------------------------------------------------- Analyst
+
+
+def test_analyst_without_key_explains_setup(app: AppTest) -> None:
+    assert any("No API key found" in i.value for i in app.info)
+
+
+@pytest.fixture
+def analyst_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[AppTest, FakeClient]:
+    client = FakeClient(
+        [
+            response([tool_use("t1", "get_universe", {})], "tool_use", (800, 40)),
+            response(
+                [text("## Profile\nModerate investor. CAGR 12.34% would be nice.")],
+                "end_turn",
+                (1200, 400),
+            ),
+            response([text("A more conservative choice is risk parity.")], "end_turn", (300, 60)),
+        ]
+    )
+    monkeypatch.setattr(yf, "download", synthetic_download)
+    monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(agent, "has_credentials", lambda: True)
+    monkeypatch.setattr(agent, "make_client", lambda: client)
+    st.cache_data.clear()
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    return at, client
+
+
+def test_analyst_writes_an_audited_memo(analyst_app) -> None:
+    at, client = analyst_app
+    at.button(key="write_memo").click().run()
+    assert not at.exception, at.exception
+    assert any("Moderate investor" in m.value for m in at.markdown)
+    assert any("not investment advice" in m.value.lower() for m in at.markdown)
+    assert any("`12.34%`" in w.value for w in at.warning)  # invented number flagged
+    assert any("1 tool calls" in c.value and "about $" in c.value for c in at.caption)
+    assert any("Audit trail: 1 tool calls" in e.label for e in at.expander)
+    request = client.requests[0]
+    assert request["model"] == "claude-haiku-5-5"
+    assert "Dubai" in request["messages"][0]["content"]
+
+
+def test_analyst_follow_up_continues_the_conversation(analyst_app) -> None:
+    at, client = analyst_app
+    at.button(key="write_memo").click().run()
+    at.chat_input(key="follow_up").set_value("What if I were more conservative?").run()
+    assert not at.exception, at.exception
+    assert any("risk parity" in m.value for m in at.markdown)
+    roles = [m["role"] for m in client.requests[-1]["messages"]]
+    assert roles[-1] == "user" and roles.count("user") == 3  # profile, tool results, follow-up

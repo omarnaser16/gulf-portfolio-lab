@@ -6,8 +6,11 @@ inputs, calls the engine, and draws the results. Run with::
     streamlit run app/streamlit_app.py
 """
 
+import json
+import os
 from datetime import date
 
+import anthropic
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -15,6 +18,8 @@ import streamlit as st
 from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
+from gpl.agent import analyst as agent
+from gpl.agent.tools import AnalystContext
 from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
 from gpl.metrics import drawdown_series, summary_table
 from gpl.montecarlo import (
@@ -42,6 +47,13 @@ from gpl.plots import (
 )
 
 CFG = load_universe()
+
+# On Streamlit Community Cloud the API key comes from st.secrets; locally from .env.
+try:
+    if "ANTHROPIC_API_KEY" in st.secrets:
+        os.environ.setdefault("ANTHROPIC_API_KEY", st.secrets["ANTHROPIC_API_KEY"])
+except Exception:  # no secrets file locally
+    pass
 D, R, MC = CFG["defaults"], CFG["regime"], CFG["montecarlo"]
 MC_METHODS = {
     "block_bootstrap": f"Block bootstrap ({MC['block_size']}-day)",
@@ -535,8 +547,120 @@ with tab_regime:
     )
 
 with tab_agent:
+    A = CFG["agent"]
     st.subheader("AI analyst")
-    st.info(
-        "Coming in Week 3: describe your profile and an agent calls these same functions "
-        "as tools and writes a memo in which every number is traceable to a tool call."
+    st.caption(
+        f"Describe an investor profile. The analyst ({A['model']}) calls this dashboard's own "
+        "functions as tools, using the sidebar settings, and writes a memo. It is not allowed to "
+        "calculate: every number must be copied from a tool result and cite the tool, and any "
+        "number that no tool returned is flagged below the answer. Not investment advice."
     )
+    if not agent.has_credentials():
+        st.info(
+            "No API key found. Locally, put `ANTHROPIC_API_KEY=...` in `.env` at the project "
+            "root. On Streamlit Community Cloud, add it under *App settings → Secrets*."
+        )
+    else:
+        settings_key = (tickers, start, end, max_weight, cost_bps, lookback)
+        if st.session_state.get("analyst_key") != settings_key:
+            regime_data = load_regime(end)
+            ctx = AnalystContext(
+                prices=prices,
+                rf=rf,
+                groups=CFG["groups"],
+                benchmarks=CFG["benchmarks"],
+                regime_features=regime_data["features"],
+                regime_labels=regime_data["labels"],
+                settings={
+                    "max_weight": max_weight,
+                    "cost_bps": cost_bps,
+                    "lookback": lookback,
+                    "rebalance": D["rebalance"],
+                    "var_level": D["var_level"],
+                    "regime": R,
+                    "montecarlo": MC,
+                },
+            )
+            ctx._cache["p_stressed"] = regime_data["p_stressed"]  # already computed above
+            st.session_state.analyst = agent.Analyst(
+                ctx,
+                agent.make_client(),
+                model=A["model"],
+                max_tokens=A["max_tokens"],
+                effort=A["effort"],
+                max_tool_rounds=A["max_tool_rounds"],
+            )
+            st.session_state.analyst_key = settings_key
+            st.session_state.chat = []
+
+        examples = {
+            "Dubai, moderate, 10 years": "I'm 35, based in Dubai, investing in USD for 10 years "
+            "with moderate risk tolerance. I'd like to end with at least 1.5x my money.",
+            "Riyadh, conservative, 5 years": "I'm 58 and live in Riyadh. I want to preserve "
+            "capital over 5 years with low risk; avoiding big drawdowns matters more than return.",
+            "Doha, aggressive, 20 years": "I'm 27 in Doha, saving for 20 years, comfortable with "
+            "large swings. I'd like to reach 3x my money.",
+        }
+        if not st.session_state.chat:
+            choice = st.selectbox("Start from an example", list(examples), key="profile_example")
+            profile = st.text_area("Investor profile", examples[choice], height=100, key="profile")
+            start_memo = st.button("Write memo", type="primary", key="write_memo")
+        else:
+            profile, start_memo = None, False
+            if st.button("New conversation", key="new_conversation"):
+                st.session_state.analyst_key = None
+                st.rerun()
+
+        def ask(question: str) -> None:
+            st.session_state.chat.append({"role": "user", "text": question})
+            try:
+                with st.spinner("The analyst is calling tools and writing…"):
+                    reply = st.session_state.analyst.ask(question)
+                st.session_state.chat.append({"role": "assistant", "reply": reply})
+            except anthropic.AuthenticationError:
+                st.session_state.chat.append({"role": "error", "text": "The API key was rejected."})
+            except anthropic.RateLimitError:
+                st.session_state.chat.append(
+                    {"role": "error", "text": "Rate limited; try again in a minute."}
+                )
+            except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
+                st.session_state.chat.append({"role": "error", "text": f"API error: {e}"})
+
+        if start_memo and profile:
+            ask(profile)
+            st.rerun()  # redraw with the conversation instead of the profile form
+
+        for turn in st.session_state.chat:
+            if turn["role"] == "user":
+                st.chat_message("user").markdown(turn["text"])
+            elif turn["role"] == "error":
+                st.error(turn["text"])
+            else:
+                reply = turn["reply"]
+                with st.chat_message("assistant"):
+                    st.markdown(reply.text)
+                    if reply.unverified:
+                        st.warning(
+                            "These figures did not come from any tool result, so treat them with "
+                            "suspicion: " + ", ".join(f"`{n}`" for n in reply.unverified)
+                        )
+                    cost = agent.estimate_cost(reply, A["price_per_mtok"])
+                    st.caption(
+                        f"{len(reply.tool_calls)} tool calls · {reply.input_tokens:,} input + "
+                        f"{reply.output_tokens:,} output tokens · about ${cost:.4f}"
+                    )
+                    with st.expander(f"Audit trail: {len(reply.tool_calls)} tool calls"):
+                        for call in reply.tool_calls:
+                            st.markdown(
+                                f"**`{call.name}`**({json.dumps(call.input)})"
+                                + (" ⚠️ error" if call.is_error else "")
+                            )
+                            st.json(call.output, expanded=False)
+
+        if st.session_state.chat:
+            follow_up = st.chat_input(
+                "Ask a follow-up (e.g. 'What if I were more conservative?')", key="follow_up"
+            )
+            if follow_up:
+                ask(follow_up)
+                st.rerun()
