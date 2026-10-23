@@ -130,7 +130,7 @@ def test_every_percentage_metric_has_two_decimals(app: AppTest) -> None:
     percents = [m.value for m in app.metric if m.value.endswith("%")]
     assert len(percents) >= 6  # Monte Carlo and Regime headline numbers
     assert all(re.fullmatch(r"-?\d+\.\d{2}%", v) for v in percents), percents
-    assert all("pp vs always-calm" in m.delta for m in app.metric if m.label == "Accuracy")
+    assert all(m.delta.endswith("pp vs calm") for m in app.metric if m.label == "Accuracy")
 
 
 def test_cap_caption_uses_two_decimals(app: AppTest) -> None:
