@@ -269,3 +269,25 @@ def test_summary_table_accepts_series(returns_small: pd.Series) -> None:
 def test_var_rejects_bad_level(returns_small: pd.Series) -> None:
     with pytest.raises(ValueError):
         historical_var(returns_small, level=95)
+
+
+# ------------------------------------------------------------- mixed calendars (common dates)
+
+
+def test_summary_table_uses_periods_per_year(returns_frame: pd.DataFrame) -> None:
+    table = summary_table(returns_frame, periods_per_year=200)
+    assert table.loc["X", "ann_return"] == pytest.approx(0.005 * 200)
+    assert table.loc["X", "ann_vol"] == pytest.approx(STD_SMALL * math.sqrt(200))
+    default = summary_table(returns_frame)
+    assert default.loc["X", "ann_return"] == pytest.approx(0.005 * 252)
+
+
+def test_daily_rf_is_scaled_to_sparser_observations(returns_small: pd.Series) -> None:
+    # 126 observations a year: each one carries two days of interest
+    rf_daily = pd.Series(0.001, index=returns_small.index)
+    expected_excess = returns_small - (1.001**2 - 1)
+    expected = (expected_excess.mean() * 126) / (expected_excess.std() * math.sqrt(126))
+    assert sharpe_ratio(returns_small, rf_daily, periods_per_year=126) == pytest.approx(expected)
+    # at the default 252 the series is used as given (unchanged behaviour)
+    same = (returns_small - 0.001).mean() * 252 / ((returns_small - 0.001).std() * math.sqrt(252))
+    assert sharpe_ratio(returns_small, rf_daily) == pytest.approx(same)

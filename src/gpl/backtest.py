@@ -203,16 +203,22 @@ def min_variance_strategy(max_weight: float = 0.40) -> Strategy:
     return strategy
 
 
-def max_sharpe_strategy(rf: float | pd.Series = 0.0, max_weight: float = 0.40) -> Strategy:
+def max_sharpe_strategy(
+    rf: float | pd.Series = 0.0,
+    max_weight: float = 0.40,
+    periods_per_year: int = PERIODS_PER_YEAR,
+) -> Strategy:
     """Build a strategy that rebalances to ``optimise.max_sharpe`` on the window.
 
     ``rf`` is an annual float, or a daily rate Series (from ``data.get_risk_free``) of
     which only the latest value on or before the window's last date is used.
+    ``periods_per_year`` annualises the window's mean and covariance (lower when assets on
+    different calendars are aligned on common dates), so they are comparable with ``rf``.
     """
 
     def strategy(window: pd.DataFrame) -> pd.Series:
-        mu = window.mean() * PERIODS_PER_YEAR
-        cov = window.cov() * PERIODS_PER_YEAR
+        mu = window.mean() * periods_per_year
+        cov = window.cov() * periods_per_year
         return max_sharpe(mu, cov, _annual_rf_at(rf, window.index[-1]), max_weight)
 
     return strategy

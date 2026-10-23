@@ -22,11 +22,18 @@ _ZERO_TOL = 1e-12  # risk below this is treated as zero (constant returns)
 
 
 def _excess_returns(returns: Returns, rf: float | pd.Series, periods_per_year: int) -> Returns:
-    """Subtract the daily risk-free rate. A float ``rf`` is annual; a Series is daily."""
+    """Subtract the risk-free return per observation.
+
+    A float ``rf`` is annual. A Series is a daily rate (per 252-day year); when observations are
+    sparser than daily (assets on different calendars aligned on common dates), each one is
+    charged ``252 / periods_per_year`` days of interest so the annual total stays right.
+    """
     if isinstance(rf, pd.Series):
         daily_rf = rf.reindex(returns.index).ffill()
         if daily_rf.isna().any():
             raise ValueError("rf series does not cover the start of the returns period")
+        if periods_per_year != PERIODS_PER_YEAR:
+            daily_rf = (1 + daily_rf) ** (PERIODS_PER_YEAR / periods_per_year) - 1
         if isinstance(returns, pd.DataFrame):
             return returns.sub(daily_rf, axis=0)
         return returns - daily_rf
@@ -265,6 +272,7 @@ def summary_table(
     returns: Returns,
     rf: float | pd.Series = 0.0,
     level: float = 0.95,
+    periods_per_year: int = PERIODS_PER_YEAR,
 ) -> pd.DataFrame:
     """All headline metrics in one table.
 
@@ -276,6 +284,9 @@ def summary_table(
         As in ``sharpe_ratio``.
     level : float, default 0.95
         Confidence level for VaR and Expected Shortfall.
+    periods_per_year : int, default 252
+        Return observations per year, used to annualise. Lower when assets on different
+        trading calendars are aligned on common dates (see ``data.load_assets``).
 
     Returns
     -------
@@ -287,11 +298,11 @@ def summary_table(
     frame = returns.to_frame() if isinstance(returns, pd.Series) else returns
     table = pd.DataFrame(
         {
-            "ann_return": annualised_return(frame),
-            "cagr": cagr(frame),
-            "ann_vol": annualised_volatility(frame),
-            "sharpe": sharpe_ratio(frame, rf),
-            "sortino": sortino_ratio(frame, rf),
+            "ann_return": annualised_return(frame, periods_per_year),
+            "cagr": cagr(frame, periods_per_year),
+            "ann_vol": annualised_volatility(frame, periods_per_year),
+            "sharpe": sharpe_ratio(frame, rf, periods_per_year),
+            "sortino": sortino_ratio(frame, rf, periods_per_year),
             "max_drawdown": max_drawdown(frame),
             "hist_var": historical_var(frame, level),
             "param_var": parametric_var(frame, level),

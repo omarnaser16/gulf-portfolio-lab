@@ -204,3 +204,14 @@ def test_regime_switch_without_signal_stays_calm() -> None:
     p = pd.Series([np.nan, 0.9], index=pd.to_datetime(["2024-01-02", "2024-12-31"]))
     window = pd.DataFrame(0.0, columns=["A", "B"], index=DATES[:20])
     assert regime_switch_strategy(CALM, STRESSED, p)(window)["A"] == 1.0
+
+
+def test_max_sharpe_strategy_periods_per_year_scale(random_returns: pd.DataFrame) -> None:
+    # With rf = 0, rescaling mu and cov by the same factor leaves the tangency weights unchanged;
+    # with rf > 0 the annualisation matters, so the parameter must reach the optimiser.
+    a = max_sharpe_strategy(rf=0.0, periods_per_year=252)(random_returns)
+    b = max_sharpe_strategy(rf=0.0, periods_per_year=183)(random_returns)
+    np.testing.assert_allclose(a.to_numpy(), b.to_numpy(), atol=1e-5)
+    c = max_sharpe_strategy(rf=0.03, max_weight=1.0, periods_per_year=252)(random_returns)
+    d = max_sharpe_strategy(rf=0.03, max_weight=1.0, periods_per_year=120)(random_returns)
+    assert not np.allclose(c.to_numpy(), d.to_numpy(), atol=1e-3)
