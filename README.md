@@ -193,8 +193,9 @@ tests/                   pytest suite
 Anthropic's coding agent**, in a series of sessions following the three-week plan in `BRIEF.md`.
 
 My role (Omar Naser) was to **direct, review and test**:
-- **Directed:** I wrote the project brief and the finance conventions (`BRIEF.md`, `CLAUDE.md`), set
-  the priorities for each session, approved every new dependency, and chose among the options
+- **Directed:** I defined the project idea, scope, tech stack and plan; the brief and Claude Code
+  instructions (`BRIEF.md`, `CLAUDE.md`) were drafted with Claude from those requirements. I set the
+  priorities for each session, approved every new dependency, and chose among the options
   presented, for example capping risk parity at 40%, fixing the end date for reproducibility, and
   making the block bootstrap the default.
 - **Reviewed:** I read the results, notebooks and explanations, and asked for changes where something
