@@ -9,7 +9,12 @@ only, and apply from the next trading day. Between rebalances, weights drift wit
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
+
+from gpl.data import to_returns
+from gpl.metrics import PERIODS_PER_YEAR
+from gpl.optimise import max_sharpe, min_variance, risk_parity
 
 type Strategy = Callable[[pd.DataFrame], pd.Series]
 """Maps a trailing window of daily returns (rows = dates, columns = tickers) to target
@@ -23,7 +28,8 @@ class BacktestResult:
     Attributes
     ----------
     equity : pd.Series
-        Portfolio wealth, starting at 1.0.
+        Portfolio wealth, from 1.0 invested at the close of the first rebalance date.
+        The first value is ``1 - initial cost``: buying from cash is turnover of 1.
     returns : pd.Series
         Daily portfolio returns, net of costs.
     weights : pd.DataFrame
@@ -68,7 +74,81 @@ def run_backtest(
     -------
     BacktestResult
     """
-    raise NotImplementedError
+    returns = to_returns(prices)
+    if returns.isna().any().any():
+        raise ValueError("prices contain NaN gaps; run clean_prices and handle long gaps first")
+    tickers = returns.columns
+    r = returns.to_numpy()
+
+    rebalance_dates = _rebalance_dates(returns.index, rebalance)
+    is_rebalance = returns.index.isin(rebalance_dates)
+    # A rebalance needs a full window ending on that day (returns are known at the close).
+    has_history = np.arange(1, len(returns) + 1) >= lookback
+    can_rebalance = is_rebalance & has_history
+    if not can_rebalance.any():
+        raise ValueError(f"no rebalance date has {lookback} days of history")
+    start = int(np.argmax(can_rebalance))
+
+    w = np.zeros(len(tickers))  # start in cash
+    net_returns, weight_rows, turnover, costs = [], {}, {}, {}
+    for i in range(start, len(returns)):
+        date = returns.index[i]
+        if i == start:
+            day_return = 0.0  # we buy at today's close, so today's move isn't ours
+        else:
+            day_return = float(w @ r[i])
+            w = w * (1 + r[i]) / (1 + day_return)  # weights drift with prices
+
+        cost = 0.0
+        if can_rebalance[i]:
+            window = returns.iloc[i - lookback + 1 : i + 1]  # up to and including t
+            target = _validate_weights(strategy(window), tickers)
+            traded = float(np.abs(target - w).sum())
+            cost = traded * cost_bps / 1e4
+            w = target  # earns returns from the next day (i + 1) onwards
+            weight_rows[date] = target
+            turnover[date] = traded
+            costs[date] = cost
+        net_returns.append((1 + day_return) * (1 - cost) - 1)
+
+    index = returns.index[start:]
+    port = pd.Series(net_returns, index=index, name="returns")
+    return BacktestResult(
+        equity=(1 + port).cumprod().rename("equity"),
+        returns=port,
+        weights=pd.DataFrame.from_dict(weight_rows, orient="index", columns=tickers),
+        turnover=pd.Series(turnover, name="turnover"),
+        costs=pd.Series(costs, name="costs"),
+    )
+
+
+def _rebalance_dates(index: pd.DatetimeIndex, rebalance: str) -> pd.DatetimeIndex:
+    """Last trading day of each period, excluding the final day of data (nothing follows)."""
+    last_days = index.to_series().resample(rebalance).last().dropna()
+    return pd.DatetimeIndex(last_days[last_days < index[-1]])
+
+
+def _validate_weights(weights: pd.Series, tickers: pd.Index) -> np.ndarray:
+    """Align strategy output to the price columns and check it is long-only and sums to 1."""
+    unknown = weights.index.difference(tickers)
+    if len(unknown):
+        raise ValueError(f"strategy returned weights for unknown tickers: {list(unknown)}")
+    w = weights.reindex(tickers, fill_value=0.0).to_numpy(dtype=float)
+    if np.isnan(w).any() or (w < -1e-9).any() or not np.isclose(w.sum(), 1.0, atol=1e-6):
+        raise ValueError(
+            f"strategy weights must be long-only and sum to 1, got {weights.to_dict()}"
+        )
+    return w
+
+
+def _annual_rf_at(rf: float | pd.Series, date: pd.Timestamp) -> float:
+    """Annual risk-free rate known on ``date``; a daily Series is never read past it."""
+    if not isinstance(rf, pd.Series):
+        return rf
+    known = rf.loc[:date].dropna()
+    if known.empty:
+        raise ValueError(f"no risk-free rate available on or before {date.date()}")
+    return float((1 + known.iloc[-1]) ** PERIODS_PER_YEAR - 1)
 
 
 def equal_weight(window: pd.DataFrame) -> pd.Series:
@@ -84,7 +164,8 @@ def equal_weight(window: pd.DataFrame) -> pd.Series:
     pd.Series
         Equal weights indexed by ticker.
     """
-    raise NotImplementedError
+    n = len(window.columns)
+    return pd.Series(1 / n, index=window.columns)
 
 
 def fixed_weights(weights: Mapping[str, float]) -> Strategy:
@@ -100,19 +181,47 @@ def fixed_weights(weights: Mapping[str, float]) -> Strategy:
     Strategy
         A function returning these weights for any window.
     """
-    raise NotImplementedError
+    target = pd.Series(dict(weights), dtype=float)
+    if not np.isclose(target.sum(), 1.0):
+        raise ValueError(f"weights must sum to 1, got {target.sum():.6f}")
+
+    def strategy(window: pd.DataFrame) -> pd.Series:
+        missing = target.index.difference(window.columns)
+        if len(missing):
+            raise ValueError(f"tickers not in prices: {list(missing)}")
+        return target.reindex(window.columns, fill_value=0.0)
+
+    return strategy
 
 
 def min_variance_strategy(max_weight: float = 0.40) -> Strategy:
     """Build a strategy that rebalances to ``optimise.min_variance`` on the window."""
-    raise NotImplementedError
+
+    def strategy(window: pd.DataFrame) -> pd.Series:
+        return min_variance(window.cov() * PERIODS_PER_YEAR, max_weight)
+
+    return strategy
 
 
-def max_sharpe_strategy(rf: float = 0.0, max_weight: float = 0.40) -> Strategy:
-    """Build a strategy that rebalances to ``optimise.max_sharpe`` on the window."""
-    raise NotImplementedError
+def max_sharpe_strategy(rf: float | pd.Series = 0.0, max_weight: float = 0.40) -> Strategy:
+    """Build a strategy that rebalances to ``optimise.max_sharpe`` on the window.
+
+    ``rf`` is an annual float, or a daily rate Series (from ``data.get_risk_free``) of
+    which only the latest value on or before the window's last date is used.
+    """
+
+    def strategy(window: pd.DataFrame) -> pd.Series:
+        mu = window.mean() * PERIODS_PER_YEAR
+        cov = window.cov() * PERIODS_PER_YEAR
+        return max_sharpe(mu, cov, _annual_rf_at(rf, window.index[-1]), max_weight)
+
+    return strategy
 
 
 def risk_parity_strategy() -> Strategy:
     """Build a strategy that rebalances to ``optimise.risk_parity`` on the window."""
-    raise NotImplementedError
+
+    def strategy(window: pd.DataFrame) -> pd.Series:
+        return risk_parity(window.cov() * PERIODS_PER_YEAR)
+
+    return strategy

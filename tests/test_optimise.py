@@ -191,3 +191,9 @@ def test_risk_parity_equalises_risk_when_correlated(cov_corr) -> None:
 def test_risk_parity_gives_low_vol_asset_more_weight(cov_corr) -> None:
     w = risk_parity(cov_corr)
     assert w["C"] > w["B"] > w["A"]  # vols 5% < 15% < 20%
+
+
+def test_risk_parity_rejects_zero_variance() -> None:
+    cov = pd.DataFrame(np.diag([0.04, 0.0]), index=["A", "B"], columns=["A", "B"])
+    with pytest.raises(ValueError):
+        risk_parity(cov)

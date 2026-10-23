@@ -248,13 +248,17 @@ def risk_contributions(weights: Weights, cov: pd.DataFrame) -> pd.Series:
     return pd.Series(w * marginal / (w @ marginal), index=cov.index)
 
 
-def risk_parity(cov: pd.DataFrame) -> pd.Series:
+def risk_parity(cov: pd.DataFrame, tol: float = 1e-12, max_iter: int = 10_000) -> pd.Series:
     """Long-only equal-risk-contribution portfolio.
 
     Parameters
     ----------
     cov : pd.DataFrame
         Covariance matrix.
+    tol : float, default 1e-12
+        Convergence tolerance on the relative change in weights.
+    max_iter : int, default 10000
+        Maximum number of full passes over the assets.
 
     Returns
     -------
@@ -262,27 +266,22 @@ def risk_parity(cov: pd.DataFrame) -> pd.Series:
         Weights indexed by ticker such that every asset's risk contribution is
         ``1 / n_assets``.
     """
-    sigma = cov.to_numpy()
+    sigma = cov.to_numpy(dtype=float)
     n = len(cov)
+    variances = np.diag(sigma)
+    if (variances <= 0).any():
+        raise ValueError("risk parity needs every asset to have positive variance")
 
-    # Convex formulation (Spinu 2013): minimise 0.5 * y'Sy - (1/n) * sum(log y), y > 0.
-    # At the optimum every y_i * (S y)_i = 1/n, i.e. equal risk contributions;
-    # rescaling y to sum to 1 keeps that property.
-    def objective(y: np.ndarray) -> float:
-        return 0.5 * y @ sigma @ y - np.log(y).sum() / n
-
-    def gradient(y: np.ndarray) -> np.ndarray:
-        return sigma @ y - 1 / (n * y)
-
-    y0 = 1 / np.sqrt(np.diag(sigma))  # inverse-vol start, already close
-    result = minimize(
-        objective,
-        x0=y0 / y0.sum(),
-        jac=gradient,
-        method="L-BFGS-B",
-        bounds=[(1e-10, None)] * n,
-        options={"ftol": 1e-15, "gtol": 1e-12, "maxiter": 10_000},
-    )
-    if not result.success:
-        raise ValueError(f"risk parity optimiser failed: {result.message}")
-    return pd.Series(result.x / result.x.sum(), index=cov.index)
+    # Equal risk contributions solve, for every i:  y_i * (S y)_i = 1/n  (then rescale y).
+    # Cyclical coordinate descent: holding the others fixed, that is a quadratic in y_i,
+    #   var_i * y_i^2 + c_i * y_i - 1/n = 0,   c_i = sum_{j != i} S_ij y_j,
+    # whose positive root has a closed form. Repeat over all assets until nothing moves.
+    y = 1 / np.sqrt(variances)  # inverse-vol start: exact when assets are uncorrelated
+    for _ in range(max_iter):
+        y_previous = y.copy()
+        for i in range(n):
+            c = sigma[i] @ y - variances[i] * y[i]
+            y[i] = (-c + np.sqrt(c * c + 4 * variances[i] / n)) / (2 * variances[i])
+        if np.max(np.abs(y - y_previous)) <= tol * np.max(np.abs(y)):
+            return pd.Series(y / y.sum(), index=cov.index)
+    raise ValueError(f"risk parity did not converge in {max_iter} iterations")
