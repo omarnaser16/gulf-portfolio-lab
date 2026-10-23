@@ -44,8 +44,12 @@ it switched to build + explain mode, which has been used since:
   new weights apply from the **next** trading day.
 - **Transaction costs:** bps on turnover, default 10 bps.
 - **Randomness:** every stochastic function takes a `seed` argument.
-- **FX:** SAR, AED, QAR, BHD and OMR are pegged to USD; KWD is pegged to a basket. Any local-currency
-  series must be converted to USD before mixing with other assets.
+- **FX:** every asset is analysed in USD. SAR, AED, QAR, BHD and OMR use their official USD pegs
+  (Yahoo's quotes for them are noisy); other currencies, including KWD (pegged to a basket), use
+  Yahoo market rates (`C=X`, local units per USD). Sub-unit quotes (KWF fils, GBp pence) are scaled
+  first. Conversion lives in `data.py` (`to_usd`, `load_assets`).
+- **Calendars:** assets on different weekly calendars (Sun–Thu vs Mon–Fri) are aligned on the dates
+  all of them traded, and annualised with the observed periods per year instead of 252.
 - **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
 
 ## Code style

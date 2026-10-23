@@ -149,3 +149,23 @@ days; the work itself was done in a series of sessions.
   should return formatted numbers so there is nothing to round; the agent loop can be tested with a
   scripted fake model.
 - **Next:** publish to GitHub and deploy on Streamlit Community Cloud; answer the outstanding quizzes.
+
+## Real-investor features — 2026-10-23 · any asset, currencies, calendars, My portfolio
+- **Directed:** I asked for any Yahoo ticker with GCC quick picks, USD conversion (pegs for the Gulf
+  currencies, market rates otherwise), aligned trading calendars, history checks, a My portfolio mode
+  with an analyst memo, and latest data by default with the README sample as an option. I chose
+  caching only (no price data in the repo), a "Data as of" line and a Retry button.
+- **Checked before building:** FAB has no Yahoo data (Abu Dhabi isn't covered), Kuwaiti prices come
+  in fils, and Yahoo's pegged-currency FX series are noisy, which supports using the official pegs.
+- **Built by Claude Code:** `load_assets` (per-ticker cached downloads with retry, currency lookup,
+  USD conversion, common-date alignment, history report); annualisation with observed periods per
+  year; the new sidebar, data notes and My portfolio tab; and analyst support for my portfolio.
+- **Caught:** a too-short common sample crashed the backtest (it now explains which asset limits it).
+  A first idea for charging risk-free interest across date gaps changed existing results, so it was
+  replaced by a simpler, consistent rule. A live memo misread the backtest dates as an error, so the
+  tools now explain them.
+- **Learned:** mixing Sunday–Thursday and Monday–Friday markets leaves about 183 common dates a year,
+  so annualising with 252 would overstate returns and volatility; currency pegs are better than noisy
+  market quotes; and a portfolio's risk can be very different from its weights (SPY at 50% of the
+  money was 79% of the risk).
+- **Next:** deploy on Streamlit Community Cloud; answer the outstanding quizzes.

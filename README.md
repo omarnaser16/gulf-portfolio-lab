@@ -33,21 +33,43 @@ code flags any figure that no tool produced.**
 
 | Part | What it does |
 |---|---|
-| **Data** | Adjusted prices from Yahoo Finance, cached as parquet; short gaps forward-filled (max 5 days), longer gaps reported, never dropped silently. |
+| **Data** | Any Yahoo Finance ticker, adjusted prices cached per ticker as parquet; converted to USD (official pegs for SAR, AED, QAR, BHD and OMR; market rates for other currencies; sub-units such as Kuwaiti fils scaled); different trading calendars aligned on common dates; history and data notes shown for every asset. |
 | **Metrics** | Annual return, CAGR, volatility, Sharpe, Sortino, drawdowns, historical and normal VaR, expected shortfall. |
 | **Optimisation** | Min variance, max Sharpe (solved in convex form), efficient frontier, risk parity with a 40% weight cap. |
 | **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, 10 bps costs on turnover. |
 | **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with six tools wrapping the engine; memo with audit trail and number check. |
-| **Dashboard** | Streamlit tabs: Assets, Frontier, Backtest, Monte Carlo, Regime, Analyst. |
+| **AI analyst** | Claude (Haiku 5.5 by default) with seven tools wrapping the engine; memos for an investor profile or about the user's own portfolio, with audit trail and number check. |
+| **Dashboard** | Streamlit tabs: Assets, Frontier, Backtest, My portfolio, Monte Carlo, Regime, Analyst. Latest data by default, or the fixed sample that reproduces this README. |
 
 > 📸 *Screenshot placeholder: `docs/screenshots/analyst.png` (Analyst tab: memo, audit trail, cost line)*
+
+## Using it as an investor
+
+- **Any asset.** Pick quick-pick groups (the default ETFs, GCC stocks such as Saudi Aramco `2222.SR`,
+  Al Rajhi `1120.SR`, Emaar `EMAAR.AE`, Emirates NBD `EMIRATESNBD.AE`, QNB `QNBK.QA` and NBK
+  `NBK.KW`, or global ETFs) or type any Yahoo Finance symbol. Tickers with no data get a clear
+  message. Abu Dhabi (ADX) listings such as FAB are not on Yahoo Finance.
+- **One currency.** Everything is analysed in USD. The Gulf pegs are used for SAR, AED, QAR, BHD and
+  OMR because Yahoo's quotes for these currencies are noisy (the riyal series is more than 1% off its
+  3.75 peg on about 100 days since 2015). Other currencies use market rates (e.g. `KWD=X`).
+- **Different trading weeks.** Saudi, Qatari and Kuwaiti markets trade Sunday to Thursday; US markets
+  Monday to Friday. When both are selected, only the dates on which every market traded are used
+  (about 183 a year for the GCC preset with SPY), and figures are annualised with that number instead
+  of 252. The dashboard says so, and shows each asset's start date, currency, conversion and trading
+  days, warning about assets with too little history.
+- **Your own portfolio.** Enter holdings as weights or amounts on the *My portfolio* tab to see their
+  share of money vs share of risk, a backtest compared with the strategies and 60/40, a Monte Carlo,
+  and a memo from the analyst.
+- **Latest or reproducible.** The dashboard opens on the latest data ("Data as of …" at the top). The
+  *Reproduce README results* option uses the fixed sample below and reproduces this README's tables
+  exactly.
 
 ## Key results
 
 Data from 17 Sep 2015 (when the youngest ETF, KSA, starts) to **30 Sep 2026**; the end date is
-fixed in `config/universe.yaml`, so results are reproducible.
+fixed in `config/universe.yaml` (the dashboard's *Reproduce README results* option), so results are
+reproducible.
 
 **Backtests (Sep 2016 – Sep 2026, after 10 bps costs, max 40% per asset):**
 
@@ -108,14 +130,14 @@ uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class w
 because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
 
 **AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The six tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`, `backtest_strategies`,
-`simulate_future`, `get_regime_view`) wrap the engine and return pre-formatted numbers. The system
+The seven tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
+`backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_regime_view`) wrap the engine and return pre-formatted numbers. The system
 prompt forbids arithmetic and requires a bracketed tool citation for every figure. After each answer,
 code compares every decimal, percentage and multiple in it with the tool outputs and flags any that
 don't match (a re-rounded "15.3%" for "15.27%" is flagged). Every tool call is shown in an audit
 trail, and the disclaimer is appended by code.
 
-**Testing.** 293 tests (`pytest`), most with expected values small enough to check by hand. They
+**Testing.** 335 tests (`pytest`), most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -141,8 +163,15 @@ a scripted fake model, so the suite never touches the network.
 - **AI analyst:** the number check covers decimals, percentages and multiples, not bare integers or
   numbers written in words, and the model can still mis-describe a correct number. Treat the audit
   trail as the source of truth.
-- **Data source:** `yfinance` is unofficial and can break or rate-limit; data is cached and the
-  version pinned.
+- **Data source:** `yfinance` is unofficial and can break or rate-limit. Downloads are cached per
+  ticker (latest data refreshes at most every 6 hours) and retried; if Yahoo still refuses, the
+  dashboard says so and offers a Retry button. No price data is stored in this repository. "Latest
+  data" can include today's price before the market closes.
+- **Coverage and conversions:** Yahoo does not cover every exchange (e.g. Abu Dhabi), and market FX
+  for non-pegged currencies comes from Yahoo too. Pegs are assumed to hold.
+- **Common dates:** aligning Sunday–Thursday and Monday–Friday markets drops each market's other
+  days, so some returns span more than one day and a market's Sunday or Friday moves are only seen
+  in the next common return. With mixed markets, the sample starts when the newest asset starts.
 - **Known issue:** once, with default settings, the Frontier tab showed weights matching a 75% cap
   instead of 40%. It could not be reproduced; safeguards and an on-screen cap caption were added.
 
@@ -164,7 +193,7 @@ git clone <your-repo-url> && cd gulf-portfolio-lab
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the Analyst tab)
-pytest -q                       # 293 tests, no network needed
+pytest -q                       # 335 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 
