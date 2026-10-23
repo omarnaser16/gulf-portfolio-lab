@@ -8,6 +8,7 @@ inputs, calls the engine, and draws the results. Run with::
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -16,7 +17,13 @@ from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
 from gpl.metrics import drawdown_series, summary_table
-from gpl.montecarlo import goal_probability, simulate_paths, terminal_stats, to_real
+from gpl.montecarlo import (
+    goal_probability,
+    path_max_drawdowns,
+    simulate_paths,
+    terminal_stats,
+    to_real,
+)
 from gpl.optimise import (
     efficient_frontier,
     max_sharpe,
@@ -364,11 +371,19 @@ with tab_mc:
         if real:
             paths = to_real(paths, MC["inflation"])
         stats = terminal_stats(paths)
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric(f"P(≥ {target:g}× start), {units}", pct(goal_probability(paths, target)))
-        m2.metric(f"Median outcome, {units}", f"{stats['p50']:.2f}×")
-        m3.metric(f"Bad case (5th pct), {units}", f"{stats['p5']:.2f}×")
-        m4.metric(f"P(lose money), {units}", pct(1 - goal_probability(paths, 1.0)))
+        st.markdown(f"**Over {years} years, in {units}**")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric(f"P(≥ {target:g}×)", pct(goal_probability(paths, target)))
+        m2.metric("Median outcome", f"{stats['p50']:.2f}×")
+        m3.metric("Bad case (5th pct)", f"{stats['p5']:.2f}×")
+        m4.metric("P(lose money)", pct(1 - goal_probability(paths, 1.0)))
+        m5.metric(
+            "Drawdown (5th pct)",
+            pct(np.percentile(path_max_drawdowns(paths), 5)),
+            help="5th percentile of each path's worst fall from a previous high during the "
+            "horizon: 1 in 20 simulations falls at least this far at some point. The other "
+            "numbers only look at the end; this shows how rough the ride is.",
+        )
         st.plotly_chart(
             fan_chart(
                 paths,

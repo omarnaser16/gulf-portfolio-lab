@@ -147,3 +147,22 @@ def goal_probability(paths: np.ndarray, target: float) -> float:
         Share of paths with terminal wealth ``>= target``.
     """
     return float((paths[-1] >= target).mean())
+
+
+def path_max_drawdowns(paths: np.ndarray) -> np.ndarray:
+    """Worst peak-to-trough fall along each simulated path.
+
+    Parameters
+    ----------
+    paths : np.ndarray
+        Output of ``simulate_paths`` (row 0 is the starting wealth, which counts as a peak).
+
+    Returns
+    -------
+    np.ndarray
+        One value per path, ``<= 0`` (e.g. ``-0.30`` for a 30% fall), using the same
+        convention as ``metrics.max_drawdown``. Unlike terminal wealth, this captures how
+        rough the ride was, which is where clustered crashes show up.
+    """
+    running_peak = np.maximum.accumulate(paths, axis=0)
+    return (paths / running_peak - 1).min(axis=0)

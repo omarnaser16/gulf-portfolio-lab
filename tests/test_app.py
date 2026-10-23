@@ -145,15 +145,23 @@ def test_benchmark_caption_uses_two_decimals(app: AppTest) -> None:
 # ------------------------------------------------------------------------------ Monte Carlo
 
 
+MC_LABELS = ("P(≥", "Median outcome", "Bad case", "P(lose money)", "Drawdown")
+
+
 def _mc_metrics(app: AppTest) -> dict[str, str]:
-    return {m.label: m.value for m in app.metric if "USD" in m.label}
+    return {m.label: m.value for m in app.metric if m.label.startswith(MC_LABELS)}
+
+
+def _mc_units(app: AppTest) -> str:
+    return next(m.value for m in app.markdown if m.value.startswith("**Over "))
 
 
 def test_monte_carlo_defaults_to_block_bootstrap_in_nominal_usd(app: AppTest) -> None:
     assert app.radio(key="mc_method").value == "block_bootstrap"
     assert "crashes cluster" in app.radio(key="mc_method").help.lower()
     metrics = _mc_metrics(app)
-    assert len(metrics) == 4 and all("nominal USD" in label for label in metrics)
+    assert len(metrics) == 5
+    assert "in nominal USD" in _mc_units(app)
     caption = " ".join(c.value for c in app.caption)
     assert "rebalance daily and ignore transaction costs" in caption
     assert "unlike the backtest" in caption
@@ -164,7 +172,7 @@ def test_real_terms_toggle_deflates_outcomes(app: AppTest) -> None:
     app.toggle(key="mc_real").set_value(True).run()
     assert not app.exception, app.exception
     real = _mc_metrics(app)
-    assert all("real USD" in label for label in real)
+    assert "in real USD" in _mc_units(app)
 
     def median(metrics: dict[str, str]) -> float:
         return float(next(v for k, v in metrics.items() if k.startswith("Median"))[:-1])
@@ -178,4 +186,12 @@ def test_real_terms_toggle_deflates_outcomes(app: AppTest) -> None:
 def test_other_methods_still_available(app: AppTest, method: str) -> None:
     app.radio(key="mc_method").set_value(method).run()
     assert not app.exception, app.exception
-    assert len(_mc_metrics(app)) == 4
+    assert len(_mc_metrics(app)) == 5
+
+
+def test_drawdown_along_the_way_metric(app: AppTest) -> None:
+    value = next(v for k, v in _mc_metrics(app).items() if k.startswith("Drawdown"))
+    assert re.fullmatch(r"-\d+\.\d{2}%", value), value  # negative, two decimals
+    app.radio(key="mc_method").set_value("bootstrap").run()
+    daily = next(v for k, v in _mc_metrics(app).items() if k.startswith("Drawdown"))
+    assert daily != value  # the method changes path roughness

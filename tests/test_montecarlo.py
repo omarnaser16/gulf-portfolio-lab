@@ -4,7 +4,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gpl.montecarlo import goal_probability, simulate_paths, terminal_stats, to_real
+from gpl.metrics import max_drawdown
+from gpl.montecarlo import (
+    goal_probability,
+    path_max_drawdowns,
+    simulate_paths,
+    terminal_stats,
+    to_real,
+)
 
 
 @pytest.fixture
@@ -209,3 +216,31 @@ def test_to_real_hand_values() -> None:
 def test_to_real_zero_inflation_is_identity(hist_returns, weights) -> None:
     paths = simulate_paths(hist_returns, weights, 30, 10, seed=0)
     np.testing.assert_array_equal(to_real(paths, 0.0), paths)
+
+
+# ------------------------------------------------------------------ drawdown along the way
+
+
+def test_path_max_drawdowns_hand_values() -> None:
+    # columns are paths: 1 -> 1.2 -> 0.9 -> 1.3   (worst: 0.9 / 1.2 - 1 = -25%)
+    #                    1 -> 0.8 -> 1.0 -> 1.1   (worst: 0.8 / 1 - 1 = -20%; start is a peak)
+    #                    1 -> 1.1 -> 1.2 -> 1.3   (never falls: 0)
+    paths = np.array([[1.0, 1.0, 1.0], [1.2, 0.8, 1.1], [0.9, 1.0, 1.2], [1.3, 1.1, 1.3]])
+    np.testing.assert_allclose(path_max_drawdowns(paths), [-0.25, -0.20, 0.0])
+
+
+def test_path_drawdowns_match_the_metrics_module(hist_returns, weights) -> None:
+    paths = simulate_paths(hist_returns, weights, 60, 3, seed=0)
+    daily = pd.DataFrame(paths[1:] / paths[:-1] - 1)
+    np.testing.assert_allclose(path_max_drawdowns(paths), max_drawdown(daily).to_numpy())
+
+
+def test_blocks_give_deeper_drawdowns_when_crashes_cluster() -> None:
+    # A history where all the bad days come in one 21-day run
+    r = np.full(500, 0.001)
+    r[200:221] = -0.02
+    hist = pd.DataFrame({"X": r}, index=pd.bdate_range("2015-01-01", periods=500))
+    w = pd.Series({"X": 1.0})
+    block = path_max_drawdowns(simulate_paths(hist, w, 252, 2000, seed=0))
+    daily = path_max_drawdowns(simulate_paths(hist, w, 252, 2000, method="bootstrap", seed=0))
+    assert np.percentile(block, 5) < np.percentile(daily, 5) - 0.05
