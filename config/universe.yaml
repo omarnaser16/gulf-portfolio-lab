@@ -1,0 +1,29 @@
+# Default investable universe and project-wide defaults.
+# US-listed ETFs: one trading calendar, priced in USD, clean Yahoo Finance history.
+
+groups:
+  gcc_equity: [KSA, UAE, QAT]      # iShares MSCI country ETFs; history starts ~2014-15
+  global_equity: [SPY, EFA, EEM]   # US, developed ex-US, emerging
+  bonds: [AGG, TLT]                # aggregate, long Treasuries
+  real_assets: [GLD]               # gold
+
+# Downloaded but never held in a portfolio.
+non_assets:
+  risk_free: "^IRX"                # 13-week T-bill yield, quoted in percent
+  volatility: "^VIX"               # regime feature (Week 2)
+
+benchmarks:
+  sixty_forty: { SPY: 0.60, AGG: 0.40 }
+  spy: { SPY: 1.00 }
+
+defaults:
+  start: "2015-01-01"
+  end: null                        # null = up to the latest available date
+  periods_per_year: 252
+  risk_free_fallback: 0.0          # annual rate used if ^IRX is unavailable
+  max_weight: 0.40
+  cost_bps: 10
+  rebalance: "ME"                  # month end
+  lookback: 252                    # trading days in the estimation window
+  var_level: 0.95
+  max_ffill: 5
