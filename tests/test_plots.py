@@ -1,0 +1,53 @@
+"""Smoke tests for gpl.plots: figures build with the right traces and colours."""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from gpl.plots import (
+    SERIES_COLORS,
+    drawdown_chart,
+    equity_chart,
+    fan_chart,
+    frontier_chart,
+    weights_chart,
+)
+
+IDX = pd.bdate_range("2024-01-01", periods=5)
+
+
+def test_equity_chart_one_line_per_strategy() -> None:
+    eq = pd.DataFrame({"EW": np.linspace(1, 1.1, 5), "SPY": np.linspace(1, 1.2, 5)}, index=IDX)
+    fig = equity_chart(eq)
+    assert [t.name for t in fig.data] == ["EW", "SPY"]
+    assert [t.line.color for t in fig.data] == SERIES_COLORS[:2]
+
+
+def test_drawdown_chart() -> None:
+    fig = drawdown_chart(pd.DataFrame({"EW": [0, -0.1, -0.05, 0, 0]}, index=IDX))
+    assert len(fig.data) == 1
+
+
+def test_too_many_series_raises() -> None:
+    with pytest.raises(ValueError):
+        equity_chart(pd.DataFrame(np.ones((5, 9)), index=IDX))
+
+
+def test_weights_chart_groups_assets() -> None:
+    w = pd.DataFrame({"SPY": [0.5, 0.4], "AGG": [0.3, 0.4], "TLT": [0.2, 0.2]}, index=IDX[:2])
+    fig = weights_chart(w, groups={"Equity": ["SPY"], "Bonds": ["AGG", "TLT"]})
+    assert [t.name for t in fig.data] == ["Equity", "Bonds"]
+    np.testing.assert_allclose(fig.data[1].y, [0.5, 0.6])
+
+
+def test_frontier_chart_marks_portfolios() -> None:
+    front = pd.DataFrame({"ret": [0.04, 0.06], "vol": [0.05, 0.08]})
+    fig = frontier_chart(front, {"Max Sharpe": (0.07, 0.055)})
+    assert [t.name for t in fig.data] == ["Frontier", "Max Sharpe"]
+
+
+def test_fan_chart_has_bands_and_median() -> None:
+    paths = np.vstack([np.ones(100), np.linspace(0.8, 1.4, 100)])
+    fig = fan_chart(paths)
+    assert fig.data[-1].name == "Median"
+    assert len(fig.data) == 5

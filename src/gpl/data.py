@@ -17,11 +17,14 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import yaml
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+DEFAULT_UNIVERSE = PROJECT_ROOT / "config" / "universe.yaml"
 RISK_FREE_TICKER = "^IRX"
 PERIODS_PER_YEAR = 252
 
@@ -227,3 +230,23 @@ def get_risk_free(
     annual = irx[RISK_FREE_TICKER] / 100
     daily = (1 + annual) ** (1 / PERIODS_PER_YEAR) - 1
     return daily.rename("rf")
+
+
+def load_universe(path: Path | None = None) -> dict:
+    """Read the universe and defaults from ``config/universe.yaml``.
+
+    Parameters
+    ----------
+    path : pathlib.Path, optional
+        YAML file to read. Defaults to ``DEFAULT_UNIVERSE``.
+
+    Returns
+    -------
+    dict
+        The parsed config, plus ``"assets"``: every ticker in ``groups``, flattened in
+        file order.
+    """
+    with open(path or DEFAULT_UNIVERSE) as f:
+        config = yaml.safe_load(f)
+    config["assets"] = [t for tickers in config["groups"].values() for t in tickers]
+    return config

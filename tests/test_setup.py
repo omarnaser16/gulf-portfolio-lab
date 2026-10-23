@@ -13,6 +13,7 @@ MODULES = [
     "gpl.backtest",
     "gpl.montecarlo",
     "gpl.regime",
+    "gpl.plots",
     "gpl.agent",
     "gpl.agent.tools",
     "gpl.agent.analyst",

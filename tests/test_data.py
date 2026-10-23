@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 import yfinance as yf
 
-from gpl.data import clean_prices, get_prices, get_risk_free, to_returns
+from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
 
 # --------------------------------------------------------------------------- to_returns
 
@@ -195,3 +195,13 @@ def test_get_risk_free_fills_missing_day(fake_irx, tmp_path) -> None:
     assert len(rf) == 5
     assert rf.notna().all()
     assert rf.loc["2024-01-03"] == rf.loc["2024-01-02"]
+
+
+# ------------------------------------------------------------------------ load_universe
+
+
+def test_load_universe_default_config() -> None:
+    config = load_universe()
+    assert config["assets"] == ["KSA", "UAE", "QAT", "SPY", "EFA", "EEM", "AGG", "TLT", "GLD"]
+    assert config["defaults"]["max_weight"] == 0.40
+    assert config["non_assets"]["risk_free"] == "^IRX"
