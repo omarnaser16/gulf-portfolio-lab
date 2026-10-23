@@ -69,7 +69,7 @@ def equity_chart(equity: pd.DataFrame, title: str = "Growth of $1") -> go.Figure
                 hovertemplate="%{y:.2f}",
             )
         )
-    return _base_layout(fig, title, "Wealth ($)", ".2f")
+    return _base_layout(fig, title, "Wealth (nominal USD)", ".2f")
 
 
 def drawdown_chart(drawdowns: pd.DataFrame, title: str = "Drawdown from peak") -> go.Figure:
@@ -190,8 +190,12 @@ def fan_chart(
     paths: np.ndarray,
     start: pd.Timestamp | None = None,
     title: str = "Simulated wealth",
+    y_title: str = "Wealth (nominal USD)",
 ) -> go.Figure:
-    """Monte Carlo fan: 5-95% and 25-75% bands with the median, from ``simulate_paths``."""
+    """Monte Carlo fan: 5-95% and 25-75% bands with the median, from ``simulate_paths``.
+
+    ``y_title`` states the units, e.g. nominal vs real (inflation-adjusted) USD.
+    """
     x = (
         np.arange(paths.shape[0]) / 252
         if start is None
@@ -230,7 +234,7 @@ def fan_chart(
             hovertemplate="%{y:.2f}",
         )
     )
-    fig = _base_layout(fig, title, "Wealth ($)", ".2f")
+    fig = _base_layout(fig, title, y_title, ".2f")
     if start is None:
         fig.update_xaxes(title="Years")
     return fig

@@ -41,3 +41,9 @@ regime:
   refit: "ME"                      # walk-forward refit each month end
   min_train: 504                   # two years before the first prediction
   threshold: 0.5                   # P(stressed) at which the strategy de-risks
+
+# Monte Carlo (dashboard defaults)
+montecarlo:
+  method: block_bootstrap          # block_bootstrap | bootstrap | gbm
+  block_size: 21                   # trading days per block (about a month)
+  inflation: 0.025                 # fixed annual inflation for the "real terms" toggle

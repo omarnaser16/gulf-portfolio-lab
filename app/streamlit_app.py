@@ -16,7 +16,7 @@ from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
 from gpl.metrics import drawdown_series, summary_table
-from gpl.montecarlo import goal_probability, simulate_paths, terminal_stats
+from gpl.montecarlo import goal_probability, simulate_paths, terminal_stats, to_real
 from gpl.optimise import (
     efficient_frontier,
     max_sharpe,
@@ -35,7 +35,22 @@ from gpl.plots import (
 )
 
 CFG = load_universe()
-D, R = CFG["defaults"], CFG["regime"]
+D, R, MC = CFG["defaults"], CFG["regime"], CFG["montecarlo"]
+MC_METHODS = {
+    "block_bootstrap": f"Block bootstrap ({MC['block_size']}-day)",
+    "bootstrap": "Daily bootstrap",
+    "gbm": "GBM (normal)",
+}
+MC_METHOD_HELP = (
+    f"**Block bootstrap** (default) replays runs of {MC['block_size']} consecutive real trading "
+    "days. Market crashes cluster: big losses tend to follow big losses (think February-March "
+    "2020). Keeping whole months together keeps those losing streaks, so the worst months and "
+    "drawdowns *along the way* are deeper. It also keeps the sharp rebounds that often followed, "
+    "so end-of-horizon outcomes can look *better* than with daily draws.\n\n"
+    "**Daily bootstrap** draws days one at a time. It keeps the size of extreme days but "
+    "scatters them, losing both the streaks and the rebounds.\n\n"
+    "**GBM** assumes normally distributed log returns: no fat tails and no clustering."
+)
 STRATEGY_NAMES = ["Equal weight", "Min variance", "Max Sharpe", "Risk parity"]
 SIXTY_FORTY = "60/40 (SPY/AGG)"
 BENCHMARK_NAMES = [SIXTY_FORTY, "SPY"]
@@ -320,27 +335,55 @@ with tab_mc:
         c4, c5, c6 = st.columns(3)
         method = c4.radio(
             "Method",
-            ["bootstrap", "gbm"],
-            horizontal=True,
-            help="Bootstrap reshuffles real days; GBM assumes normal log returns.",
+            list(MC_METHODS),
+            index=list(MC_METHODS).index(MC["method"]),
+            format_func=MC_METHODS.get,
+            key="mc_method",
+            help=MC_METHOD_HELP,
         )
         n_paths = c5.select_slider("Paths", [1_000, 2_000, 5_000, 10_000], value=2_000)
         seed = int(c6.number_input("Seed", 0, 10_000, 42))
+        real = st.toggle(
+            f"Show in real terms (after {pct(MC['inflation'])} inflation a year)",
+            key="mc_real",
+            help="Divides wealth by cumulative inflation, so 1.00× means the same purchasing "
+            "power as today. The rate is fixed and set in config/universe.yaml.",
+        )
+        units = "real USD" if real else "nominal USD"
         weights = results[mc_strategy].weights.iloc[-1]
         weights = weights[weights > 0]
-        paths = simulate_paths(returns, weights, 252 * years, n_paths, method=method, seed=seed)
+        paths = simulate_paths(
+            returns,
+            weights,
+            252 * years,
+            n_paths,
+            method=method,
+            seed=seed,
+            block_size=MC["block_size"],
+        )
+        if real:
+            paths = to_real(paths, MC["inflation"])
         stats = terminal_stats(paths)
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric(f"P(≥ {target:g}×)", pct(goal_probability(paths, target)))
-        m2.metric("Median outcome", f"{stats['p50']:.2f}×")
-        m3.metric("Bad case (5th pct)", f"{stats['p5']:.2f}×")
-        m4.metric("P(lose money)", pct(1 - goal_probability(paths, 1.0)))
+        m1.metric(f"P(≥ {target:g}× start), {units}", pct(goal_probability(paths, target)))
+        m2.metric(f"Median outcome, {units}", f"{stats['p50']:.2f}×")
+        m3.metric(f"Bad case (5th pct), {units}", f"{stats['p5']:.2f}×")
+        m4.metric(f"P(lose money), {units}", pct(1 - goal_probability(paths, 1.0)))
         st.plotly_chart(
-            fan_chart(paths, title=f"{mc_strategy}: simulated growth of $1"), width="stretch"
+            fan_chart(
+                paths,
+                title=f"{mc_strategy}: simulated growth of $1 ({units})",
+                y_title="Wealth (real USD, today's money)" if real else "Wealth (nominal USD)",
+            ),
+            width="stretch",
         )
         st.caption(
-            "Weights held fixed and rebalanced daily. Simulations assume the future resembles "
-            "this sample."
+            f"Outcomes in **{units}**"
+            + (f", assuming a constant {pct(MC['inflation'])} inflation a year. " if real else ". ")
+            + "Simulations hold today's weights fixed, **rebalance daily and ignore transaction "
+            f"costs**, unlike the backtest (monthly rebalancing, {cost_bps:g} bps per unit of "
+            f"turnover). They assume the future resembles {prices.index[0]:%b %Y} – "
+            f"{prices.index[-1]:%b %Y}."
         )
 
 with tab_regime:

@@ -140,3 +140,42 @@ def test_cap_caption_uses_two_decimals(app: AppTest) -> None:
 def test_benchmark_caption_uses_two_decimals(app: AppTest) -> None:
     text = " ".join(c.value for c in app.caption)
     assert "holds 60.00% SPY and 40.00% AGG; SPY holds 100.00%" in text
+
+
+# ------------------------------------------------------------------------------ Monte Carlo
+
+
+def _mc_metrics(app: AppTest) -> dict[str, str]:
+    return {m.label: m.value for m in app.metric if "USD" in m.label}
+
+
+def test_monte_carlo_defaults_to_block_bootstrap_in_nominal_usd(app: AppTest) -> None:
+    assert app.radio(key="mc_method").value == "block_bootstrap"
+    assert "crashes cluster" in app.radio(key="mc_method").help.lower()
+    metrics = _mc_metrics(app)
+    assert len(metrics) == 4 and all("nominal USD" in label for label in metrics)
+    caption = " ".join(c.value for c in app.caption)
+    assert "rebalance daily and ignore transaction costs" in caption
+    assert "unlike the backtest" in caption
+
+
+def test_real_terms_toggle_deflates_outcomes(app: AppTest) -> None:
+    nominal = _mc_metrics(app)
+    app.toggle(key="mc_real").set_value(True).run()
+    assert not app.exception, app.exception
+    real = _mc_metrics(app)
+    assert all("real USD" in label for label in real)
+
+    def median(metrics: dict[str, str]) -> float:
+        return float(next(v for k, v in metrics.items() if k.startswith("Median"))[:-1])
+
+    # 10 years at 2.5%: real median = nominal / 1.025**10 (up to the 2-decimal display)
+    assert median(real) == pytest.approx(median(nominal) / 1.025**10, abs=0.01)
+    assert any("2.50% inflation" in c.value for c in app.caption)
+
+
+@pytest.mark.parametrize("method", ["bootstrap", "gbm"])
+def test_other_methods_still_available(app: AppTest, method: str) -> None:
+    app.radio(key="mc_method").set_value(method).run()
+    assert not app.exception, app.exception
+    assert len(_mc_metrics(app)) == 4
