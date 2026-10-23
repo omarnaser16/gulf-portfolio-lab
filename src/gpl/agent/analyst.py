@@ -75,7 +75,9 @@ get_portfolio_diagnosis and get_optimisation_result, then write a memo with "###
 clusters of holdings that move together) and how it compares with the benchmark.
 - **Your goal** - the goal, any target and the limits, in plain words.
 - **Candidates** - the methods tried and their walk-forward results after costs, compared \
-with the current portfolio and the benchmark; say which did not hold up out of sample.
+with the current portfolio and the benchmark; say which did not hold up out of sample. \
+"Months limits unmet" are months when the limits could not be met with the data then \
+available, so the previous weights were kept: no limit was broken.
 - **Recommendation and why** - the recommendation exactly as the tool gives it (it is chosen \
 by a fixed rule in code, not by you), quoting the rule and its reasons, and the largest \
 weight changes. If the tool recommends keeping the current portfolio, say so and why.

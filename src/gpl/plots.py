@@ -35,14 +35,19 @@ SEQUENTIAL_BLUE = ["#cfe0f6", "#8fb8ea", "#2a78d6"]  # light -> dark, one hue
 
 
 def _base_layout(fig: go.Figure, title: str, y_title: str, y_format: str) -> go.Figure:
+    # A long legend wraps onto the title, so with many series it goes below the plot instead.
+    below = len(fig.data) > 5
     fig.update_layout(
         title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
         font={"color": TEXT_SECONDARY, "size": 12},
         hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
-        margin={"l": 60, "r": 20, "t": 80, "b": 40},
+        legend={"orientation": "h", "yanchor": "top", "y": -0.12, "x": 0}
+        if below
+        else {"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        margin={"l": 60, "r": 20, "t": 60 if below else 80, "b": 100 if below else 40},
+        height=520 if below else None,
     )
     fig.update_xaxes(showgrid=False, linecolor=GRID)
     fig.update_yaxes(title=y_title, tickformat=y_format, gridcolor=GRID, zerolinecolor=GRID)

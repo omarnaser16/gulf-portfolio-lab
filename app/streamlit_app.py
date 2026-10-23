@@ -21,8 +21,8 @@ from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
-from gpl.agent.spec import describe_spec, propose_spec, spec_from_draft
-from gpl.agent.tools import AnalystContext, run_optimisation
+from gpl.agent.spec import describe_goal, describe_limits, propose_spec, spec_from_draft
+from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
 from gpl.data import (
     AssetData,
     BenchmarkData,
@@ -64,6 +64,7 @@ from gpl.plots import (
     risk_contribution_chart,
     weights_chart,
 )
+from gpl.recommend import GOALS, KEEP
 
 CFG = load_universe()
 
@@ -500,15 +501,8 @@ def render_reply(reply: agent.AnalystReply) -> None:
             st.json(call.output, expanded=False)
 
 
-OBJECTIVE_NAMES = {
-    "max_sharpe": "Maximise Sharpe ratio",
-    "min_variance": "Minimise volatility",
-    "max_return": "Maximise return",
-    "target_volatility": "Highest return for a volatility cap",
-    "target_return": "Lowest volatility for a return floor",
-}
 BLANK_DRAFT = {
-    "objective": "max_sharpe",
+    "goal": "max_risk_adjusted",
     "max_weight_pct": None,
     "asset_limits": [],
     "group_limits": [],
@@ -516,6 +510,16 @@ BLANK_DRAFT = {
     "min_return_pct": None,
     "unmapped_requests": [],
     "summary": "",
+}
+CANDIDATE_TABLE_COLUMNS = {
+    "cagr": "CAGR",
+    "annual_volatility": "Volatility (ann.)",
+    "sharpe": "Sharpe",
+    "max_drawdown": "Max drawdown",
+    "turnover_per_year": "Turnover / yr",
+    "in_sample_sharpe": "In-sample Sharpe",
+    "held_up_out_of_sample": "Held up?",
+    "months_limits_unmet_previous_weights_kept": "Months limits unmet (weights kept)",
 }
 
 
@@ -541,206 +545,257 @@ def _limits_rows(table: pd.DataFrame, key_name: str) -> list[dict]:
     return rows
 
 
-def render_optimise() -> None:
-    """Goals in plain English -> spec the user confirms -> optimiser -> comparison and memo."""
-    st.slider(
-        CAP_SETTING,
-        0.10,
-        1.00,
-        float(D["max_weight"]),
-        0.05,
-        key="max_weight",
-        help="The most any one holding may weigh in an optimised portfolio. It also applies to "
-        "the strategies on the Frontier, Backtest and Monte Carlo tabs.",
-    )
-    if not portfolio_ok or len(my_weights) < 2:
-        st.info("Add at least two holdings with price history on the Holdings tab.")
-        return
-    if not enough_history:
-        st.warning(SHORT_SAMPLE)
-        return
-    holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
-    st.markdown("**1. Describe your goals**")
-    goals = st.text_area(
-        "Goals in plain English",
-        key="ws_goals",
-        placeholder="e.g. max 12% vol, at least 20% GCC, no single asset over 25%, maximise Sharpe",
-        help="The AI only turns this into limits you can check; it never chooses weights.",
-    )
-    c1, c2 = st.columns(2)
-    ai_ok = agent.has_credentials()
-    if c1.button(
-        "Interpret with AI",
-        key="ws_interpret",
-        type="primary",
-        disabled=not ai_ok,  # not tied to the text: typed text only registers on blur
-        help=None if ai_ok else "Needs an API key (see the Analyst tab).",
-    ):
-        if not goals.strip():
-            st.warning("Describe your goals first, e.g. 'max 12% vol, at least 20% GCC'.")
-        else:
-            try:
-                with st.spinner("Turning your goals into a specification…"):
-                    proposal = propose_spec(
-                        agent.make_client(), A["model"], goals, holding_groups, effort="low"
-                    )
-                st.session_state.ws_spec = {
-                    "draft": proposal.draft,
-                    "proposal": proposal,
-                    "v": time_key(),
-                }
-                st.session_state.pop("ws_opt", None)
-            except (ValueError, anthropic.APIError) as e:
-                st.error(str(e))
-    if c2.button("Set the limits myself", key="ws_manual"):
-        st.session_state.ws_spec = {"draft": dict(BLANK_DRAFT), "proposal": None, "v": time_key()}
-        st.session_state.pop("ws_opt", None)
+def _interpret(holding_groups: dict[str, str]) -> None:
+    """Callback: the AI turns the typed goals into a draft (goal, target, limits).
 
-    spec_state = st.session_state.get("ws_spec")
-    if not spec_state:
+    Runs before the widgets are drawn, so it may also set the per-asset cap slider.
+    """
+    goals = st.session_state.get("ws_goals", "")
+    st.session_state.pop("ws_interpret_error", None)
+    if not goals.strip():
+        st.session_state.ws_interpret_error = (
+            "Describe your goals first, e.g. 'make it safer, at least 20% GCC'."
+        )
         return
-    draft, proposal, v = spec_state["draft"], spec_state["proposal"], spec_state["v"]
-
-    def as_float(value):  # the model writes integers (25); number inputs need floats
-        return None if value is None else float(value)
-
-    st.markdown("**2. Check and edit the specification**")
-    if proposal:
-        if proposal.summary:
-            st.info(f"**The AI understood:** {proposal.summary}")
-        for request in proposal.unmapped:
-            st.warning(f"Not included (can't be expressed as a limit): “{request}”")
-        if proposal.numbers_not_in_goals:
-            st.warning(
-                "These numbers are not in your text, please check them: "
-                + ", ".join(proposal.numbers_not_in_goals)
-            )
-    objective = st.selectbox(
-        "Objective",
-        list(OBJECTIVE_NAMES),
-        format_func=OBJECTIVE_NAMES.get,
-        index=list(OBJECTIVE_NAMES).index(draft.get("objective") or "max_sharpe"),
-        key=f"ws_obj_{v}",
-    )
-    n1, n2, n3 = st.columns(3)
-    max_w = n1.number_input(
-        "Max per asset (%)",
-        0.0,
-        100.0,
-        as_float(draft.get("max_weight_pct")),
-        1.0,
-        key=f"ws_maxw_{v}",
-        placeholder="no limit",
-    )
-    max_vol = n2.number_input(
-        "Max volatility (% a year)",
-        0.0,
-        200.0,
-        as_float(draft.get("max_volatility_pct")),
-        0.5,
-        key=f"ws_maxvol_{v}",
-        placeholder="no limit",
-    )
-    min_ret = n3.number_input(
-        "Min return (% a year)",
-        -100.0,
-        200.0,
-        as_float(draft.get("min_return_pct")),
-        0.5,
-        key=f"ws_minret_{v}",
-        placeholder="no limit",
-    )
-    g1, g2 = st.columns(2)
-    g1.caption("Group limits (blank = none)")
-    groups_present = sorted(set(holding_groups.values()))
-    group_table = g1.data_editor(
-        _limits_table(draft.get("group_limits", []), "group", groups_present),
-        key=f"ws_groups_{v}",
-        width="stretch",
-    )
-    g2.caption("Asset limits (blank = none)")
-    asset_table = g2.data_editor(
-        _limits_table(draft.get("asset_limits", []), "ticker", list(my_weights)),
-        key=f"ws_assets_{v}",
-        width="stretch",
-    )
-    edited = {
-        **draft,
-        "objective": objective,
-        "max_weight_pct": max_w,
-        "max_volatility_pct": max_vol,
-        "min_return_pct": min_ret,
-        "group_limits": _limits_rows(group_table, "group"),
-        "asset_limits": _limits_rows(asset_table, "ticker"),
-    }
     try:
-        spec = spec_from_draft(edited, holding_groups)
-    except ValueError as e:
-        st.error(str(e))
+        proposal = propose_spec(agent.make_client(), A["model"], goals, holding_groups)
+    except (ValueError, anthropic.APIError) as e:
+        st.session_state.ws_interpret_error = str(e)
         return
-    st.markdown(
-        "You are about to optimise for:\n" + "\n".join(f"- {line}" for line in describe_spec(spec))
-    )
-    if st.button("Run optimisation", key="ws_run_opt", type="primary"):
-        ctx = shared_context()
-        with st.spinner("Optimising and backtesting…"):
-            report, weights = run_optimisation(ctx, spec, my_weights)
-        ctx.optimisation = report
-        st.session_state.ws_opt = {"report": report, "weights": weights, "memo": None}
+    st.session_state.ws_draft = proposal.draft
+    st.session_state.ws_proposal = proposal
+    st.session_state.ws_draft_v = time_key()
+    cap = proposal.draft.get("max_weight_pct")
+    if cap is not None:
+        st.session_state["max_weight"] = min(max(float(cap) / 100, 0.10), 1.0)
+    st.session_state.pop("ws_opt", None)
 
-    result = st.session_state.get("ws_opt")
-    if not result:
-        return
-    report, weights = result["report"], result["weights"]
-    st.markdown("**3. Results**")
-    if not report["feasible"]:
-        st.error(
-            "**These limits can't all be met.**\n"
-            + "\n".join(f"- {r}" for r in report["reasons_if_not_feasible"])
-            + "\n\nRelax one of them and run again. No weights are shown."
+
+def _diagnosis_section(ctx: AnalystContext) -> None:
+    key = (settings_key, bench_name)
+    if st.session_state.get("ws_diag_key") != key:
+        st.session_state.ws_diag = diagnose_portfolio(ctx, my_weights)
+        st.session_state.ws_diag_key = key
+    diag = st.session_state.ws_diag
+    ctx.diagnosis = diag
+    st.markdown("**1. Diagnosis: where your risk comes from**")
+    holdings = pd.DataFrame(diag["holdings"]).T.rename(
+        columns={
+            "weight": "Weight",
+            "share_of_risk": "Share of risk",
+            "annual_volatility": "Volatility (ann.)",
+            "sharpe": "Sharpe",
+            "beta_to_benchmark": f"Beta to {bench_name}",
+        }
+    )
+    holdings.insert(0, "Name", [holding_names.get(t, "") for t in holdings.index])
+    st.table(holdings)
+    w = pd.Series(my_weights)
+    rc = risk_contributions(w, all_returns[w.index].cov())
+    st.plotly_chart(
+        paired_bars_chart(w, rc, ("Share of money", "Share of risk"), "Money vs risk"),
+        width="stretch",
+    )
+    if diag["correlation_clusters"]:
+        st.markdown(
+            "**Holdings that move together** ("
+            + diag["cluster_rule"]
+            + "):\n"
+            + "\n".join(
+                f"- {', '.join(c['holdings'])}: average correlation {c['average_correlation']}, "
+                f"{c['share_of_money']} of the money and {c['share_of_risk']} of the risk"
+                for c in diag["correlation_clusters"]
+            )
         )
     else:
-        now = pd.Series(my_weights)
-        table = pd.DataFrame(report["weights"]).T.rename(
-            columns={"current": "Current", "optimised": "Optimised", "change": "Change"}
-        )
-        w1, w2 = st.columns([2, 3])
-        w1.table(table)
-        w2.plotly_chart(
-            paired_bars_chart(
-                now, weights, ("Current", "Optimised"), "Current vs optimised weights"
-            ),
-            width="stretch",
-        )
-        if report["binding_constraints"]:
-            st.caption("Binding limits: " + "; ".join(report["binding_constraints"]) + ".")
-        hist = pd.DataFrame(report["in_sample_historical"]).T.rename(
-            columns={
-                "expected_return": "Return (ann.)",
-                "volatility": "Volatility (ann.)",
-                "sharpe": "Sharpe",
-                "max_drawdown": "Max drawdown",
-            }
-        )
-        st.markdown(f"**Historical, in sample ({report['estimation_sample']})**")
-        st.table(hist)
-    if "backtests_after_costs" in report:
-        bt_table = pd.DataFrame(report["backtests_after_costs"]).T.rename(
+        st.caption(f"No correlation clusters: no group of {diag['cluster_rule']}.")
+    if "vs_benchmark" in diag:
+        absolute = pd.DataFrame(diag["vs_benchmark"]["absolute"]).T.rename(
             columns={
                 "cagr": "CAGR",
                 "annual_volatility": "Volatility (ann.)",
                 "sharpe": "Sharpe",
                 "max_drawdown": "Max drawdown",
-                "turnover_per_year": "Turnover / yr",
             }
         )
-        st.markdown(f"**Backtests after costs ({report['backtest_period']})**")
-        st.table(bt_table)
-    for note in report["notes"]:
-        st.caption(note)
+        rel = diag["vs_benchmark"]["relative"]
+        st.markdown(f"**Your portfolio vs {bench_name}** ({rel['period']}, after costs)")
+        st.table(absolute)
+        st.caption(
+            f"Beta {rel['beta']} · alpha {rel['alpha_annual_jensen']} · tracking error "
+            f"{rel['tracking_error']} · information ratio {rel['information_ratio']} · up "
+            f"capture {rel['up_capture']} · down capture {rel['down_capture']} · correlation "
+            f"{rel['correlation']}. Definitions are on the Benchmark tab."
+        )
+
+
+def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
+    """Goal, target and limits (typed or interpreted by the AI); returns (goal, limits, target)."""
+    st.markdown("**2. Your goal and limits**")
+    with st.expander("Describe it in plain English (optional)", expanded=False):
+        st.text_area(
+            "Goals in plain English",
+            key="ws_goals",
+            placeholder="e.g. make it safer, at least 20% GCC, no single asset over 25%",
+            help="The AI only fills in the goal and limits below for you to check; it never "
+            "chooses weights or methods.",
+        )
+        st.button(
+            "Interpret with AI",
+            key="ws_interpret",
+            type="primary",
+            on_click=_interpret,
+            args=(holding_groups,),
+            disabled=not ai_ok,
+            help=None if ai_ok else "Needs an API key (see the Analyst tab).",
+        )
+        if st.session_state.get("ws_interpret_error"):
+            st.warning(st.session_state.ws_interpret_error)
+        proposal = st.session_state.get("ws_proposal")
+        if proposal:
+            if proposal.summary:
+                st.info(f"**The AI understood:** {proposal.summary}")
+            for request in proposal.unmapped:
+                st.warning(f"Not included (can't be expressed as a limit): “{request}”")
+            if proposal.numbers_not_in_goals:
+                st.warning(
+                    "These numbers are not in your text, please check them: "
+                    + ", ".join(proposal.numbers_not_in_goals)
+                )
+
+    draft = st.session_state.setdefault("ws_draft", dict(BLANK_DRAFT))
+    v = st.session_state.setdefault("ws_draft_v", 0)
+
+    def as_float(value):  # the model writes integers (25); number inputs need floats
+        return None if value is None else float(value)
+
+    goal = st.radio(
+        "Goal",
+        list(GOALS),
+        format_func=GOALS.get,
+        index=list(GOALS).index(draft.get("goal") or "max_risk_adjusted"),
+        key=f"ws_goal_{v}",
+    )
+    edited = {**draft, "goal": goal, "max_weight_pct": max_weight * 100}
+    if goal == "target_return":
+        edited["min_return_pct"] = st.number_input(
+            "Target return (% a year)",
+            -50.0,
+            100.0,
+            as_float(draft.get("min_return_pct")),
+            0.5,
+            key=f"ws_target_ret_{v}",
+            placeholder="e.g. 8",
+        )
+    elif goal == "target_volatility":
+        edited["max_volatility_pct"] = st.number_input(
+            "Target volatility (% a year)",
+            0.5,
+            100.0,
+            as_float(draft.get("max_volatility_pct")),
+            0.5,
+            key=f"ws_target_vol_{v}",
+            placeholder="e.g. 10",
+        )
+    with st.expander("More limits (optional)"):
+        n1, n2 = st.columns(2)
+        if goal != "target_volatility":
+            edited["max_volatility_pct"] = n1.number_input(
+                "Volatility cap (% a year)",
+                0.5,
+                100.0,
+                as_float(draft.get("max_volatility_pct")),
+                0.5,
+                key=f"ws_maxvol_{v}",
+                placeholder="no cap",
+            )
+        if goal != "target_return":
+            edited["min_return_pct"] = n2.number_input(
+                "Return floor (% a year, historical)",
+                -50.0,
+                100.0,
+                as_float(draft.get("min_return_pct")),
+                0.5,
+                key=f"ws_minret_{v}",
+                placeholder="no floor",
+            )
+        g1, g2 = st.columns(2)
+        g1.caption("Group limits (blank = none)")
+        group_table = g1.data_editor(
+            _limits_table(
+                draft.get("group_limits", []), "group", sorted(set(holding_groups.values()))
+            ),
+            key=f"ws_groups_{v}",
+            width="stretch",
+        )
+        g2.caption("Asset limits (blank = none)")
+        asset_table = g2.data_editor(
+            _limits_table(draft.get("asset_limits", []), "ticker", list(my_weights)),
+            key=f"ws_assets_{v}",
+            width="stretch",
+        )
+    edited["group_limits"] = _limits_rows(group_table, "group")
+    edited["asset_limits"] = _limits_rows(asset_table, "ticker")
+    try:
+        goal, limits, target = spec_from_draft(edited, holding_groups)
+    except ValueError as e:
+        st.warning(str(e))
+        return None
+    st.markdown(
+        f"**Goal:** {describe_goal(goal, target)}  \n**Limits for every method:** "
+        + "; ".join(describe_limits(limits))
+        + f"  \n**Benchmark:** {bench_name}"
+    )
+    return goal, limits, target
+
+
+def _results_section(result: dict, ai_ok: bool) -> None:
+    report, run = result["report"], result["run"]
+    rec = report["recommendation"]
+    st.markdown("**4. Recommendation**")
+    reasons = "\n".join(f"- {r}" for r in rec["reasons"])
+    if rec["choice"] == KEEP:
+        st.info(f"**Keep your current portfolio.**\n\n{reasons}")
+    else:
+        st.success(f"**Recommended method: {rec['choice']}**\n\n{reasons}")
+    st.caption(f"The rule for this goal: {rec['rule']}")
+
+    rows = pd.DataFrame(report["walk_forward_after_costs"]).T
+    rows = rows.reindex(columns=list(CANDIDATE_TABLE_COLUMNS)).rename(
+        columns=CANDIDATE_TABLE_COLUMNS
+    )
+    rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
+    rows.index = [("★ " if n == rec["choice"] else "") + n for n in rows.index]
+    st.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
+    st.table(rows)
+    st.caption(
+        "Each method is re-optimised every month on the trailing window only (Ledoit-Wolf "
+        "covariance), within your limits, then held to the next month, after trading costs. "
+        "'Held up?': it kept at least half of its in-sample Sharpe ratio out of sample. "
+        "'Months limits unmet': months when the limits couldn't be met with the data then "
+        "available, so the previous weights were kept (no limit was broken). The "
+        "target-volatility method aims at "
+        f"{report['volatility_target_for_target_volatility_candidate']} a year."
+    )
+    for name, why in report["infeasible_candidates"].items():
+        st.warning(f"**{name}** can't meet your limits, so it wasn't run: " + " ".join(why))
+    if len(run.latest_weights) > 1:
+        st.markdown("**Latest weights of each method** (what it would hold now)")
+        st.table(run.latest_weights.map(pct))
+        if rec["choice"] != KEEP:
+            st.plotly_chart(
+                paired_bars_chart(
+                    run.latest_weights.loc["Current"],
+                    run.latest_weights.loc[rec["choice"]],
+                    ("Current", rec["choice"]),
+                    f"Current vs {rec['choice']}",
+                ),
+                width="stretch",
+            )
+    st.plotly_chart(equity_chart(run.equity, "Growth of $1, walk-forward after costs"))
     st.info(report["caveats"])
 
-    if ai_ok and st.button("Explain the changes (AI memo)", key="ws_opt_memo"):
+    if ai_ok and st.button("Explain the recommendation (AI memo)", key="ws_opt_memo"):
         memo_analyst = agent.Analyst(
             shared_context(),
             agent.make_client(),
@@ -751,8 +806,9 @@ def render_optimise() -> None:
         )
         result["memo"] = ask_analyst(
             memo_analyst,
-            "Please explain the optimisation I just ran on the Portfolio tab: what changes, the "
-            "trade-offs, and how much to trust the results.",
+            "Please explain the diagnosis of my portfolio and the recommendation from the "
+            "Optimise section: why this method fits my goal, the trade-offs, and how much to "
+            "trust the results.",
         )
     memo = result.get("memo")
     if memo:
@@ -761,6 +817,55 @@ def render_optimise() -> None:
         else:
             with st.chat_message("assistant"):
                 render_reply(memo["reply"])
+
+
+def render_optimise() -> None:
+    """Diagnose -> goal and limits -> candidate methods walk-forward -> recommendation -> memo."""
+    # Default set through session state only: the AI's interpretation may also set it.
+    st.session_state.setdefault("max_weight", float(D["max_weight"]))
+    st.slider(
+        CAP_SETTING,
+        0.10,
+        1.00,
+        step=0.01,
+        key="max_weight",
+        help="The most any one holding may weigh in an optimised portfolio. It also applies to "
+        "the strategies on the Frontier, Backtest and Monte Carlo tabs.",
+    )
+    if not portfolio_ok or len(my_weights) < 2:
+        st.info("Add at least two holdings with price history on the Holdings tab.")
+        return
+    if not enough_history:
+        st.warning(SHORT_SAMPLE)
+        return
+    ctx = shared_context()
+    ctx.benchmark = bench
+    holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
+    ai_ok = agent.has_credentials()
+    _diagnosis_section(ctx)
+    chosen = _goal_section(holding_groups, ai_ok)
+    if chosen is None:
+        return
+    goal, limits, target = chosen
+    if goal == "beat_benchmark_less_risk" and bench is None:
+        st.warning("Choose a benchmark with data at the top of the Portfolio tab.")
+        return
+    st.markdown("**3. Candidate methods**")
+    st.caption(
+        "Max Sharpe, min variance, risk parity, max diversification and target volatility, each "
+        "within your limits, judged on how they did out of sample after costs."
+    )
+    run_key = (settings_key, bench_name, goal, target, repr(limits))
+    if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
+        with st.spinner("Re-optimising each method month by month and backtesting…"):
+            report, run = run_candidates(ctx, goal, limits, my_weights, target)
+        ctx.optimisation = report
+        st.session_state.ws_opt = {"report": report, "run": run, "memo": None, "key": run_key}
+    result = st.session_state.get("ws_opt")
+    if result and result["key"] == run_key:
+        _results_section(result, ai_ok)
+    elif result:
+        st.caption("Your goal, limits or benchmark changed: run the candidate methods again.")
 
 
 def time_key() -> int:

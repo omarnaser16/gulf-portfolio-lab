@@ -1,9 +1,10 @@
-"""Turn an investor's plain-English goals into an optimisation spec, and nothing more.
+"""Turn an investor's plain-English goals into a goal and limits, and nothing more.
 
-The model fills in one tool, ``propose_spec``, whose input *is* the spec: an objective and
-limits copied from the user's words (percentages exactly as written). It cannot propose
-weights (there is no field for them), and every number it writes is checked against the
-user's text. The user confirms or edits the spec; only then does the app call the optimiser.
+The model fills in one tool, ``propose_spec``, whose input *is* the spec: one of the five
+goals (``gpl.recommend.GOALS``), a target if the goal needs one, and limits copied from the
+user's words (percentages exactly as written). It cannot propose weights or choose a method
+(there are no fields for them), and every number it writes is checked against the user's
+text. The user confirms or edits the spec; only then does the app run the candidate methods.
 """
 
 import re
@@ -11,29 +12,33 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from gpl.optimise import OBJECTIVES, OptimisationSpec
+from gpl.optimise import OptimisationSpec
+from gpl.recommend import GOALS
 
 SPEC_SYSTEM_PROMPT = """\
-You translate an investor's goals into an optimisation specification for their portfolio. \
-You do not choose weights and you never calculate anything.
+You translate an investor's goals into a goal and limits for their portfolio. You do not \
+choose weights or methods and you never calculate anything.
 
 Call the propose_spec tool exactly once:
-- objective: "max_sharpe" for best risk-adjusted return ("maximise Sharpe", "best return for \
-the risk"); "min_variance" for lowest risk; "max_return" for highest return; \
-"target_volatility" when they want the highest return for a stated volatility; \
-"target_return" when they want the lowest risk for a stated return. If they state no \
-objective, use "max_sharpe" and say so in the summary.
-- Write percentages exactly as the user wrote them, as numbers of percent: "12% vol" -> 12, \
-"no more than a quarter in one stock" cannot be written exactly, so put it in \
+- goal: "max_risk_adjusted" for the best return for the risk ("maximise Sharpe", "best \
+risk-adjusted return"); "reduce_risk" for lower risk ("make it safer", "lower volatility"); \
+"target_return" when they want a stated return with as little risk as possible ("I need 8% \
+a year"); "target_volatility" when they want the most return at a stated level of risk \
+("around 10% volatility"); "beat_benchmark_less_risk" when they want to beat the benchmark \
+with less risk. If they state no goal, use "max_risk_adjusted" and say so in the summary.
+- min_return_pct: the target return for "target_return", or a return floor they insist on.
+- max_volatility_pct: the target for "target_volatility", or a volatility cap ("max 12% vol").
+- Write percentages exactly as the user wrote them, as numbers of percent: "12% vol" -> 12. \
+"No more than a quarter in one stock" cannot be written exactly, so put it in \
 unmapped_requests rather than converting it.
 - max_weight_pct: a limit that applies to every single asset ("no single asset over 25%").
 - asset_limits: limits on named holdings (use the ticker). group_limits: limits on groups \
 (GCC, Global equity, Bonds, Gold, Other) such as "at least 20% GCC".
-- max_volatility_pct / min_return_pct: annual volatility cap / return floor.
 - Use null for anything the user did not state. Never add limits they did not ask for.
-- unmapped_requests: anything you could not express with these fields (e.g. "avoid oil \
-companies", "keep dividends high"), in the user's words.
-- summary: one or two sentences restating the spec in plain English.
+- unmapped_requests: anything you could not express with the goal or these fields (e.g. \
+"avoid oil companies", "keep dividends high"), in the user's words. Never list the goal \
+itself here: if it is captured by the goal field, it is not unmapped.
+- summary: one or two sentences restating the goal and limits in plain English.
 """
 
 
@@ -42,13 +47,13 @@ def spec_tool(tickers: Sequence[str], groups: Sequence[str]) -> dict:
     pct = {"type": ["number", "null"]}
     return {
         "name": "propose_spec",
-        "description": "Record the optimisation objective and the limits the user stated. "
+        "description": "Record the investor's goal, any target, and the limits they stated. "
         "Percentages exactly as written by the user (12 means 12%).",
         "strict": True,
         "input_schema": {
             "type": "object",
             "properties": {
-                "objective": {"type": "string", "enum": list(OBJECTIVES)},
+                "goal": {"type": "string", "enum": list(GOALS)},
                 "max_weight_pct": pct,
                 "asset_limits": {
                     "type": "array",
@@ -82,7 +87,7 @@ def spec_tool(tickers: Sequence[str], groups: Sequence[str]) -> dict:
                 "summary": {"type": "string"},
             },
             "required": [
-                "objective",
+                "goal",
                 "max_weight_pct",
                 "asset_limits",
                 "group_limits",
@@ -161,26 +166,41 @@ def propose_spec(
     )
 
 
+TARGET_FIELD = {"target_return": "min_return_pct", "target_volatility": "max_volatility_pct"}
+
+
 def spec_from_draft(
     draft: Mapping[str, Any], groups_by_ticker: Mapping[str, str]
-) -> OptimisationSpec:
-    """Percent-unit draft (from the model or the edited form) -> ``OptimisationSpec``.
+) -> tuple[str, OptimisationSpec, float | None]:
+    """Percent-unit draft (from the model or the edited form) -> (goal, limits, target).
 
-    Raises ValueError with a readable message for an invalid draft (e.g. a target objective
-    without its target, or a limit on a ticker that isn't held).
+    For the target goals, the target (return or volatility) is taken out of the limits: it
+    picks among the methods rather than constraining every one of them. Otherwise a stated
+    volatility cap or return floor is a limit for every method. Raises ValueError with a
+    readable message for an invalid draft (a target goal without its number, or a limit on
+    a ticker that isn't held).
     """
 
     def frac(v: Any) -> float | None:
         return None if v is None else float(v) / 100
 
+    goal = draft.get("goal") or "max_risk_adjusted"
+    if goal not in GOALS:
+        raise ValueError(f"Unknown goal {goal!r}.")
     unknown = [
         r["ticker"] for r in draft.get("asset_limits", []) if r["ticker"] not in groups_by_ticker
     ]
     if unknown:
         raise ValueError(f"Limits refer to assets you don't hold: {', '.join(unknown)}.")
+    target = None
+    if goal in TARGET_FIELD:
+        target = frac(draft.get(TARGET_FIELD[goal]))
+        if target is None:
+            what = "return" if goal == "target_return" else "volatility"
+            raise ValueError(f"Enter the target {what} for this goal.")
     max_weight = frac(draft.get("max_weight_pct"))
-    return OptimisationSpec(
-        objective=draft.get("objective") or "max_sharpe",
+    limits = OptimisationSpec(
+        objective="max_sharpe",  # replaced by each candidate method
         max_weight=1.0 if max_weight is None else max_weight,
         asset_bounds={
             r["ticker"]: (frac(r.get("min_pct")), frac(r.get("max_pct")))
@@ -193,9 +213,27 @@ def spec_from_draft(
             for r in draft.get("group_limits", [])
             if r.get("min_pct") is not None or r.get("max_pct") is not None
         },
-        max_volatility=frac(draft.get("max_volatility_pct")),
-        min_return=frac(draft.get("min_return_pct")),
+        max_volatility=None
+        if goal == "target_volatility"
+        else frac(draft.get("max_volatility_pct")),
+        min_return=None if goal == "target_return" else frac(draft.get("min_return_pct")),
     )
+    return goal, limits, target
+
+
+def describe_goal(goal: str, target: float | None) -> str:
+    """The goal in plain words, with its target."""
+    text = GOALS[goal]
+    if goal == "target_return" and target is not None:
+        text += f": at least {target:.2%} a year"
+    elif goal == "target_volatility" and target is not None:
+        text += f": about {target:.2%} a year"
+    return text
+
+
+def describe_limits(spec: OptimisationSpec) -> list[str]:
+    """The limits every candidate method must respect, in plain words."""
+    return describe_spec(spec)[1:]
 
 
 def describe_spec(spec: OptimisationSpec) -> list[str]:

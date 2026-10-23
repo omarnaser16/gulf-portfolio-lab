@@ -30,7 +30,6 @@ from gpl.metrics import (
     benchmark_metrics,
     beta,
     correlation_clusters,
-    max_drawdown,
     summary_table,
 )
 from gpl.montecarlo import (
@@ -431,125 +430,6 @@ def get_my_portfolio(ctx: AnalystContext) -> dict:
     }
 
 
-def run_optimisation(
-    ctx: AnalystContext, spec: OptimisationSpec, current: Mapping[str, float]
-) -> tuple[dict, pd.Series | None]:
-    """Optimise the user's holdings for ``spec`` and compare with their current weights.
-
-    Every number comes from gpl functions: ``optimise`` (full-sample estimates), the
-    backtester for after-cost results (current weights, optimised weights held fixed, the
-    spec re-optimised monthly on past data only, and 60/40), and ``max_drawdown``.
-
-    Returns the report (formatted, JSON-serialisable; also what the analyst sees) and the
-    optimised weights (None if the spec can't be met).
-    """
-    from gpl.agent.spec import describe_spec
-
-    holdings = list(current)
-    rets = ctx.all_returns[holdings]
-    mu, cov = rets.mean() * ctx.periods, rets.cov() * ctx.periods
-    rf_daily = ctx.rf.loc[rets.index[0] :]
-    rf_annual = float((1 + rf_daily).prod() ** (PERIODS_PER_YEAR / len(rf_daily)) - 1)
-    result = optimise(mu, cov, spec, rf_annual)
-    w_now = pd.Series(current, dtype=float)
-
-    def in_sample(w: pd.Series) -> dict:
-        ret, vol = portfolio_performance(w, mu, cov)
-        return {
-            "expected_return": pct(ret),
-            "volatility": pct(vol),
-            "sharpe": num((ret - rf_annual) / vol) if vol > 0 else "n/a",
-            "max_drawdown": pct(max_drawdown(rets @ w.reindex(holdings).fillna(0))),
-        }
-
-    report: dict[str, Any] = {
-        "spec": describe_spec(spec),
-        "feasible": result.feasible,
-        "reasons_if_not_feasible": result.reasons,
-        "estimation_sample": f"{rets.index[0].date()} to {rets.index[-1].date()}",
-        "why_this_sample": "It is the common history of your holdings: it starts when the most "
-        "recently listed holding's data starts. This is expected, not a data problem.",
-        "in_sample_historical": {"Current": in_sample(w_now)},
-        "binding_constraints": result.binding,
-    }
-    if result.feasible:
-        w_opt = result.weights
-        report["weights"] = {
-            t: {
-                "current": pct(w_now.get(t, 0.0)),
-                "optimised": pct(w_opt[t]),
-                "change": f"{(w_opt[t] - w_now.get(t, 0.0)) * 100:+.2f} pp",
-            }
-            for t in holdings
-        }
-        report["in_sample_historical"]["Optimised"] = in_sample(w_opt)
-
-    run = dict(
-        rebalance=ctx.settings["rebalance"],
-        lookback=ctx.settings["lookback"],
-        cost_bps=ctx.settings["cost_bps"],
-    )
-    results, notes = {}, []
-    try:
-        results["Current"] = bt.run_backtest(ctx.prices, bt.fixed_weights(current), **run)
-        if result.feasible:
-            results["Optimised (hindsight)"] = bt.run_backtest(
-                ctx.prices, bt.fixed_weights(result.weights.to_dict()), **run
-            )
-            walk = bt.spec_strategy(spec, rf=ctx.rf, periods_per_year=ctx.periods, fallback=current)
-            try:
-                results["Optimised (walk-forward)"] = bt.run_backtest(
-                    ctx.prices[holdings], walk, **run
-                )
-                if walk.infeasible_dates:
-                    months = len(walk.infeasible_dates)
-                    total = len(results["Optimised (hindsight)"].weights)
-                    notes.append(
-                        f"Walk-forward: the limits couldn't be met with the data available in "
-                        f"{months} of {total} months (first: {walk.infeasible_dates[0].date()}). "
-                        "In those months the previous weights were kept, or your current weights "
-                        "before the first month the limits could be met."
-                    )
-            except ValueError as e:
-                notes.append(f"Walk-forward not available: {e}")
-        if {"SPY", "AGG"} <= set(ctx.prices.columns):
-            results["60/40 (SPY/AGG)"] = ctx.backtest("60/40 (SPY/AGG)")
-    except ValueError as e:
-        notes.append(f"Backtests not available: {e}")
-    if results:
-        frame = pd.DataFrame({n: r.returns for n, r in results.items()})
-        rows = _metrics_rows(
-            summary_table(
-                frame, rf=ctx.rf, level=ctx.settings["var_level"], periods_per_year=ctx.periods
-            )
-        )
-        for n, r in results.items():
-            rows[n]["turnover_per_year"] = times(r.turnover.iloc[1:].mean() * 12)
-        first = next(iter(results.values())).equity.index
-        report["backtests_after_costs"] = {
-            n: {
-                k: rows[n][k]
-                for k in (
-                    "cagr",
-                    "annual_volatility",
-                    "sharpe",
-                    "max_drawdown",
-                    "turnover_per_year",
-                )
-            }
-            for n in results
-        }
-        report["backtest_period"] = f"{first[0].date()} to {first[-1].date()}"
-    report["notes"] = notes
-    report["caveats"] = (
-        "In-sample figures and the 'hindsight' backtest use the same history the weights were "
-        "fitted on, so they flatter the optimised portfolio. The walk-forward backtest "
-        "re-optimises each month using only data available at the time and is the fairer test. "
-        "All results are based on history and are not a guarantee of future returns."
-    )
-    return report, (result.weights if result.feasible else None)
-
-
 def _run_settings(ctx: AnalystContext) -> dict:
     return dict(
         rebalance=ctx.settings["rebalance"],
@@ -680,12 +560,11 @@ def run_candidates(
     returns are window means. The recommendation is made by ``gpl.recommend.recommend``, a
     fixed rule per goal; this function only formats its inputs and outputs.
     """
-    from gpl.agent.spec import describe_spec
+    from gpl.agent.spec import describe_goal, describe_limits
     from gpl.recommend import (
         BENCHMARK,
         CANDIDATES,
         CURRENT,
-        GOALS,
         KEEP,
         candidate_specs,
         recommend,
@@ -729,7 +608,8 @@ def run_candidates(
         results[name] = bt.run_backtest(prices, walk, **run)
         infeasible_months[name] = len(walk.infeasible_dates)
 
-    frame = pd.DataFrame({n: r.returns for n, r in results.items()})
+    # from the first full day held, as on the Benchmark tab (day one only buys, paying costs)
+    frame = pd.DataFrame({n: r.returns.iloc[1:] for n, r in results.items()})
     if bench_returns is not None:
         frame[BENCHMARK] = bench_returns
     frame = frame.dropna()
@@ -771,7 +651,9 @@ def run_candidates(
         if name in CANDIDATES:
             row["in_sample_sharpe"] = num(in_sample[name])
             row["held_up_out_of_sample"] = "yes" if rec.held_up.get(name) else "no"
-            row["months_limits_not_met"] = f"{infeasible_months[name]} of {months}"
+            row["months_limits_unmet_previous_weights_kept"] = (
+                f"{infeasible_months[name]} of {months}"
+            )
         rows[name] = row
     latest = pd.DataFrame(
         {n: r.weights.iloc[-1] for n, r in results.items() if n != CURRENT}
@@ -780,9 +662,8 @@ def run_candidates(
     latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
 
     report: dict[str, Any] = {
-        "goal": GOALS[goal],
-        "target": None if target is None else pct(target),
-        "limits": describe_spec(limits)[1:],  # without the objective line
+        "goal": describe_goal(goal, target),
+        "limits": describe_limits(limits),
         "candidates": {n: CANDIDATES[n] for n in specs},
         "volatility_target_for_target_volatility_candidate": pct(vol_target),
         "covariance": f"Ledoit-Wolf shrinkage (intensity {shrinkage:.2f} on the full sample; "

@@ -96,10 +96,11 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Regime",
         "Analyst",
     ]
-    # static tables: data notes, my holdings, my comparison, benchmark comparison, assets,
-    # strategies, regime folds; dataframes: the editable holdings table, the screen (wide,
-    # scrollable) and the frontier weights
-    assert len(app.table) == 7 and len(app.dataframe) == 3
+    # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
+    # by holding, diagnosis vs benchmark, assets, strategies, regime folds; dataframes: the
+    # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
+    # limits editors and the frontier weights
+    assert len(app.table) == 9 and len(app.dataframe) == 5
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -154,9 +155,11 @@ def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
     tables = [
         t.value
         for t in app.table
-        if "Sharpe" in t.value.columns and "Correlation to rest" not in t.value.columns
+        if {"Sharpe", "Return (ann.)"} <= set(t.value.columns)
+        and "My portfolio" not in t.value.index
     ]
-    return [t for t in tables if "My portfolio" not in t.index][:2]
+    assert len(tables) == 2, [t.columns for t in tables]
+    return tables
 
 
 def test_metric_tables_are_readable(app: AppTest) -> None:
@@ -591,19 +594,19 @@ def test_analyst_writes_a_memo_about_my_portfolio(analyst_app) -> None:
 
 # ---------------------------------------------------------------------------------- Optimise
 
-GOALS_TEXT = "max 15% vol, at least 15% GCC, no single asset over 45%, maximise Sharpe"
+GOALS_TEXT = "make it safer, at least 15% GCC, no single asset over 45%"
 
 
 def _spec_call(**overrides) -> SimpleNamespace:
     draft = {
-        "objective": "max_sharpe",
+        "goal": "reduce_risk",
         "max_weight_pct": 45,
         "asset_limits": [],
         "group_limits": [{"group": "GCC", "min_pct": 15, "max_pct": None}],
-        "max_volatility_pct": 15,
+        "max_volatility_pct": None,
         "min_return_pct": None,
         "unmapped_requests": [],
-        "summary": "Maximise Sharpe; volatility at most 15%; at least 15% GCC; max 45% per asset.",
+        "summary": "Reduce risk; at least 15% GCC; max 45% per asset.",
     }
     return tool_use("s1", "propose_spec", {**draft, **overrides})
 
@@ -625,87 +628,118 @@ def optimise_app(monkeypatch, tmp_path):
     return make
 
 
-def _results(at: AppTest) -> dict[str, pd.DataFrame]:
-    out = {}
-    for t in at.table:
-        cols = set(t.value.columns)
-        if {"Current", "Optimised", "Change"} <= cols:
-            out["weights"] = t.value
-        elif "Turnover / yr" in cols and "Optimised (hindsight)" in t.value.index:
-            out["backtests"] = t.value
-    return out
+def _candidates(at: AppTest) -> pd.DataFrame | None:
+    return next((t.value for t in at.table if "Held up?" in t.value.columns), None)
 
 
-def test_set_limits_myself_and_run(optimise_app) -> None:
+def _latest_weights(at: AppTest) -> pd.DataFrame | None:
+    return next(
+        (t.value for t in at.table if "Current" in t.value.index and "KSA" in t.value.columns), None
+    )
+
+
+def test_diagnosis_is_shown_before_any_goal(optimise_app) -> None:
     at, client = optimise_app([])
-    at.button(key="ws_manual").click().run()
+    assert not at.exception, at.exception
+    diag = next(
+        t.value
+        for t in at.table
+        if "Share of risk" in t.value.columns and "Sharpe" in t.value.columns
+    )
+    assert list(diag.index) == ["SPY", "AGG", "GLD", "KSA"]
+    assert any(c.startswith("Beta to") for c in diag.columns)
+    assert any("Your portfolio vs" in m.value for m in at.markdown)
+    assert _candidates(at) is None and client.requests == []  # nothing runs until asked
+
+
+def test_manual_goal_runs_candidates_and_recommends_by_rule(optimise_app) -> None:
+    at, client = optimise_app([])
+    at.radio(key="ws_goal_0").set_value("reduce_risk").run()
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
-    results = _results(at)
-    assert list(results["weights"].index) == ["SPY", "AGG", "GLD", "KSA"]
-    assert set(results["backtests"].index) >= {
+    table = _candidates(at)
+    names = {n.lstrip("★ ") for n in table.index}
+    assert names >= {
         "Current",
-        "Optimised (hindsight)",
-        "Optimised (walk-forward)",
-        "60/40 (SPY/AGG)",
+        "Benchmark",
+        "Max Sharpe",
+        "Min variance",
+        "Risk parity",
+        "Max diversification",
+        "Target volatility",
     }
-    assert any("based on history and are not a guarantee" in i.value for i in at.info)
+    starred = [n for n in table.index if n.startswith("★ ")]
+    recommended = any(s.value.startswith("**Recommended method") for s in at.success)
+    assert len(starred) == (1 if recommended else 0)
+    if recommended:  # reduce risk: lower walk-forward volatility than current
+        vol = lambda n: float(table.loc[n, "Volatility (ann.)"].rstrip("%"))  # noqa: E731
+        assert vol(starred[0]) < vol("Current")
+    assert any("Lowest walk-forward volatility" in c.value for c in at.caption)
+    assert any("not a forecast or a promise" in i.value for i in at.info)
+    weights = _latest_weights(at)
+    assert all(
+        float(v.rstrip("%")) <= 40.0 + 1e-6 for v in weights.drop("Current").to_numpy().ravel()
+    )
     assert client.requests == []  # no AI involved on the manual path
 
 
-def test_ai_turns_goals_into_a_spec_the_user_confirms(optimise_app) -> None:
+def test_target_goal_needs_its_number(optimise_app) -> None:
+    at, _ = optimise_app([])
+    at.radio(key="ws_goal_0").set_value("target_return").run()
+    assert any("Enter the target return" in w.value for w in at.warning)
+    at.number_input(key="ws_target_ret_0").set_value(6.0).run()
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    assert _candidates(at) is not None
+
+
+def test_ai_fills_goal_and_limits_for_the_user_to_confirm(optimise_app) -> None:
     at, client = optimise_app([response([_spec_call(min_return_pct=7)], "tool_use")])
     at.text_area(key="ws_goals").set_value(GOALS_TEXT)
     at.button(key="ws_interpret").click().run()
     assert not at.exception, at.exception
     assert any("The AI understood" in i.value for i in at.info)
     assert any("not in your text" in w.value and "7%" in w.value for w in at.warning)
-    plan = next(m.value for m in at.markdown if m.value.startswith("You are about to optimise for"))
-    assert "Group GCC: at least 15.00%" in plan and "Volatility at most 15.00% a year" in plan
-    assert not _results(at)  # nothing runs until the user presses Run
+    assert at.slider(key="max_weight").value == pytest.approx(0.45)  # the AI's per-asset cap
+    plan = next(m.value for m in at.markdown if m.value.startswith("**Goal:**"))
+    assert "Reduce risk" in plan and "Group GCC: at least 15.00%" in plan
+    assert _candidates(at) is None  # nothing runs until the user presses Run
     at.button(key="ws_run_opt").click().run()
-    weights = _results(at)["weights"]
-    gcc = float(weights.loc["KSA", "Optimised"].rstrip("%"))
-    assert gcc >= 15.0 - 1e-6  # KSA is the only GCC holding
-    assert all(float(v.rstrip("%")) <= 45.0 + 1e-6 for v in weights["Optimised"])
+    weights = _latest_weights(at).drop("Current")
+    assert (weights["KSA"].map(lambda v: float(v.rstrip("%"))) >= 15.0 - 1e-6).all()
+    assert [r["tools"][0]["name"] for r in client.requests] == ["propose_spec"]
 
 
 def test_impossible_limits_are_explained_without_weights(optimise_app) -> None:
     impossible = _spec_call(
-        max_weight_pct=20,
-        group_limits=[{"group": "GCC", "min_pct": 90, "max_pct": None}],
-        max_volatility_pct=None,
+        max_weight_pct=20, group_limits=[{"group": "GCC", "min_pct": 90, "max_pct": None}]
     )
     at, _ = optimise_app([response([impossible], "tool_use")])
     at.text_area(key="ws_goals").set_value("at least 90% GCC, no asset over 20%")
     at.button(key="ws_interpret").click().run()
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
-    error = " ".join(e.value for e in at.error)
-    assert "can't all be met" in error and "Group 'GCC' needs at least 90.00%" in error
-    assert "weights" not in _results(at)
+    warnings = " ".join(w.value for w in at.warning)
+    assert "can't meet your limits" in warnings and "Group 'GCC' needs at least 90.00%" in warnings
+    assert any("Keep your current portfolio" in i.value for i in at.info)
+    assert _latest_weights(at) is None  # no method ran, so no weights are shown
 
 
-def test_optimisation_memo_uses_the_stored_result(optimise_app) -> None:
+def test_memo_explains_the_stored_recommendation(optimise_app) -> None:
     at, client = optimise_app(
         [
-            response([_spec_call()], "tool_use"),
             response([tool_use("t1", "get_optimisation_result", {})], "tool_use"),
-            response(
-                [text("### What changes\\nThe optimiser moved weight toward bonds.")], "end_turn"
-            ),
+            response([text("### Recommendation and why\nThe rule picked a method.")], "end_turn"),
         ]
     )
-    at.text_area(key="ws_goals").set_value(GOALS_TEXT)
-    at.button(key="ws_interpret").click().run()
     at.button(key="ws_run_opt").click().run()
     at.button(key="ws_opt_memo").click().run()
     assert not at.exception, at.exception
-    memo_request = client.requests[1]
-    assert "get_optimisation_result" in [t["name"] for t in memo_request["tools"]]
-    tool_result = client.requests[2]["messages"][-1]["content"][0]
-    assert '"feasible": true' in tool_result["content"]
-    assert any("moved weight toward bonds" in m.value for m in at.markdown)
+    tools = [t["name"] for t in client.requests[0]["tools"]]
+    assert {"get_optimisation_result", "get_portfolio_diagnosis"} <= set(tools)
+    tool_result = client.requests[1]["messages"][-1]["content"][0]
+    assert '"recommendation"' in tool_result["content"]
+    assert any("The rule picked a method" in m.value for m in at.markdown)
 
 
 def test_interpret_with_empty_goals_explains(optimise_app) -> None:
@@ -713,6 +747,15 @@ def test_interpret_with_empty_goals_explains(optimise_app) -> None:
     at.button(key="ws_interpret").click().run()
     assert any("Describe your goals first" in w.value for w in at.warning)
     assert client.requests == []
+
+
+def test_changing_the_goal_hides_stale_results(optimise_app) -> None:
+    at, _ = optimise_app([])
+    at.button(key="ws_run_opt").click().run()
+    assert _candidates(at) is not None
+    at.radio(key="ws_goal_0").set_value("reduce_risk").run()
+    assert _candidates(at) is None
+    assert any("run the candidate methods again" in c.value for c in at.caption)
 
 
 def test_rank_screen_puts_missing_values_last() -> None:

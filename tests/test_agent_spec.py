@@ -7,7 +7,8 @@ import pytest
 
 from gpl import backtest as bt
 from gpl.agent.spec import (
-    describe_spec,
+    describe_goal,
+    describe_limits,
     numbers_not_in_goals,
     propose_spec,
     spec_from_draft,
@@ -19,12 +20,12 @@ from gpl.agent.tools import (
     diagnose_portfolio,
     execute_tool,
     run_candidates,
-    run_optimisation,
 )
 from gpl.data import BenchmarkData
 from gpl.metrics import beta
-from gpl.optimise import OptimisationSpec, optimise
+from gpl.optimise import OptimisationSpec
 from gpl.recommend import CANDIDATES, KEEP
+from gpl.recommend import GOALS as RECOMMEND_GOALS
 from test_agent import CFG, FakeClient, response, text, tool_use
 
 LIMIT_FIELDS = ("max_weight", "asset_bounds", "groups", "group_bounds", "max_volatility")
@@ -32,7 +33,7 @@ LIMIT_FIELDS = ("max_weight", "asset_bounds", "groups", "group_bounds", "max_vol
 GROUPS = {"SPY": "Global equity", "AGG": "Bonds", "KSA": "GCC", "QAT": "GCC", "GLD": "Gold"}
 GOALS = "max 12% vol, at least 20% GCC, no single asset over 25%, maximise Sharpe"
 DRAFT = {
-    "objective": "max_sharpe",
+    "goal": "max_risk_adjusted",
     "max_weight_pct": 25,
     "asset_limits": [],
     "group_limits": [{"group": "GCC", "min_pct": 20, "max_pct": None}],
@@ -46,9 +47,11 @@ DRAFT = {
 # ------------------------------------------------------------------------------ the spec tool
 
 
-def test_spec_tool_has_no_place_for_weights() -> None:
+def test_spec_tool_has_no_place_for_weights_or_methods() -> None:
     schema = spec_tool(list(GROUPS), ["GCC", "Bonds"])["input_schema"]
     assert "weights" not in str(schema).lower().replace("max_weight_pct", "")
+    assert schema["properties"]["goal"]["enum"] == list(RECOMMEND_GOALS)
+    assert not {"objective", "method"} & set(schema["properties"])
     assert schema["additionalProperties"] is False and set(schema["required"]) == set(
         schema["properties"]
     )
@@ -58,10 +61,21 @@ def test_spec_tool_has_no_place_for_weights() -> None:
 
 
 def test_spec_from_draft_converts_percent_to_fractions() -> None:
-    spec = spec_from_draft(DRAFT, GROUPS)
-    assert spec.objective == "max_sharpe" and spec.max_weight == 0.25
-    assert spec.group_bounds == {"GCC": (0.20, None)} and spec.max_volatility == 0.12
-    assert spec.min_return is None and spec.groups == GROUPS
+    goal, limits, target = spec_from_draft(DRAFT, GROUPS)
+    assert goal == "max_risk_adjusted" and target is None and limits.max_weight == 0.25
+    assert limits.group_bounds == {"GCC": (0.20, None)} and limits.max_volatility == 0.12
+    assert limits.min_return is None and limits.groups == GROUPS
+
+
+def test_target_goals_take_their_number_out_of_the_limits() -> None:
+    goal, limits, target = spec_from_draft({**DRAFT, "goal": "target_volatility"}, GROUPS)
+    assert goal == "target_volatility" and target == 0.12 and limits.max_volatility is None
+    draft = {**DRAFT, "goal": "target_return", "min_return_pct": 8}
+    goal, limits, target = spec_from_draft(draft, GROUPS)
+    assert target == 0.08 and limits.min_return is None and limits.max_volatility == 0.12
+    assert describe_goal(goal, target) == (
+        "Reach a target return with the least risk: at least 8.00% a year"
+    )
 
 
 def test_spec_from_draft_rejects_unknown_assets_and_missing_targets() -> None:
@@ -69,8 +83,8 @@ def test_spec_from_draft_rejects_unknown_assets_and_missing_targets() -> None:
         spec_from_draft(
             {**DRAFT, "asset_limits": [{"ticker": "TSLA", "min_pct": None, "max_pct": 5}]}, GROUPS
         )
-    with pytest.raises(ValueError, match="target_return needs min_return"):
-        spec_from_draft({**DRAFT, "objective": "target_return"}, GROUPS)
+    with pytest.raises(ValueError, match="Enter the target return"):
+        spec_from_draft({**DRAFT, "goal": "target_return"}, GROUPS)
 
 
 def test_numbers_not_in_goals_flags_invented_limits() -> None:
@@ -79,9 +93,8 @@ def test_numbers_not_in_goals_flags_invented_limits() -> None:
     assert numbers_not_in_goals(invented, GOALS) == ["7%"]
 
 
-def test_describe_spec() -> None:
-    lines = describe_spec(spec_from_draft(DRAFT, GROUPS))
-    assert lines[0].startswith("Maximise the Sharpe ratio")
+def test_describe_limits() -> None:
+    lines = describe_limits(spec_from_draft(DRAFT, GROUPS)[1])
     assert "No single asset above 25.00%" in lines and "Group GCC: at least 20.00%" in lines
     assert "Volatility at most 12.00% a year" in lines
 
@@ -130,36 +143,6 @@ def ctx_opt(ctx) -> AnalystContext:
 
 CURRENT = {"SPY": 0.5, "AGG": 0.3, "GLD": 0.1, "KSA": 0.1}
 HELD = {t: GROUPS[t] for t in CURRENT}
-
-
-def test_report_wraps_the_optimiser_and_backtests(ctx_opt) -> None:
-    spec = OptimisationSpec(
-        "min_variance", max_weight=0.6, groups=HELD, group_bounds={"GCC": (0.15, None)}
-    )
-    report, weights = run_optimisation(ctx_opt, spec, CURRENT)
-    rets = ctx_opt.all_returns[list(CURRENT)]
-    direct = optimise(rets.mean() * 252, rets.cov() * 252, spec, 0.02)
-    pd.testing.assert_series_equal(weights, direct.weights, atol=1e-6)
-    assert report["feasible"] and report["weights"]["KSA"]["current"] == "10.00%"
-    assert weights["KSA"] >= 0.15 - 1e-6
-    assert set(report["backtests_after_costs"]) == {
-        "Current",
-        "Optimised (hindsight)",
-        "Optimised (walk-forward)",
-        "60/40 (SPY/AGG)",
-    }
-    assert "not a guarantee" in report["caveats"]
-    assert report["in_sample_historical"]["Current"]["max_drawdown"].startswith("-")
-
-
-def test_report_explains_infeasible_specs_without_weights(ctx_opt) -> None:
-    impossible = OptimisationSpec(
-        "min_variance", groups=HELD, group_bounds={"GCC": (0.9, None)}, max_weight=0.2
-    )
-    report, weights = run_optimisation(ctx_opt, impossible, CURRENT)
-    assert weights is None and not report["feasible"] and "weights" not in report
-    assert report["reasons_if_not_feasible"]
-    assert set(report["backtests_after_costs"]) == {"Current", "60/40 (SPY/AGG)"}
 
 
 def test_optimisation_tool(ctx_opt) -> None:
@@ -237,7 +220,10 @@ def test_candidates_are_walk_forward_within_limits_and_recommended_by_the_rule(c
         cost_bps=10.0,
     )
     np.testing.assert_allclose(
-        run.equity["Min variance"].iloc[-1], direct.equity.iloc[-1], rtol=1e-9
+        # from the first full day held: day one (buying, which pays costs) is excluded
+        run.equity["Min variance"].iloc[-1],
+        direct.equity.iloc[-1] / direct.equity.iloc[0],
+        rtol=1e-9,
     )
     ctx_opt.benchmark = None
 
