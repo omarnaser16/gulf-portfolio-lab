@@ -8,7 +8,15 @@ from collections.abc import Callable, Mapping, Sequence
 
 import pandas as pd
 import streamlit as st
-from inputs import DEFAULT_HOLDINGS, GROUPS, guess_group, normalise_holdings, parse_holdings
+from inputs import (
+    DEFAULT_HOLDINGS,
+    GROUPS,
+    equal_values,
+    guess_group,
+    normalise_holdings,
+    normalise_values,
+    parse_holdings,
+)
 from streamlit_searchbox import st_searchbox
 
 from formatting import pct
@@ -18,6 +26,9 @@ from gpl.plots import allocation_chart
 ROWS, MODE, VERSION, LAST_PICK, META = "ws_rows", "ws_mode", "ws_version", "ws_last_pick", "ws_meta"
 USD, PCT = "USD amount", "Weight (%)"
 DEFAULT_TOTAL_USD = 10_000.0
+EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
+READ_ONLY = {"background-color": "#f1f2f4", "color": "#6b7079"}  # grey = can't edit
+READ_ONLY_COLUMNS = ["Name", "Weight", "Price"]
 
 
 def init_state(config_groups: Mapping[str, Sequence[str]]) -> None:
@@ -65,6 +76,24 @@ def _convert_mode() -> None:
     _bump()
 
 
+def _set_equal() -> None:
+    rows = st.session_state[ROWS]
+    usd = st.session_state[MODE] == USD
+    total = sum(r["value"] for r in rows if r["value"] > 0) or DEFAULT_TOTAL_USD
+    values = equal_values([r["ticker"] for r in rows], usd, total)
+    for r in rows:
+        r["value"] = values[r["ticker"]]
+    _bump()
+
+
+def _set_normalised() -> None:
+    rows = st.session_state[ROWS]
+    values = normalise_values({r["ticker"]: r["value"] for r in rows})
+    for r in rows:
+        r["value"] = values[r["ticker"]]
+    _bump()
+
+
 def add_holding(symbol: str, meta: Mapping[str, str], config_groups) -> None:
     rows = st.session_state[ROWS]
     if any(r["ticker"] == symbol for r in rows):
@@ -82,8 +111,10 @@ def render_holdings(
     quote: Callable[[str], object],
     config_groups: Mapping[str, Sequence[str]],
     names: Mapping[str, str],
+    presets: Mapping[str, Sequence[str]] | None = None,
 ) -> None:
     """Search box, editable holdings table, import box and allocation chart."""
+    presets = presets or {}
 
     def suggestions(term: str) -> list[tuple[str, str]]:
         results = search(term)
@@ -136,28 +167,54 @@ def render_holdings(
             },
             index=pd.Index([r["ticker"] for r in rows], name="Ticker"),
         )
+        mode_col = st.session_state[MODE]
+        st.caption(
+            f"Click a cell in the **{EDIT_LABEL[mode_col]}** column to change it; weights update "
+            "automatically. White columns are editable, grey ones are calculated. Tick Remove "
+            "to drop a holding."
+        )
+        # Streamlit only styles read-only columns, so the editable ones stand out by contrast
+        styled = table.style.set_properties(subset=READ_ONLY_COLUMNS, **READ_ONLY)
         edited = st.data_editor(
-            table,
+            styled,
             key=f"ws_table_{st.session_state[VERSION]}",
             width="stretch",
             column_config={
                 "_index": st.column_config.TextColumn("Ticker", width=95),
-                "Name": st.column_config.TextColumn(width=200),
+                "Name": st.column_config.TextColumn(width=180),
                 "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=110),
-                st.session_state[MODE]: st.column_config.NumberColumn(
-                    "USD" if st.session_state[MODE] == USD else "Input %",
+                mode_col: st.column_config.NumberColumn(
+                    EDIT_LABEL[mode_col],
                     min_value=0.0,
                     format="%.2f",
-                    width=80,
-                    help="What you hold. Weights are normalised to 100%.",
+                    width=100,
+                    help="Click to edit: what you hold. Weights are normalised to 100%.",
                 ),
                 "Weight": st.column_config.TextColumn(width=75),
                 "Remove": st.column_config.CheckboxColumn(
                     width=75, help="Tick to remove this holding."
                 ),
-                "Price": st.column_config.TextColumn(width=175),
+                "Price": st.column_config.TextColumn(width=165),
             },
-            disabled=["Name", "Price", "Weight"],
+            disabled=READ_ONLY_COLUMNS,
+        )
+        left, right, _ = st.columns([1, 1, 2])
+        left.button(
+            "Equal weight",
+            key="ws_equal",
+            on_click=_set_equal,
+            help="Give every holding the same weight.",
+            width="stretch",
+        )
+        right.button(
+            "Normalise to 100%",
+            key="ws_normalise",
+            on_click=_set_normalised,
+            disabled=mode_col == USD,
+            help="Rescale the inputs so they add up to exactly 100%."
+            if mode_col == PCT
+            else "Amounts are always normalised; switch to Weight (%) to rescale inputs.",
+            width="stretch",
         )
         times: dict[str, list[str]] = {}
         for r in rows:
@@ -185,7 +242,16 @@ def render_holdings(
             _bump()
             st.rerun()
 
-    with st.expander("Import a list"):
+    with st.expander("Import a list or start from a preset"):
+        if presets:
+            st.selectbox("Preset list (equal weights)", list(presets), key="ws_preset")
+            st.button(
+                "Replace holdings with this preset",
+                key="ws_preset_go",
+                on_click=_load_preset,
+                args=(presets, quote, config_groups),
+            )
+            st.divider()
         st.text_area("One holding per line, e.g. 'SPY 40' or '2222.SR 30'", key="ws_import")
         st.radio(
             "Values are", ["Weights (%)", "Amounts (USD)"], key="ws_import_kind", horizontal=True
@@ -198,6 +264,15 @@ def render_holdings(
         )
         for problem in st.session_state.pop("ws_import_problems", []):
             st.error(problem)
+
+
+def _load_preset(
+    presets: Mapping[str, Sequence[str]], quote: Callable[[str], object], config_groups
+) -> None:
+    tickers = list(presets[st.session_state.get("ws_preset") or next(iter(presets))])
+    st.session_state["ws_import"] = "\n".join(f"{t} {100 / len(tickers):.6f}" for t in tickers)
+    st.session_state["ws_import_kind"] = "Weights (%)"
+    _import_list(quote, config_groups)
 
 
 def _import_list(quote: Callable[[str], object], config_groups) -> None:

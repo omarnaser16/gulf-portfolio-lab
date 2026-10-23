@@ -152,3 +152,22 @@ def normalise_holdings(
     if valid and mode == "pct" and abs(total - 100) > 0.01:
         note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
     return ({t: v / total for t, v in valid.items()} if total else {}), problems, note
+
+
+def equal_values(tickers: Sequence[str], usd: bool, total: float) -> dict[str, float]:
+    """Inputs giving every holding the same weight: 100/n %, or ``total``/n USD."""
+    if not tickers:
+        return {}
+    return {t: (total if usd else 100.0) / len(tickers) for t in tickers}
+
+
+def normalise_values(values: Mapping[str, float]) -> dict[str, float]:
+    """Rescale % inputs so they add up to 100 (non-positive inputs stay as they are).
+
+    Full precision is kept (the table shows two decimals), so the result adds up to exactly
+    100 and no rescaling note appears afterwards.
+    """
+    total = sum(v for v in values.values() if v is not None and v > 0)
+    if total <= 0:
+        return dict(values)
+    return {t: (v * 100 / total if v is not None and v > 0 else v) for t, v in values.items()}

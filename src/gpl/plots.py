@@ -344,8 +344,8 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
         )
     fig = go.Figure(
         go.Pie(
-            labels=list(w.index),
-            values=w.to_numpy(),
+            labels=[str(t) for t in w.index],
+            values=[float(v) for v in w],  # plain list: some plotly.js builds drop typed arrays
             hole=0.55,
             sort=False,
             marker={"colors": SERIES_COLORS[: len(w)], "line": {"color": SURFACE, "width": 2}},

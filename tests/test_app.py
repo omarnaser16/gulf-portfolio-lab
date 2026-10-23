@@ -457,6 +457,35 @@ def test_import_list_replaces_holdings(app: AppTest) -> None:
     assert [(r["ticker"], r["value"]) for r in rows] == [("SPY", 70.0), ("TLT", 30.0)]
 
 
+def test_equal_weight_and_normalise_buttons(app: AppTest) -> None:
+    app.button(key="ws_equal").click().run()
+    assert not app.exception, app.exception
+    assert [r["value"] for r in app.session_state["ws_rows"]] == [25.0] * 4
+    _set_holdings(
+        app,
+        [
+            {"ticker": "SPY", "group": "Global equity", "value": 50.0},
+            {"ticker": "AGG", "group": "Bonds", "value": 30.0},
+            {"ticker": "GLD", "group": "Gold", "value": 30.0},
+        ],
+    )
+    app.button(key="ws_normalise").click().run()
+    values = [r["value"] for r in app.session_state["ws_rows"]]
+    assert values == pytest.approx([45.4545, 27.2727, 27.2727], abs=1e-4)
+    assert not any("scaled to 100.00%" in c.value for c in app.caption)
+    app.radio(key="ws_mode").set_value("USD amount").run()
+    assert app.button(key="ws_normalise").disabled
+
+
+def test_preset_replaces_holdings_with_equal_weights(app: AppTest) -> None:
+    app.selectbox(key="ws_preset").set_value("GCC stocks")
+    app.button(key="ws_preset_go").click().run()
+    assert not app.exception, app.exception
+    rows = app.session_state["ws_rows"]
+    assert [r["ticker"] for r in rows][:2] == ["2222.SR", "1120.SR"]
+    assert all(r["value"] == pytest.approx(100 / 6, abs=1e-3) for r in rows)  # 4 decimals
+
+
 def test_picking_a_search_result_adds_it(monkeypatch, tmp_path) -> None:
     import workstation  # noqa: PLC0415 - the app's module, importable once the path is set
 

@@ -88,6 +88,10 @@ MC_METHOD_HELP = (
     "**GBM** assumes normally distributed log returns: no fat tails and no clustering."
 )
 PRESETS = CFG["presets"]
+HOLDING_PRESETS = {
+    "README universe (the 9 default ETFs)": PRESETS["Default ETFs"],
+    **{name: tickers for name, tickers in PRESETS.items() if name != "Default ETFs"},
+}
 NAMES = CFG.get("ticker_names", {})
 LATEST, README_MODE = (
     "Latest data",
@@ -856,7 +860,7 @@ with tab_mine:
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 
     with sec_hold:
-        ws.render_holdings(find_securities, get_quote, CFG["groups"], NAMES)
+        ws.render_holdings(find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS)
         for problem in holding_problems:
             st.warning(problem)
         if holding_note:

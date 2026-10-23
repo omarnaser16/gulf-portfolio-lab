@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from inputs import asset_groups, combine_tickers, parse_tickers  # noqa: E402
 
@@ -89,3 +91,23 @@ def test_normalise_holdings_usd_and_pct() -> None:
     assert problems == ["GLD: enter a positive weight."]
     assert note == "Weights add up to 95.00%, so they were scaled to 100.00%."
     assert normalise_holdings({}, "usd") == ({}, [], "")
+
+
+from inputs import equal_values, normalise_values  # noqa: E402
+
+
+def test_equal_values() -> None:
+    assert equal_values(["A", "B", "C"], usd=False, total=0) == pytest.approx(
+        {"A": 33.333333, "B": 33.333333, "C": 33.333333}
+    )
+    assert equal_values(["A", "B"], usd=True, total=10_000) == {"A": 5_000.0, "B": 5_000.0}
+    assert equal_values([], usd=False, total=0) == {}
+
+
+def test_normalise_values() -> None:
+    out = normalise_values({"A": 50, "B": 30, "C": 30})  # 110 in total
+    assert out == pytest.approx({"A": 45.4545, "B": 27.2727, "C": 27.2727}, abs=1e-4)
+    assert sum(out.values()) == pytest.approx(100)
+    assert normalise_holdings(out, "pct")[2] == ""  # no "scaled to 100%" note afterwards
+    assert normalise_values({"A": 0, "B": 0}) == {"A": 0, "B": 0}  # nothing to scale
+    assert normalise_values({"A": 20, "B": 0}) == {"A": 100.0, "B": 0}

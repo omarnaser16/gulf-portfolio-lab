@@ -119,3 +119,11 @@ def test_paired_bars_chart_current_vs_optimised() -> None:
     assert [t.name for t in fig.data] == ["Current", "Optimised"]
     assert list(fig.data[0].y) == ["KSA", "SPY", "AGG"]  # ordered by optimised weight
     np.testing.assert_allclose(fig.data[0].x, [0.0, 0.5, 0.5])  # KSA not held now: 0
+
+
+def test_allocation_chart_sends_plain_lists() -> None:
+    # numpy values serialise as base64 typed arrays, which some plotly.js builds don't draw
+    import json
+
+    data = json.loads(allocation_chart(pd.Series({"A": 0.6, "B": 0.4})).to_json())["data"][0]
+    assert data["values"] == [0.6, 0.4] and data["labels"] == ["A", "B"]
