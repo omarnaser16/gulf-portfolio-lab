@@ -1,5 +1,6 @@
 """Headless test of the Streamlit dashboard: synthetic data, no network, temp cache."""
 
+import json
 import zlib
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def _frontier_weights(app: AppTest) -> pd.DataFrame:
     tables = [  # weights table: portfolios as rows, tickers as columns (no metric columns)
         df.value
         for df in app.dataframe
-        if "Min variance" in df.value.index and "sharpe" not in df.value.columns
+        if "Min variance" in df.value.index and "Sharpe" not in df.value.columns
     ]
     assert len(tables) == 1
     return tables[0]
@@ -92,3 +93,31 @@ def test_frontier_tab_follows_the_sidebar_cap(app: AppTest, cap: float) -> None:
     assert (weights.max(axis=1) <= cap + 1e-9).all(), weights.max(axis=1)
     np.testing.assert_allclose(weights.sum(axis=1), 1.0)
     assert any(f"{cap:.0%}" in c.value for c in app.caption)  # the cap in use is shown
+
+
+def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
+    return [df.value for df in app.dataframe if "Sharpe" in df.value.columns]
+
+
+def test_metric_tables_are_readable(app: AppTest) -> None:
+    assets_table, backtest_table = _metric_tables(app)
+    for table in (assets_table, backtest_table):
+        assert not {"start", "end", "n_obs", "sharpe", "ann_vol"} & set(table.columns)
+        assert {"Return (ann.)", "CAGR", "Volatility (ann.)", "Max drawdown"} <= set(table.columns)
+    assert "Turnover / yr" in backtest_table.columns
+    assert list(backtest_table.columns).index("Turnover / yr") <= 6  # near the left, not cut off
+    assert "Turnover / yr" not in assets_table.columns  # assets aren't traded
+
+
+def test_benchmark_label_and_backtest_caption(app: AppTest) -> None:
+    _, backtest_table = _metric_tables(app)
+    assert "60/40 (SPY/AGG)" in backtest_table.index
+    assert any("starts 252 days after the data" in c.value for c in app.caption)
+
+
+def test_weights_chart_uses_readable_group_names(app: AppTest) -> None:
+    names = set()
+    for chart in app.get("plotly_chart"):
+        names |= {t.get("name") for t in json.loads(chart.proto.spec)["data"]}
+    assert {"GCC equity", "Global equity", "Bonds", "Gold"} <= names
+    assert not {"gcc_equity", "real_assets"} & names

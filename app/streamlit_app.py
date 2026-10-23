@@ -36,16 +36,28 @@ from gpl.plots import (
 CFG = load_universe()
 D, R = CFG["defaults"], CFG["regime"]
 STRATEGY_NAMES = ["Equal weight", "Min variance", "Max Sharpe", "Risk parity"]
-BENCHMARK_NAMES = ["60/40", "SPY"]
-PERCENT_COLS = [
-    "ann_return",
-    "cagr",
-    "ann_vol",
-    "max_drawdown",
-    "hist_var",
-    "param_var",
-    "expected_shortfall",
-]
+SIXTY_FORTY = "60/40 (SPY/AGG)"
+BENCHMARK_NAMES = [SIXTY_FORTY, "SPY"]
+GROUP_LABELS = {
+    "gcc_equity": "GCC equity",
+    "global_equity": "Global equity",
+    "bonds": "Bonds",
+    "real_assets": "Gold",
+}
+LEVEL = f"{D['var_level']:.0%}"
+# summary_table column -> (label on screen, number format). Order = column order on screen.
+TABLE_COLUMNS = {
+    "ann_return": ("Return (ann.)", "percent"),
+    "cagr": ("CAGR", "percent"),
+    "ann_vol": ("Volatility (ann.)", "percent"),
+    "sharpe": ("Sharpe", "%.2f"),
+    "sortino": ("Sortino", "%.2f"),
+    "max_drawdown": ("Max drawdown", "percent"),
+    "annual_turnover": ("Turnover / yr", "%.2f×"),
+    "hist_var": (f"VaR {LEVEL} (historical)", "percent"),
+    "param_var": (f"VaR {LEVEL} (normal)", "percent"),
+    "expected_shortfall": (f"Expected shortfall {LEVEL}", "percent"),
+}
 DISCLAIMER = (
     "Educational project, **not investment advice**. "
     "Past performance does not predict future results."
@@ -96,7 +108,7 @@ def _strategy(name: str, rf: pd.Series, max_weight: float) -> bt.Strategy:
             return bt.max_sharpe_strategy(rf=rf, max_weight=max_weight)
         case "Risk parity":
             return bt.risk_parity_strategy(max_weight=max_weight)
-        case "60/40":
+        case "60/40 (SPY/AGG)":
             return bt.fixed_weights(CFG["benchmarks"]["sixty_forty"])
         case "SPY":
             return bt.fixed_weights(CFG["benchmarks"]["spy"])
@@ -136,15 +148,14 @@ def run_backtests(
 
 
 def show_table(table: pd.DataFrame) -> None:
-    config = {c: st.column_config.NumberColumn(format="percent") for c in PERCENT_COLS}
-    config |= {
-        "sharpe": st.column_config.NumberColumn(format="%.2f"),
-        "sortino": st.column_config.NumberColumn(format="%.2f"),
-        "annual_turnover": st.column_config.NumberColumn("turnover / yr", format="%.2f×"),
-        "start": st.column_config.DateColumn(),
-        "end": st.column_config.DateColumn(),
+    """Metrics table with readable headers; drops start/end/n_obs (the sample is captioned)."""
+    columns = [c for c in TABLE_COLUMNS if c in table.columns]
+    shown = table[columns].rename(columns={c: TABLE_COLUMNS[c][0] for c in columns})
+    config = {
+        TABLE_COLUMNS[c][0]: st.column_config.NumberColumn(format=TABLE_COLUMNS[c][1])
+        for c in columns
     }
-    st.dataframe(table, column_config=config, width="stretch")
+    st.dataframe(shown, column_config=config, width="stretch")
 
 
 def first_eight(frame: pd.DataFrame) -> pd.DataFrame:
@@ -207,7 +218,10 @@ tickers = tuple(assets)
 prices = load_prices(tickers, start, end)
 returns = to_returns(prices)
 rf = load_rf(start, end)
-groups = {g: [t for t in ts if t in assets] for g, ts in CFG["groups"].items()}
+groups = {
+    GROUP_LABELS.get(g, g.replace("_", " ").capitalize()): [t for t in ts if t in assets]
+    for g, ts in CFG["groups"].items()
+}
 groups = {g: ts for g, ts in groups.items() if ts}
 st.caption(
     f"Sample: **{prices.index[0]:%d %b %Y} – {prices.index[-1]:%d %b %Y}** "
@@ -224,8 +238,8 @@ with tab_assets:
         summary_table(returns, rf=rf, level=D["var_level"]).sort_values("sharpe", ascending=False)
     )
     st.caption(
-        "Annualised over 252 days. VaR and Expected Shortfall: 1-day, 95%, "
-        "shown as positive losses."
+        f"Full sample above. Annualised over 252 days. VaR and expected shortfall: 1-day, "
+        f"{LEVEL}, shown as positive losses."
     )
 
 with tab_frontier:
@@ -279,6 +293,7 @@ with tab_backtest:
         table["annual_turnover"] = pd.Series(
             {n: r.turnover.iloc[1:].mean() * 12 for n, r in results.items()}
         )
+        first_day = next(iter(results.values())).equity.index[0]
         st.subheader("Strategies after costs")
         st.caption(
             f"Monthly rebalancing on a trailing {lookback}-day window; new weights apply the next "
@@ -286,8 +301,14 @@ with tab_backtest:
         )
         show_table(table.sort_values("sharpe", ascending=False))
         st.caption(
+            f"**Backtest period: {first_day:%d %b %Y} – {prices.index[-1]:%d %b %Y}.** Each "
+            f"strategy needs {lookback} trading days of history before its first rebalance, so the "
+            f"backtest starts {lookback} days after the data does. Figures (even for SPY) "
+            "therefore differ from the Assets tab, which uses the full sample."
+        )
+        st.caption(
             f"Strategies hold at most **{max_weight:.0%}** per asset (sidebar). Benchmarks are "
-            "fixed by definition (60/40 holds 60% SPY; SPY holds 100%)."
+            f"fixed by definition: {SIXTY_FORTY} holds 60% SPY and 40% AGG; SPY holds 100%."
         )
         equity = first_eight(pd.DataFrame({n: r.equity for n, r in results.items()}))
         st.plotly_chart(equity_chart(equity), width="stretch")
