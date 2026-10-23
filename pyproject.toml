@@ -17,6 +17,8 @@ dependencies = [
     "pyarrow",
     "pyyaml",
     "plotly",
+    "scikit-learn",
+    "streamlit",
 ]
 
 [project.optional-dependencies]

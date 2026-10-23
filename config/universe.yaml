@@ -27,3 +27,17 @@ defaults:
   lookback: 252                    # trading days in the estimation window
   var_level: 0.95
   max_ffill: 5
+
+# Regime classifier (Week 2). Uses SPY, AGG and ^VIX only, so it can start well before the
+# GCC ETFs exist and learn from 2008, 2011, 2015, 2018, 2020 and 2022.
+regime:
+  start: "2005-01-01"
+  equity: SPY
+  bond: AGG
+  horizon: 21                      # label = next month's realised volatility
+  quantile: 0.80                   # stressed = above the 80th percentile of the past year
+  window: 252
+  model: logistic                  # logistic | random_forest
+  refit: "ME"                      # walk-forward refit each month end
+  min_train: 504                   # two years before the first prediction
+  threshold: 0.5                   # P(stressed) at which the strategy de-risks
