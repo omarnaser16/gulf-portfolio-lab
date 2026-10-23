@@ -1,23 +1,32 @@
 # CLAUDE.md — Gulf Portfolio Lab
 
-Project scope, architecture and plan live in @BRIEF.md. This file is about **how to work with me**.
+Instructions for Claude Code on this project. Scope, architecture and plan live in @BRIEF.md.
 
 ## Context
-I'm Omar, a finance/business graduate building this as a portfolio project for master's applications
-(Imperial MSc Investment & Wealth Management, LBS, HEC, UCL). Interviewers may ask me to explain any
-line of the finance code, so **you write the code and explain it until I can explain it myself**.
+Omar Naser, a finance and business graduate, is building this as a portfolio project for master's
+applications in finance. Claude Code writes the code; Omar directs the work, reviews it and tests
+the results. Interviewers may ask Omar to explain any part of the finance code, so every piece of
+code comes with an explanation he can learn from.
 
-## Build + explain mode
-Claude writes all the code, including the finance core (`src/gpl/data.py`, `metrics.py`, `optimise.py`,
-`backtest.py`, `montecarlo.py`, `regime.py`), config, tests, the dashboard and the agent.
+## How we work: build + explain mode
+The project began in a tutor mode, in which Omar would write the finance core with hints. On Day 1
+it switched to build + explain mode, which has been used since:
 
-- Tests first where practical, with expected values small enough to check by hand or in Excel.
+- **Claude Code writes all the code:** the finance core (`src/gpl/data.py`, `metrics.py`,
+  `optimise.py`, `backtest.py`, `montecarlo.py`, `regime.py`), the agent, the dashboard, tests,
+  notebooks and documentation.
+- **Omar directs, reviews and tests:** he sets priorities and requirements, approves dependencies,
+  inspects the dashboard and notebooks, reports problems, and decides between options.
+- **Tests first where practical**, with expected values small enough to check by hand or in Excel.
 - **After each function:** explain in 2–4 plain-English sentences what it does and the finance idea
   behind it. No jargon without a definition.
-- **After each module:** ask me 2–3 interview-style questions so I can explain it myself
+- **After each module:** ask Omar 2–3 interview-style questions so he can explain it himself
   (e.g. "Why scale volatility by √252?", "Why can historical VaR understate tail risk?").
-- Check your own code for correctness, look-ahead bias, edge cases (NaNs, zero vol, single asset),
-  vectorisation and naming.
+- **Verify before reporting:** run the code on real data as well as tests, check rendered pages
+  (screenshots) for layout problems, and check that every number in prose matches the computed
+  output.
+- **Report results honestly**, including negative or surprising ones, and say what was not checked.
+- **Commit only when the full test suite passes**, with small, clear commits.
 - Agent tools must **wrap the finance functions**, never reimplement them.
 
 ## Finance conventions (single source of truth)
@@ -37,6 +46,7 @@ Claude writes all the code, including the finance core (`src/gpl/data.py`, `metr
 - **Randomness:** every stochastic function takes a `seed` argument.
 - **FX:** SAR, AED, QAR, BHD and OMR are pegged to USD; KWD is pegged to a basket. Any local-currency
   series must be converted to USD before mixing with other assets.
+- **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
 
 ## Code style
 - Python 3.14, type hints everywhere, numpy-style docstrings.
@@ -55,17 +65,20 @@ ruff check . && ruff format .
 streamlit run app/streamlit_app.py
 ```
 
-## AI agent rules (Week 3)
+## AI agent rules
 - **The LLM never calculates numbers.** Every figure in a memo comes from a tool result, and the memo
-  says which tool produced it. The system prompt enforces this.
-- API key in `.env` as `ANTHROPIC_API_KEY`; never committed. Model name lives in config, not hard-coded.
-- Memos carry a "not investment advice" disclaimer.
+  says which tool produced it. The system prompt requires this and code flags any figure no tool
+  returned.
+- API key in `.env` as `ANTHROPIC_API_KEY` (or Streamlit secrets when deployed); never committed.
+  The model name lives in config, not in code.
+- Memos carry a "not investment advice" disclaimer, appended by code.
 
 ## Don'ts
-- Don't add a dependency without asking me first.
+- Don't add a dependency without asking Omar first.
 - Don't commit `.env`, `data/cache/`, or notebook outputs with large data.
-- Don't refactor my finance code without explaining why; suggest, then let me apply it.
+- Don't change finance behaviour without explaining why and showing the effect on results.
 
 ## Learning log
-At the end of every session, append to `PROGRESS.md`: date, what I built, concepts I learned,
-open questions, and next step. Keep it in my voice, short and honest.
+At the end of every session, append to `PROGRESS.md`: date, what was built (by Claude Code, at
+Omar's direction), what Omar reviewed or decided, concepts learned, open questions and next step.
+Written in Omar's voice; short and honest.

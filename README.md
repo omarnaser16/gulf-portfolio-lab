@@ -189,14 +189,26 @@ tests/                   pytest suite
 
 ## How this was built
 
-This project was built with **[Claude Code](https://claude.com/claude-code)**, Anthropic's coding
-agent, in a series of sessions following the three-week plan in `BRIEF.md`. I (Omar Naser) set the scope, architecture and finance
-conventions in `BRIEF.md` and `CLAUDE.md`, made the design decisions, and reviewed and redirected the
-work: for example the weight-cap bug, two-decimal formatting, the block bootstrap, and the
-calibration and honesty checks on the regime model. Claude Code wrote the code, tests and
-documentation in a "build and explain" mode: after each function it explained the finance idea,
-and after each module it quizzed me so that I can explain every part myself. `PROGRESS.md` is the
-session-by-session learning log, including mistakes found and fixed along the way.
+**The code in this repository was written by [Claude Code](https://claude.com/claude-code),
+Anthropic's coding agent**, in a series of sessions following the three-week plan in `BRIEF.md`.
+
+My role (Omar Naser) was to **direct, review and test**:
+- **Directed:** I wrote the project brief and the finance conventions (`BRIEF.md`, `CLAUDE.md`), set
+  the priorities for each session, approved every new dependency, and chose among the options
+  presented, for example capping risk parity at 40%, fixing the end date for reproducibility, and
+  making the block bootstrap the default.
+- **Reviewed:** I read the results, notebooks and explanations, and asked for changes where something
+  looked wrong or unclear, for example checking whether the regime model's probabilities were
+  calibrated, leading with ROC AUC rather than accuracy, and stating limitations such as the 2022
+  whipsaw.
+- **Tested:** I used the dashboard and reported problems, including a weight-cap violation on the
+  Frontier tab, labels overlapping the frontier, a truncated table and inconsistent percentage
+  formats.
+
+Claude Code worked in a "build and explain" mode (described in `CLAUDE.md`): after each function it
+explained the finance idea in plain language, and after each module it asked me interview-style
+questions, so that I can explain every part of the code. `PROGRESS.md` is the session-by-session log
+of what was built, what I directed and what I learned, including mistakes found and fixed.
 
 ## Licence and disclaimer
 

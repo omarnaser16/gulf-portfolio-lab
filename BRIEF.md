@@ -37,7 +37,7 @@ gulf-portfolio-lab/
 │   ├── montecarlo.py       # path simulation, goal probability
 │   ├── regime.py           # ML regime classifier (Week 2)
 │   └── agent/
-│       ├── tools.py        # tool schemas wrapping my functions (Week 3)
+│       ├── tools.py        # tool schemas wrapping the finance functions (Week 3)
 │       └── analyst.py      # tool-use loop + memo writer (Week 3)
 ├── app/
 │   └── streamlit_app.py    # dashboard + chat (Weeks 2–3)
