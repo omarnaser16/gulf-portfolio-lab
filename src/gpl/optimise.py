@@ -9,12 +9,71 @@ covariance ``pd.DataFrame``, both indexed by ticker. Weights are long-only, sum 
 are returned as a ``pd.Series`` indexed by ticker. Default max weight is 0.40 per asset.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
 
 type Weights = pd.Series | np.ndarray
 
 DEFAULT_MAX_WEIGHT = 0.40
+
+
+def _as_array(weights: Weights, index: pd.Index) -> np.ndarray:
+    """Weights as a numpy vector in ``index`` order (a Series is aligned by ticker)."""
+    if isinstance(weights, pd.Series):
+        aligned = weights.reindex(index)
+        if aligned.isna().any():
+            raise ValueError(f"weights missing for: {list(aligned[aligned.isna()].index)}")
+        return aligned.to_numpy(dtype=float)
+    return np.asarray(weights, dtype=float)
+
+
+def _check_feasible(n_assets: int, max_weight: float) -> None:
+    if max_weight * n_assets < 1 - 1e-12:
+        raise ValueError(
+            f"max_weight={max_weight} is infeasible for {n_assets} assets: "
+            f"weights capped at {max_weight} cannot sum to 1"
+        )
+
+
+def _max_return_weights(mu: np.ndarray, max_weight: float) -> np.ndarray:
+    """Highest-return long-only portfolio under the cap: fill the best assets first."""
+    w = np.zeros(len(mu))
+    remaining = 1.0
+    for i in np.argsort(-mu):
+        w[i] = min(max_weight, remaining)
+        remaining -= w[i]
+    return w
+
+
+def _solve(
+    objective: Callable[[np.ndarray], float],
+    gradient: Callable[[np.ndarray], np.ndarray],
+    index: pd.Index,
+    max_weight: float,
+    extra_constraints: list[dict] | None = None,
+    x0: np.ndarray | None = None,
+) -> pd.Series:
+    """Minimise ``objective`` over long-only, fully invested, capped weights (SLSQP)."""
+    n = len(index)
+    _check_feasible(n, max_weight)
+    budget = {"type": "eq", "fun": lambda w: w.sum() - 1, "jac": lambda w: np.ones(n)}
+    result = minimize(
+        objective,
+        x0=np.full(n, 1 / n) if x0 is None else x0,
+        jac=gradient,
+        method="SLSQP",
+        bounds=[(0.0, max_weight)] * n,
+        constraints=[budget, *(extra_constraints or [])],
+        options={"ftol": 1e-12, "maxiter": 1000},
+    )
+    if not result.success:
+        raise ValueError(f"optimiser failed: {result.message}")
+    # Remove tiny numerical noise (e.g. -1e-17) and renormalise.
+    w = np.clip(result.x, 0.0, max_weight)
+    return pd.Series(w / w.sum(), index=index)
 
 
 def portfolio_performance(
@@ -38,7 +97,10 @@ def portfolio_performance(
     tuple of float
         ``(w @ mu, sqrt(w @ cov @ w))``.
     """
-    raise NotImplementedError
+    w = _as_array(weights, cov.index)
+    ret = float(w @ mu.reindex(cov.index).to_numpy())
+    vol = float(np.sqrt(w @ cov.to_numpy() @ w))
+    return ret, vol
 
 
 def min_variance(cov: pd.DataFrame, max_weight: float = DEFAULT_MAX_WEIGHT) -> pd.Series:
@@ -61,7 +123,15 @@ def min_variance(cov: pd.DataFrame, max_weight: float = DEFAULT_MAX_WEIGHT) -> p
     ValueError
         If ``max_weight * n_assets < 1`` (no feasible portfolio), or the optimiser fails.
     """
-    raise NotImplementedError
+    sigma = cov.to_numpy()
+
+    def variance(w: np.ndarray) -> float:
+        return w @ sigma @ w
+
+    def variance_grad(w: np.ndarray) -> np.ndarray:
+        return 2 * sigma @ w
+
+    return _solve(variance, variance_grad, cov.index, max_weight)
 
 
 def max_sharpe(
@@ -93,7 +163,18 @@ def max_sharpe(
     ValueError
         If no feasible portfolio exists, or the optimiser fails.
     """
-    raise NotImplementedError
+    sigma = cov.to_numpy()
+    m = mu.reindex(cov.index).to_numpy()
+
+    def neg_sharpe(w: np.ndarray) -> float:
+        return -(w @ m - rf) / np.sqrt(w @ sigma @ w)
+
+    def neg_sharpe_grad(w: np.ndarray) -> np.ndarray:
+        excess, var = w @ m - rf, w @ sigma @ w
+        vol = np.sqrt(var)
+        return -(m / vol - excess * (sigma @ w) / (var * vol))
+
+    return _solve(neg_sharpe, neg_sharpe_grad, cov.index, max_weight)
 
 
 def efficient_frontier(
@@ -121,7 +202,29 @@ def efficient_frontier(
     pd.DataFrame
         One row per point. Columns ``ret``, ``vol``, then one weight column per ticker.
     """
-    raise NotImplementedError
+    sigma = cov.to_numpy()
+    m = mu.reindex(cov.index).to_numpy()
+
+    w_start = min_variance(cov, max_weight)
+    ret_min = float(w_start.to_numpy() @ m)
+    ret_max = float(_max_return_weights(m, max_weight) @ m)
+
+    rows = []
+    x0 = w_start.to_numpy()
+    for target in np.linspace(ret_min, ret_max, n_points):
+        hits_target = {"type": "eq", "fun": lambda w, t=target: w @ m - t, "jac": lambda w: m}
+        w = _solve(
+            lambda w: w @ sigma @ w,
+            lambda w: 2 * sigma @ w,
+            cov.index,
+            max_weight,
+            extra_constraints=[hits_target],
+            x0=x0,
+        )
+        x0 = w.to_numpy()  # warm start the next, slightly riskier point
+        ret, vol = portfolio_performance(w, mu, cov)
+        rows.append({"ret": ret, "vol": vol, **w.to_dict()})
+    return pd.DataFrame(rows, columns=["ret", "vol", *cov.index])
 
 
 def risk_contributions(weights: Weights, cov: pd.DataFrame) -> pd.Series:
