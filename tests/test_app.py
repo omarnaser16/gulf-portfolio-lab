@@ -87,12 +87,14 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Assets",
         "Frontier",
         "Backtest",
+        "My portfolio",
         "Monte Carlo",
         "Regime",
         "Analyst",
     ]
-    # static tables: data notes, assets, strategies, regime folds; frontier weights a dataframe
-    assert len(app.table) == 4 and len(app.dataframe) == 1
+    # static tables: data notes, assets, strategies, my holdings, my comparison, regime folds;
+    # frontier weights a dataframe
+    assert len(app.table) == 6 and len(app.dataframe) == 1
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -129,8 +131,9 @@ def test_frontier_tab_follows_the_sidebar_cap(app: AppTest, cap: float) -> None:
 
 
 def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
-    """Assets and backtest metric tables (static st.table, so headers can wrap)."""
-    return [t.value for t in app.table if "Sharpe" in t.value.columns]
+    """Assets and Backtest-tab metric tables (static st.table, so headers can wrap)."""
+    tables = [t.value for t in app.table if "Sharpe" in t.value.columns]
+    return [t for t in tables if "My portfolio" not in t.index][:2]
 
 
 def test_metric_tables_are_readable(app: AppTest) -> None:
@@ -372,3 +375,62 @@ def test_blocked_download_offers_retry(monkeypatch, tmp_path) -> None:
     at.run()
     assert any("Yahoo Finance didn't respond" in e.value for e in at.error)
     assert at.button(key="retry").label == "Retry"
+
+
+# ------------------------------------------------------------------------------ My portfolio
+
+
+def _my_comparison(app: AppTest) -> pd.DataFrame:
+    return next(t.value for t in app.table if "My portfolio" in t.value.index)
+
+
+def test_my_portfolio_default_compares_with_strategies(app: AppTest) -> None:
+    table = _my_comparison(app)
+    assert {"My portfolio", "Min variance", "Risk parity", "60/40 (SPY/AGG)"} <= set(table.index)
+    holdings = next(t.value for t in app.table if "Share of risk" in t.value.columns)
+    assert list(holdings.index) == ["SPY", "AGG", "GLD", "KSA"]
+    assert holdings.loc["SPY", "Weight"] == "50.00%"
+
+
+def test_my_portfolio_amounts_outside_universe_and_mixed_calendar(app: AppTest) -> None:
+    app.radio(key="holdings_mode").set_value("Amounts (USD)").run()
+    app.text_area(key="holdings").set_value("SPY 6,000\n2222.SR 4000").run()
+    assert not app.exception, app.exception
+    holdings = next(t.value for t in app.table if "Share of risk" in t.value.columns)
+    assert holdings.loc["SPY", "Weight"] == "60.00%"
+    assert holdings.loc["2222.SR", "Converted to USD with"] == "SAR peg 3.75 per USD"
+    assert any("Sunday to Thursday" in i.value for i in app.info)  # holdings joined the dates
+    assert "My portfolio" in _my_comparison(app).index
+
+
+def test_my_portfolio_reports_bad_lines_and_unknown_tickers(app: AppTest) -> None:
+    app.text_area(key="holdings").set_value("SPY 60\nnot a holding\nNOPE1 40").run()
+    assert not app.exception, app.exception
+    errors = " ".join(e.value for e in app.error)
+    assert "Line 2" in errors and "No price data for NOPE1" in errors
+    assert not any(
+        "My portfolio" in t.value.index for t in app.table if "Sharpe" in t.value.columns
+    )
+
+
+def test_monte_carlo_offers_my_portfolio(app: AppTest) -> None:
+    assert "My portfolio" in app.selectbox(key="mc_strategy").options
+    app.selectbox(key="mc_strategy").set_value("My portfolio").run()
+    assert not app.exception, app.exception
+    assert any(
+        "My portfolio: simulated growth" in json.loads(c.proto.spec)["layout"]["title"]["text"]
+        for c in app.get("plotly_chart")
+    )
+
+
+def test_analyst_writes_a_memo_about_my_portfolio(analyst_app) -> None:
+    at, client = analyst_app
+    at.button(key="write_portfolio_memo").click().run()
+    assert not at.exception, at.exception
+    question = client.requests[0]["messages"][0]["content"]
+    assert question.startswith("Please review my portfolio (SPY 50.00%, AGG 30.00%")
+    tools = {t["name"]: t for t in client.requests[0]["tools"]}
+    assert (
+        "My portfolio"
+        in tools["backtest_strategies"]["input_schema"]["properties"]["strategies"]["items"]["enum"]
+    )

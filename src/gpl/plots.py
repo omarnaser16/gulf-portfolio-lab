@@ -297,3 +297,29 @@ def regime_chart(
     fig = _base_layout(fig, title, "P(stressed)", PCT)
     fig.update_yaxes(range=[0, 1])
     return fig
+
+
+def risk_contribution_chart(
+    weights: pd.Series, contributions: pd.Series, title: str = "Share of money vs share of risk"
+) -> go.Figure:
+    """Horizontal bars per holding: its weight and its share of portfolio risk."""
+    order = contributions.sort_values().index
+    fig = go.Figure()
+    for color, (name, values) in zip(
+        SERIES_COLORS, [("Weight", weights), ("Share of risk", contributions)], strict=False
+    ):
+        fig.add_trace(
+            go.Bar(
+                y=list(order),
+                x=values.reindex(order),
+                name=name,
+                orientation="h",
+                marker={"color": color, "line": {"color": SURFACE, "width": 2}},
+                hovertemplate="%{y}: %{x:.2%}<extra>" + name + "</extra>",
+            )
+        )
+    fig = _base_layout(fig, title, "", PCT)
+    fig.update_layout(barmode="group", hovermode="closest", height=120 + 45 * len(order))
+    fig.update_xaxes(tickformat=PCT, gridcolor=GRID)
+    fig.update_yaxes(tickformat="")
+    return fig

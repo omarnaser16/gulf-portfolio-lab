@@ -16,7 +16,7 @@ import pandas as pd
 
 from gpl import backtest as bt
 from gpl import regime as rg
-from gpl.data import clean_prices, get_prices, get_risk_free, to_returns
+from gpl.data import clean_prices, get_prices, get_risk_free, load_assets, to_returns
 from gpl.metrics import PERIODS_PER_YEAR, summary_table
 from gpl.montecarlo import (
     goal_probability,
@@ -35,6 +35,7 @@ from gpl.optimise import (
 
 STRATEGIES = ["Equal weight", "Min variance", "Max Sharpe", "Risk parity"]
 BENCHMARKS = ["60/40 (SPY/AGG)", "SPY"]
+MY_PORTFOLIO = "My portfolio"
 
 
 class ToolError(Exception):
@@ -64,28 +65,55 @@ class AnalystContext:
     regime_features: pd.DataFrame
     regime_labels: pd.Series
     settings: Mapping[str, Any]
+    universe: Sequence[str] | None = None  # strategy universe; None = every loaded column
+    user_portfolio: Mapping[str, float] | None = None  # ticker -> weight (sums to 1)
+    asset_notes: pd.DataFrame | None = None  # data.load_assets history (currency, start date)
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
     def assets(self) -> list[str]:
-        return list(self.prices.columns)
+        """The strategy universe (benchmarks and holdings may be loaded in addition)."""
+        return list(self.universe) if self.universe is not None else list(self.prices.columns)
+
+    @property
+    def periods(self) -> int:
+        """Return observations per year (below 252 when calendars were aligned)."""
+        return int(self.settings.get("periods_per_year", PERIODS_PER_YEAR))
 
     @property
     def returns(self) -> pd.DataFrame:
         if "returns" not in self._cache:
-            self._cache["returns"] = to_returns(self.prices)
+            self._cache["returns"] = to_returns(self.prices[self.assets])
         return self._cache["returns"]
+
+    @property
+    def all_returns(self) -> pd.DataFrame:
+        if "all_returns" not in self._cache:
+            self._cache["all_returns"] = to_returns(self.prices)
+        return self._cache["all_returns"]
+
+    def strategy_names(self) -> list[str]:
+        names = list(STRATEGIES)
+        if {"SPY", "AGG"} <= set(self.prices.columns):
+            names += BENCHMARKS
+        if self.user_portfolio:
+            names.append(MY_PORTFOLIO)
+        return names
 
     def strategy(self, name: str) -> bt.Strategy:
         mw, rf = self.settings["max_weight"], self.rf
         builders: dict[str, Callable[[], bt.Strategy]] = {
             "Equal weight": lambda: bt.equal_weight,
             "Min variance": lambda: bt.min_variance_strategy(max_weight=mw),
-            "Max Sharpe": lambda: bt.max_sharpe_strategy(rf=rf, max_weight=mw),
+            "Max Sharpe": lambda: bt.max_sharpe_strategy(
+                rf=rf, max_weight=mw, periods_per_year=self.periods
+            ),
             "Risk parity": lambda: bt.risk_parity_strategy(max_weight=mw),
             "60/40 (SPY/AGG)": lambda: bt.fixed_weights(self.benchmarks["sixty_forty"]),
             "SPY": lambda: bt.fixed_weights(self.benchmarks["spy"]),
         }
+        if self.user_portfolio:
+            builders[MY_PORTFOLIO] = lambda: bt.fixed_weights(self.user_portfolio)
         if name not in builders:
             raise ToolError(f"unknown strategy {name!r}; choose from {list(builders)}")
         return builders[name]()
@@ -112,8 +140,11 @@ class AnalystContext:
                 strategy = bt.regime_switch_strategy(
                     strategy, defensive, self.p_stressed(), self.settings["regime"]["threshold"]
                 )
+            # Strategies choose from the universe; benchmarks and the user's holdings may use
+            # other loaded assets. All run on the same dates.
+            prices = self.prices[self.assets] if name in STRATEGIES else self.prices
             self._cache[key] = bt.run_backtest(
-                self.prices,
+                prices,
                 strategy,
                 rebalance=self.settings["rebalance"],
                 lookback=self.settings["lookback"],
@@ -130,15 +161,20 @@ def build_context(
     max_weight: float | None = None,
     cost_bps: float | None = None,
     lookback: int | None = None,
+    portfolio: Mapping[str, float] | None = None,
 ) -> AnalystContext:
-    """Load prices, risk-free rate and regime data via ``gpl.data`` (all I/O happens there)."""
+    """Load prices (any Yahoo tickers, in USD), the risk-free rate and regime data via
+    ``gpl.data`` (all I/O happens there). SPY and AGG are always loaded for the benchmarks."""
     d, r = cfg["defaults"], cfg["regime"]
     start, end = start or d["start"], end or d["end"]
-    prices = clean_prices(get_prices(list(tickers or cfg["assets"]), start, end), d["max_ffill"])
+    lookback = d["lookback"] if lookback is None else lookback
+    universe = list(tickers or cfg["assets"])
+    wanted = list(dict.fromkeys([*universe, *(portfolio or {}), "SPY", "AGG"]))
+    data = load_assets(wanted, start, end, lookback=lookback, max_ffill=d["max_ffill"])
     regime_px = clean_prices(get_prices([r["equity"], r["bond"]], r["start"], end))
     vix = get_prices(["^VIX"], r["start"], end)["^VIX"]
     return AnalystContext(
-        prices=prices,
+        prices=data.prices,
         rf=get_risk_free(start, end),
         groups=cfg["groups"],
         benchmarks=cfg["benchmarks"],
@@ -149,12 +185,16 @@ def build_context(
         settings={
             "max_weight": d["max_weight"] if max_weight is None else max_weight,
             "cost_bps": d["cost_bps"] if cost_bps is None else cost_bps,
-            "lookback": d["lookback"] if lookback is None else lookback,
+            "lookback": lookback,
+            "periods_per_year": data.periods_per_year,
             "rebalance": d["rebalance"],
             "var_level": d["var_level"],
             "regime": r,
             "montecarlo": cfg["montecarlo"],
         },
+        universe=[t for t in universe if t in data.prices.columns],
+        user_portfolio=dict(portfolio) if portfolio else None,
+        asset_notes=data.history,
     )
 
 
@@ -188,12 +228,27 @@ def _weights(w: pd.Series) -> dict[str, str]:
 
 def get_universe(ctx: AnalystContext) -> dict:
     s = ctx.settings
+    extra = {}
+    if ctx.asset_notes is not None:
+        notes = ctx.asset_notes
+        extra["usd_conversion"] = {t: notes.loc[t, "conversion"] for t in notes.index}
+        extra["first_price_date"] = {t: str(notes.loc[t, "first_date"].date()) for t in notes.index}
+    if ctx.periods != PERIODS_PER_YEAR:
+        extra["calendar_note"] = (
+            "Assets trade on different weekly calendars (e.g. Saudi Sun-Thu, US Mon-Fri); "
+            f"the analysis uses only common dates, about {ctx.periods} a year, and annualises "
+            "with that number."
+        )
+    if ctx.user_portfolio:
+        extra["user_portfolio_entered"] = "yes: call get_my_portfolio"
     return {
+        **extra,
         "assets": {t: _group_of(ctx, t) for t in ctx.assets},
         "sample_start": str(ctx.prices.index[0].date()),
         "sample_end": str(ctx.prices.index[-1].date()),
         "trading_days": len(ctx.returns),
-        "currency": "USD (all assets are US-listed ETFs priced in USD)",
+        "currency": "USD (non-USD assets converted: pegs for SAR, AED, QAR, BHD, OMR; "
+        "market rates for others)",
         "max_weight_per_asset": pct(s["max_weight"]),
         "transaction_cost_bps": f"{s['cost_bps']:g}",
         "estimation_window_days": s["lookback"],
@@ -206,16 +261,22 @@ def get_asset_metrics(ctx: AnalystContext, tickers: list[str]) -> dict:
     unknown = sorted(set(chosen) - set(ctx.assets))
     if unknown:
         raise ToolError(f"unknown tickers {unknown}; available: {ctx.assets}")
-    table = summary_table(ctx.returns[chosen], rf=ctx.rf, level=ctx.settings["var_level"])
+    table = summary_table(
+        ctx.returns[chosen],
+        rf=ctx.rf,
+        level=ctx.settings["var_level"],
+        periods_per_year=ctx.periods,
+    )
     return {
         "period": f"{ctx.returns.index[0].date()} to {ctx.returns.index[-1].date()}",
-        "note": "Full-sample, annualised over 252 days; VaR/ES are 1-day 95% losses.",
+        "note": f"Full-sample, annualised over {ctx.periods} observations a year; VaR/ES are "
+        "95% losses over one observation (usually one day).",
         "metrics": _metrics_rows(table),
     }
 
 
 def optimise_portfolio(ctx: AnalystContext, method: str) -> dict:
-    mu, cov = ctx.returns.mean() * PERIODS_PER_YEAR, ctx.returns.cov() * PERIODS_PER_YEAR
+    mu, cov = ctx.returns.mean() * ctx.periods, ctx.returns.cov() * ctx.periods
     mw = ctx.settings["max_weight"]
     rf_daily = ctx.rf.loc[ctx.returns.index[0] :]
     rf_annual = float((1 + rf_daily).prod() ** (PERIODS_PER_YEAR / len(rf_daily)) - 1)
@@ -245,20 +306,31 @@ def optimise_portfolio(ctx: AnalystContext, method: str) -> dict:
 
 
 def backtest_strategies(ctx: AnalystContext, strategies: list[str], regime_aware: bool) -> dict:
-    names = strategies or STRATEGIES + BENCHMARKS
+    names = strategies or ctx.strategy_names()
     results = {}
     for name in names:
         results[name] = ctx.backtest(name)
         if regime_aware and name in STRATEGIES and name != "Min variance":
             results[f"{name} + regime"] = ctx.backtest(name, regime_aware=True)
     rets = pd.DataFrame({n: r.returns for n, r in results.items()})
-    rows = _metrics_rows(summary_table(rets, rf=ctx.rf, level=ctx.settings["var_level"]))
+    rows = _metrics_rows(
+        summary_table(
+            rets, rf=ctx.rf, level=ctx.settings["var_level"], periods_per_year=ctx.periods
+        )
+    )
     for n, r in results.items():
         rows[n]["turnover_per_year"] = times(r.turnover.iloc[1:].mean() * 12)
         rows[n]["latest_weights"] = _weights(r.weights.iloc[-1])
     first = next(iter(results.values())).equity.index
+    lookback = ctx.settings["lookback"]
     return {
         "backtest_period": f"{first[0].date()} to {first[-1].date()}",
+        "data_start": str(ctx.prices.index[0].date()),
+        "why_the_backtest_starts_later": f"Each strategy first needs a {lookback}-observation "
+        "estimation window, so results begin that many observations after the data starts. "
+        "This is expected, not a data problem.",
+        "risk_measures": f"VaR and expected shortfall at {ctx.settings['var_level']:.0%} "
+        "confidence over one observation (usually one day), shown as positive losses.",
         "method": f"Monthly rebalancing on a trailing {ctx.settings['lookback']}-day window; "
         f"weights apply from the next day; {ctx.settings['cost_bps']:g} bps per unit traded. "
         "'+ regime' versions switch to min variance when P(stressed) >= threshold.",
@@ -278,16 +350,16 @@ def simulate_future(
     w = w[w > 0]
     n_paths, seed = 5_000, 42
     paths = simulate_paths(
-        ctx.returns,
+        ctx.all_returns,
         w,
-        PERIODS_PER_YEAR * horizon_years,
+        ctx.periods * horizon_years,
         n_paths,
         method=mc["method"],
         seed=seed,
         block_size=mc["block_size"],
     )
     if real_terms:
-        paths = to_real(paths, mc["inflation"])
+        paths = to_real(paths, mc["inflation"], periods_per_year=ctx.periods)
     stats = terminal_stats(paths)
     return {
         "strategy": strategy,
@@ -308,6 +380,32 @@ def simulate_future(
         ),
         "method": f"{mc['block_size']}-day block bootstrap of the sample's daily returns, "
         f"{n_paths} paths, seed {seed}; weights rebalanced daily, no costs.",
+    }
+
+
+def get_my_portfolio(ctx: AnalystContext) -> dict:
+    if not ctx.user_portfolio:
+        raise ToolError("the user has not entered a portfolio on the My portfolio tab")
+    w = pd.Series(ctx.user_portfolio)
+    cov = ctx.all_returns[w.index].cov() * ctx.periods
+    rc = risk_contributions(w, cov)
+    record = backtest_strategies(ctx, [MY_PORTFOLIO], regime_aware=False)
+    holdings = {}
+    for t in w.sort_values(ascending=False).index:
+        holdings[t] = {"weight": pct(w[t]), "share_of_risk": pct(rc[t])}
+        if ctx.asset_notes is not None and t in ctx.asset_notes.index:
+            holdings[t]["usd_conversion"] = ctx.asset_notes.loc[t, "conversion"]
+            holdings[t]["first_price_date"] = str(ctx.asset_notes.loc[t, "first_date"].date())
+    return {
+        "holdings": holdings,
+        "largest_risk_share": f"{rc.idxmax()} ({pct(rc.max())} of risk)",
+        "backtest_period": record["backtest_period"],
+        "data_start": record["data_start"],
+        "why_the_backtest_starts_later": record["why_the_backtest_starts_later"],
+        "risk_measures": record["risk_measures"],
+        "backtest": record["results"][MY_PORTFOLIO],
+        "method": "The user's own weights, rebalanced monthly back to target after costs, on the "
+        "same dates as the strategies. Share of risk uses the full-sample covariance.",
     }
 
 
@@ -365,7 +463,7 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             },
         }
 
-    all_strategies = STRATEGIES + [b for b in BENCHMARKS if {"SPY", "AGG"} <= set(ctx.assets)]
+    all_strategies = ctx.strategy_names()
     return [
         tool(
             "get_universe",
@@ -418,6 +516,13 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             },
         ),
         tool(
+            "get_my_portfolio",
+            "The user's own portfolio from the My portfolio tab: holdings with weights and "
+            "each holding's share of risk, USD conversion and start date, plus its backtest "
+            "record. Returns an error if the user has not entered one.",
+            {},
+        ),
+        tool(
             "get_regime_view",
             "Latest probability that next month is a stressed market, the model's out-of-sample "
             "track record vs a simple volatility rule, and caveats.",
@@ -432,6 +537,7 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "optimise_portfolio": optimise_portfolio,
     "backtest_strategies": backtest_strategies,
     "simulate_future": simulate_future,
+    "get_my_portfolio": get_my_portfolio,
     "get_regime_view": get_regime_view,
 }
 

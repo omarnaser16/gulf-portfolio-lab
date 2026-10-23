@@ -30,3 +30,29 @@ def test_asset_groups() -> None:
         "GCC stocks": ["2222.SR", "NBK.KW"],
         "Other": ["AAPL"],
     }
+
+
+from inputs import parse_holdings  # noqa: E402
+
+
+def test_parse_holdings_weights() -> None:
+    weights, problems, note = parse_holdings("SPY 40\n2222.sr: 30%\nGLD,30")
+    assert weights == {"SPY": 0.4, "2222.SR": 0.3, "GLD": 0.3}
+    assert problems == [] and note == ""
+
+
+def test_parse_holdings_rescales_and_reports() -> None:
+    weights, problems, note = parse_holdings("SPY 50\nAGG 45\nnonsense line\nGLD -5\n\nSPY 0")
+    assert weights == {"SPY": 50 / 95, "AGG": 45 / 95}
+    assert len(problems) == 3 and "Line 3" in problems[0]
+    assert note == "Weights add up to 95.00%, so they were scaled to 100.00%."
+
+
+def test_parse_holdings_amounts_and_duplicates() -> None:
+    weights, problems, note = parse_holdings("SPY 10,000\nAGG 5000\nSPY 5,000", mode="amounts")
+    assert weights == {"SPY": 0.75, "AGG": 0.25}
+    assert problems == [] and note == ""  # amounts are never "rescaled"
+
+
+def test_parse_holdings_empty() -> None:
+    assert parse_holdings("") == ({}, [], "")

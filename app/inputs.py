@@ -38,3 +38,45 @@ def asset_groups(
     if other:
         groups["Other"] = other
     return groups
+
+
+DEFAULT_HOLDINGS = "SPY 50\nAGG 30\nGLD 10\nKSA 10"
+
+
+def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], list[str], str]:
+    """Parse "TICKER value" lines into portfolio weights.
+
+    Parameters
+    ----------
+    text : str
+        One holding per line, e.g. ``"SPY 40"``, ``"2222.SR: 30%"`` or ``"GLD, 10,000"``.
+    mode : {"weights", "amounts"}
+        ``"weights"``: values are percentages; ``"amounts"``: values are money amounts.
+
+    Returns
+    -------
+    (dict, list, str)
+        Ticker -> weight (sums to 1), a list of problems with individual lines, and a note
+        when weights had to be rescaled to 100%.
+    """
+    holdings: dict[str, float] = {}
+    problems: list[str] = []
+    for n, raw in enumerate((text or "").splitlines(), start=1):
+        line = raw.strip()
+        if not line:
+            continue
+        match = re.match(r"^([A-Za-z0-9^][A-Za-z0-9.\-=^]*)[\s,:;]+([\d,]*\.?\d+)\s*%?$", line)
+        if not match:
+            problems.append(f"Line {n} (“{line}”): expected a ticker and a number, e.g. “SPY 40”.")
+            continue
+        ticker, value = match.group(1).upper(), float(match.group(2).replace(",", ""))
+        if value <= 0:
+            problems.append(f"Line {n} (“{line}”): the {mode[:-1]} must be positive.")
+            continue
+        holdings[ticker] = holdings.get(ticker, 0.0) + value
+    total = sum(holdings.values())
+    note = ""
+    if holdings and mode == "weights" and abs(total - 100) > 0.01:
+        note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
+    weights = {t: v / total for t, v in holdings.items()} if total else {}
+    return weights, problems, note

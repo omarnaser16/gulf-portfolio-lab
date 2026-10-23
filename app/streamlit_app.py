@@ -14,7 +14,7 @@ import anthropic
 import numpy as np
 import pandas as pd
 import streamlit as st
-from inputs import asset_groups, combine_tickers, parse_tickers
+from inputs import DEFAULT_HOLDINGS, asset_groups, combine_tickers, parse_holdings, parse_tickers
 
 from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
@@ -44,6 +44,7 @@ from gpl.optimise import (
     max_sharpe,
     min_variance,
     portfolio_performance,
+    risk_contributions,
     risk_parity,
 )
 from gpl.plots import (
@@ -53,6 +54,7 @@ from gpl.plots import (
     fan_chart,
     frontier_chart,
     regime_chart,
+    risk_contribution_chart,
     weights_chart,
 )
 
@@ -199,6 +201,27 @@ def run_backtests(
     }
 
 
+@st.cache_data(show_spinner="Backtesting your portfolio…", ttl=CACHE_TTL)
+def run_my_portfolio(
+    weights: tuple[tuple[str, float], ...],
+    loaded: tuple[str, ...],
+    start: date,
+    end: date | None,
+    day: date | None,
+    cost_bps: float,
+    lookback: int,
+) -> bt.BacktestResult:
+    """The user's holdings, rebalanced monthly to target, on the same dates as the strategies."""
+    data = load_data(loaded, start, end, lookback, day)
+    return bt.run_backtest(
+        data.prices,
+        bt.fixed_weights(dict(weights)),
+        rebalance=D["rebalance"],
+        lookback=lookback,
+        cost_bps=cost_bps,
+    )
+
+
 # -------------------------------------------------------------------------- presentation
 
 
@@ -266,7 +289,13 @@ with st.sidebar:
 
 end = None if period == LATEST else date.fromisoformat(D["end"])
 day = date.today() if end is None else None
-loaded = tuple(combine_tickers([requested], ["SPY", "AGG"]))  # benchmarks always available
+MODES = {"Weights (%)": "weights", "Amounts (USD)": "amounts"}
+my_weights, holding_problems, holding_note = parse_holdings(
+    st.session_state.get("holdings", DEFAULT_HOLDINGS),
+    MODES[st.session_state.get("holdings_mode", "Weights (%)")],
+)
+# Benchmarks and the user's holdings are always loaded, on the same dates as the universe.
+loaded = tuple(combine_tickers([requested, list(my_weights)], ["SPY", "AGG"]))
 try:
     data = load_data(loaded, start, end, lookback, day)
     rf = load_rf(start, end, day)
@@ -281,7 +310,11 @@ except DataUnavailable, ValueError:
         st.rerun()
     st.stop()
 
-bad = {t: why for t, why in data.invalid.items() if t in requested or t in ("SPY", "AGG")}
+bad = {
+    t: why
+    for t, why in data.invalid.items()
+    if t in requested or t in my_weights or t in ("SPY", "AGG")
+}
 if bad:
     st.warning(
         "Couldn't load "
@@ -305,6 +338,9 @@ prices = data.prices[universe]
 returns = to_returns(prices)
 all_returns = to_returns(data.prices)
 groups = asset_groups(universe, CFG["groups"], GROUP_LABELS)
+missing_holdings = [t for t in my_weights if t not in data.prices.columns]
+portfolio_ok = bool(my_weights) and not missing_holdings and not holding_problems
+my_key = tuple(sorted(my_weights.items()))
 st.markdown(
     f"**Data as of {data.price_as_of:%d %b %Y}** (latest price) · loaded {data.loaded_at} · "
     f"{'latest data' if end is None else 'fixed sample used in the README'}"
@@ -316,7 +352,9 @@ st.caption(
 
 
 def render_data_notes(history: pd.DataFrame) -> None:
-    shown = history.loc[[t for t in history.index if t in universe or t in ("SPY", "AGG")]]
+    shown = history.loc[
+        [t for t in history.index if t in universe or t in my_weights or t in ("SPY", "AGG")]
+    ]
     table = pd.DataFrame(
         {
             "Name": [NAMES.get(t, "") for t in shown.index],
@@ -366,8 +404,8 @@ SHORT_SAMPLE = (
     "date, or choose a shorter estimation window in the sidebar."
 )
 
-tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
-    ["Assets", "Frontier", "Backtest", "Monte Carlo", "Regime", "Analyst"]
+tab_assets, tab_frontier, tab_backtest, tab_mine, tab_mc, tab_regime, tab_agent = st.tabs(
+    ["Assets", "Frontier", "Backtest", "My portfolio", "Monte Carlo", "Regime", "Analyst"]
 )
 
 with tab_assets:
@@ -467,6 +505,87 @@ with tab_backtest:
             width="stretch",
         )
 
+with tab_mine:
+    st.subheader("My portfolio")
+    c1, c2 = st.columns([3, 1])
+    c2.radio("Values are", list(MODES), key="holdings_mode")
+    c1.text_area(
+        "Holdings: one per line, ticker then value",
+        DEFAULT_HOLDINGS,
+        key="holdings",
+        height=150,
+        help="Any Yahoo Finance ticker, e.g. 'SPY 40', '2222.SR 30', 'GLD 30'. Weights are "
+        "scaled to 100% if they don't add up; amounts are turned into weights.",
+    )
+    for problem in holding_problems:
+        st.error(problem)
+    if holding_note:
+        st.caption(holding_note)
+    if missing_holdings:
+        st.error(
+            "No price data for " + ", ".join(missing_holdings) + ". Fix or remove these "
+            "holdings (see the warning at the top of the page)."
+        )
+    if not my_weights:
+        st.info("Enter at least one holding.")
+    elif portfolio_ok and not enough_history:
+        st.warning(SHORT_SAMPLE)
+    elif portfolio_ok:
+        w = pd.Series(my_weights)
+        cov = all_returns[w.index].cov() * periods
+        rc = risk_contributions(w, cov)
+        st.markdown("**Holdings: share of money vs share of risk**")
+        st.table(
+            pd.DataFrame(
+                {
+                    "Name": [NAMES.get(t, "") for t in w.index],
+                    "Weight": w.map(pct),
+                    "Share of risk": rc.map(pct),
+                    "Converted to USD with": [data.history.loc[t, "conversion"] for t in w.index],
+                },
+                index=w.index,
+            )
+        )
+        st.plotly_chart(risk_contribution_chart(w, rc), width="stretch")
+        st.caption(
+            "Share of risk is each holding's contribution to the portfolio's volatility (full "
+            "sample). A holding whose share of risk is much larger than its weight dominates "
+            "how the portfolio moves."
+        )
+
+        mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
+        compare_names = STRATEGY_NAMES + [SIXTY_FORTY]
+        others = run_backtests(
+            tickers,
+            loaded,
+            start,
+            end,
+            day,
+            tuple(compare_names),
+            max_weight,
+            cost_bps,
+            lookback,
+            None,
+        )
+        results_mine = {"My portfolio": mine, **others}
+        rets = pd.DataFrame({n: r.returns for n, r in results_mine.items()})
+        table = summary_table(rets, rf=rf, level=D["var_level"], periods_per_year=periods)
+        table["annual_turnover"] = pd.Series(
+            {n: r.turnover.iloc[1:].mean() * 12 for n, r in results_mine.items()}
+        )
+        st.markdown("**Compared with the strategies and 60/40, after costs**")
+        show_metrics_table(table, D["var_level"])
+        st.caption(
+            f"Your weights are rebalanced monthly back to target with {cost_bps:g} bps costs, on "
+            f"the same dates as the strategies ({mine.equity.index[0]:%d %b %Y} – "
+            f"{mine.equity.index[-1]:%d %b %Y}). The strategies choose from the assets in the "
+            "sidebar; your holdings can include others."
+        )
+        equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
+        st.plotly_chart(equity_chart(equity), width="stretch")
+        st.plotly_chart(drawdown_chart(drawdown_series(rets)), width="stretch")
+        st.caption("Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab.")
+
 with tab_mc:
     st.subheader("Monte Carlo: where could today's weights go?")
     if not names:
@@ -487,7 +606,8 @@ with tab_mc:
             threshold if use_regime else None,
         )
         c1, c2, c3 = st.columns(3)
-        mc_strategy = c1.selectbox("Use the latest weights of", list(results), key="mc_strategy")
+        mc_options = list(results) + (["My portfolio"] if portfolio_ok else [])
+        mc_strategy = c1.selectbox("Use the latest weights of", mc_options, key="mc_strategy")
         years = c2.slider("Horizon (years)", 1, 30, 10)
         target = c3.number_input("Goal: end with at least × start", 0.5, 10.0, 1.5, 0.1)
         c4, c5, c6 = st.columns(3)
@@ -508,8 +628,11 @@ with tab_mc:
             "power as today. The rate is fixed and set in config/universe.yaml.",
         )
         units = "real USD" if real else "nominal USD"
-        weights = results[mc_strategy].weights.iloc[-1]
-        weights = weights[weights > 0]
+        if mc_strategy == "My portfolio":
+            weights = pd.Series(my_weights)
+        else:
+            weights = results[mc_strategy].weights.iloc[-1]
+            weights = weights[weights > 0]
         paths = simulate_paths(
             all_returns,
             weights,
@@ -692,11 +815,11 @@ with tab_agent:
             "root. On Streamlit Community Cloud, add it under *App settings → Secrets*."
         )
     else:
-        settings_key = (tickers, loaded, start, end, day, max_weight, cost_bps, lookback)
+        settings_key = (tickers, loaded, start, end, day, max_weight, cost_bps, lookback, my_key)
         if st.session_state.get("analyst_key") != settings_key:
             regime_data = load_regime(end, day)
             ctx = AnalystContext(
-                prices=prices,
+                prices=data.prices,
                 rf=rf,
                 groups=CFG["groups"],
                 benchmarks=CFG["benchmarks"],
@@ -712,6 +835,9 @@ with tab_agent:
                     "regime": R,
                     "montecarlo": MC,
                 },
+                universe=universe,
+                user_portfolio=my_weights if portfolio_ok else None,
+                asset_notes=data.history,
             )
             ctx._cache["p_stressed"] = regime_data["p_stressed"]  # already computed above
             st.session_state.analyst = agent.Analyst(
@@ -736,9 +862,18 @@ with tab_agent:
         if not st.session_state.chat:
             choice = st.selectbox("Start from an example", list(examples), key="profile_example")
             profile = st.text_area("Investor profile", examples[choice], height=100, key="profile")
-            start_memo = st.button("Write memo", type="primary", key="write_memo")
+            b1, b2 = st.columns(2)
+            start_memo = b1.button("Write memo", type="primary", key="write_memo")
+            portfolio_memo = b2.button(
+                "Write memo about my portfolio",
+                key="write_portfolio_memo",
+                disabled=not portfolio_ok,
+                help="Uses the holdings on the My portfolio tab."
+                if portfolio_ok
+                else "Enter valid holdings on the My portfolio tab first.",
+            )
         else:
-            profile, start_memo = None, False
+            profile, start_memo, portfolio_memo = None, False, False
             if st.button("New conversation", key="new_conversation"):
                 st.session_state.analyst_key = None
                 st.rerun()
@@ -761,6 +896,13 @@ with tab_agent:
         if start_memo and profile:
             ask(profile)
             st.rerun()  # redraw with the conversation instead of the profile form
+        if portfolio_memo:
+            holdings = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
+            ask(
+                f"Please review my portfolio ({holdings}), entered on the My portfolio tab. "
+                f"About me: {profile}"
+            )
+            st.rerun()
 
         for turn in st.session_state.chat:
             if turn["role"] == "user":

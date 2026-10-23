@@ -63,6 +63,12 @@ currency: all figures are in USD; SAR, AED, QAR, BHD and OMR \
 are pegged to the US dollar, so a Gulf investor in these USD assets carries little currency risk, \
 while the Kuwaiti dinar is pegged to a basket.
 
+When the user asks about their own portfolio ("My portfolio"), call get_my_portfolio, then \
+backtest_strategies with "My portfolio" and the alternatives, and simulate_future for "My \
+portfolio". Use the same sections, replacing "Suggested allocation" with "Your portfolio": its \
+holdings, how concentrated its risk is (share of risk vs weight), and how its record compares \
+with the alternatives. Describe what the tools show; do not tell the user to buy or sell anything.
+
 For follow-up questions, answer briefly using tools as needed, with the same rules for numbers. \
 Do not give personalised financial advice beyond describing what the tools show.
 """

@@ -24,7 +24,7 @@ from gpl.agent.tools import (
 )
 from gpl.data import load_universe, to_returns
 from gpl.metrics import summary_table
-from gpl.optimise import min_variance
+from gpl.optimise import min_variance, risk_contributions
 
 CFG = load_universe()
 
@@ -283,3 +283,71 @@ def test_follow_up_keeps_the_conversation(ctx) -> None:
 def test_refusal_is_reported(ctx) -> None:
     reply = Analyst(ctx, FakeClient([response([], "refusal")]), model="m").ask("?")
     assert "declined" in reply.text
+
+
+# ------------------------------------------------------------------------- My portfolio
+
+
+@pytest.fixture(scope="module")
+def ctx_mine(ctx) -> AnalystContext:
+    """Same data; a smaller strategy universe; a user portfolio with an asset outside it."""
+    return AnalystContext(
+        prices=ctx.prices,
+        rf=ctx.rf,
+        groups=ctx.groups,
+        benchmarks=ctx.benchmarks,
+        regime_features=ctx.regime_features,
+        regime_labels=ctx.regime_labels,
+        settings={**ctx.settings, "periods_per_year": 200},
+        universe=["SPY", "EFA", "AGG", "GLD"],
+        user_portfolio={"SPY": 0.5, "AGG": 0.3, "KSA": 0.2},
+    )
+
+
+def test_strategies_stay_in_the_universe_portfolio_does_not(ctx_mine) -> None:
+    assert ctx_mine.assets == ["SPY", "EFA", "AGG", "GLD"]
+    ew = ctx_mine.backtest("Equal weight").weights.iloc[-1]
+    assert set(ew[ew > 0].index) == {"SPY", "EFA", "AGG", "GLD"}
+    mine = ctx_mine.backtest("My portfolio").weights.iloc[-1]
+    assert mine[mine > 0].to_dict() == pytest.approx({"SPY": 0.5, "AGG": 0.3, "KSA": 0.2})
+    assert "My portfolio" in ctx_mine.strategy_names()
+    enum = next(d for d in tool_definitions(ctx_mine) if d["name"] == "simulate_future")
+    assert "My portfolio" in enum["input_schema"]["properties"]["strategy"]["enum"]
+
+
+def test_get_my_portfolio_wraps_risk_contributions(ctx_mine) -> None:
+    out = execute_tool(ctx_mine, "get_my_portfolio", {})
+    w = pd.Series({"SPY": 0.5, "AGG": 0.3, "KSA": 0.2})
+    rc = risk_contributions(w, to_returns(ctx_mine.prices)[w.index].cov() * 200)
+    assert out["holdings"]["KSA"] == {"weight": "20.00%", "share_of_risk": pct(rc["KSA"])}
+    assert out["largest_risk_share"].startswith(rc.idxmax())
+    assert (
+        out["backtest"]["sharpe"]
+        == execute_tool(
+            ctx_mine, "backtest_strategies", {"strategies": ["My portfolio"], "regime_aware": False}
+        )["results"]["My portfolio"]["sharpe"]
+    )
+
+
+def test_tools_annualise_with_observed_periods(ctx_mine) -> None:
+    out = execute_tool(ctx_mine, "get_asset_metrics", {"tickers": ["SPY"]})
+    table = summary_table(
+        to_returns(ctx_mine.prices)[["SPY"]], rf=ctx_mine.rf, periods_per_year=200
+    )
+    assert out["metrics"]["SPY"]["annual_return"] == pct(table.loc["SPY", "ann_return"])
+    assert "200 observations a year" in out["note"]
+    assert "about 200 a year" in execute_tool(ctx_mine, "get_universe", {})["calendar_note"]
+
+
+def test_no_portfolio_is_a_clear_tool_error(ctx) -> None:
+    with pytest.raises(ToolError, match="My portfolio tab"):
+        execute_tool(ctx, "get_my_portfolio", {})
+
+
+def test_backtest_output_explains_dates_and_confidence(ctx_mine) -> None:
+    """Live run: the model mistook the later backtest start for a data error, and '95%' in
+    '95% VaR' was flagged because no tool output stated the confidence level."""
+    out = execute_tool(ctx_mine, "get_my_portfolio", {})
+    assert "not a data problem" in out["why_the_backtest_starts_later"]
+    assert out["data_start"] < out["backtest_period"][:10]
+    assert unverified_numbers("Your 1-day 95% VaR is 0.93%", [json.dumps(out), '"0.93%"']) == []

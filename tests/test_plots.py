@@ -11,6 +11,7 @@ from gpl.plots import (
     fan_chart,
     frontier_chart,
     regime_chart,
+    risk_contribution_chart,
     weights_chart,
 )
 
@@ -87,3 +88,12 @@ def test_regime_threshold_is_in_the_legend_not_on_the_data() -> None:
     fig = regime_chart(pd.Series([0.1, 0.6, 0.7, 0.2], index=idx), 0.5)
     assert "Threshold 50.00%" in [t.name for t in fig.data]
     assert not [a for a in fig.layout.annotations if "hreshold" in (a.text or "")]
+
+
+def test_risk_contribution_chart_pairs_weight_and_risk() -> None:
+    w = pd.Series({"SPY": 0.6, "AGG": 0.4})
+    rc = pd.Series({"SPY": 0.9, "AGG": 0.1})
+    fig = risk_contribution_chart(w, rc)
+    assert [t.name for t in fig.data] == ["Weight", "Share of risk"]
+    assert list(fig.data[1].y) == ["AGG", "SPY"]  # sorted by risk share
+    np.testing.assert_allclose(fig.data[0].x, [0.4, 0.6])
