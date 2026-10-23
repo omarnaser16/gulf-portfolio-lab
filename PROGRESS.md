@@ -64,3 +64,19 @@
   Most of the small changes in the results came from moving the end date (dropping 3 weeks of data), not
   from the cap. Rankings and max drawdowns didn't change.
 - **Next:** look at the charts in Jupyter, answer the quizzes, then Week 2.
+
+## Week 2 — 2026-10-23 · regime classifier, regime-aware strategy, dashboard
+- **Built:** `regime.py` (forward-looking stress labels, 8 backward-looking features, logistic regression
+  and random forest, time-series CV with a 21-day gap, monthly walk-forward probabilities, a simple
+  volatility-rule baseline); `regime_switch_strategy` in the backtester; a Streamlit dashboard with
+  assets, frontier, backtest, Monte Carlo and regime tabs. Added scikit-learn and streamlit (approved).
+- **Results:** logistic catches 67% of stressed days, but only 34% of its "stressed" calls are right
+  (base rate 22%). Its accuracy (65%) is *below* always-calm (79%). Switching to min variance on its
+  signal cut drawdowns (equal weight: −21.6% → −17.1%; COVID −20% → −14%) but lowered Sharpe for every
+  strategy (equal weight 0.49 → 0.42). The plain "vol is already high" rule beat the ML model on Sharpe.
+- **Learned:** a label that looks 21 days ahead leaks into the test fold unless you leave a gap, and a
+  model refit on day *t* can only train on labels up to *t − 21*. Accuracy is the wrong metric when 80%
+  of days are calm. Reducing risk usually costs return.
+- **Open:** should the threshold be higher than 0.5 (fewer false alarms)? Tuning it on this sample would
+  overfit, so it would need its own hold-out period. GCC-specific stress isn't modelled at all.
+- **Next:** open the dashboard and check the charts by eye, then Week 3 (agent + README + deploy).
