@@ -14,13 +14,23 @@ import anthropic
 import numpy as np
 import pandas as pd
 import streamlit as st
+from inputs import asset_groups, combine_tickers, parse_tickers
 
 from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
 from gpl.agent.tools import AnalystContext
-from gpl.data import clean_prices, get_prices, get_risk_free, load_universe, to_returns
+from gpl.data import (
+    AssetData,
+    DataUnavailable,
+    clean_prices,
+    get_prices,
+    get_risk_free,
+    load_assets,
+    load_universe,
+    to_returns,
+)
 from gpl.metrics import drawdown_series, summary_table
 from gpl.montecarlo import (
     goal_probability,
@@ -70,6 +80,12 @@ MC_METHOD_HELP = (
     "scatters them, losing both the streaks and the rebounds.\n\n"
     "**GBM** assumes normally distributed log returns: no fat tails and no clustering."
 )
+PRESETS = CFG["presets"]
+NAMES = CFG.get("ticker_names", {})
+LATEST, README_MODE = (
+    "Latest data",
+    f"Reproduce README results (to {date.fromisoformat(D['end']):%d %b %Y})",
+)
 STRATEGY_NAMES = ["Equal weight", "Min variance", "Max Sharpe", "Risk parity"]
 SIXTY_FORTY = "60/40 (SPY/AGG)"
 BENCHMARK_NAMES = [SIXTY_FORTY, "SPY"]
@@ -89,18 +105,24 @@ DISCLAIMER = (
 # Cached wrappers around gpl functions. Arguments are plain values so Streamlit can hash them.
 
 
-@st.cache_data(show_spinner="Loading prices…")
-def load_prices(tickers: tuple[str, ...], start: date, end: date) -> pd.DataFrame:
-    return clean_prices(get_prices(list(tickers), start, end), max_ffill=D["max_ffill"])
+CACHE_TTL = 6 * 3600  # "latest data" refreshes at most every 6 hours
 
 
-@st.cache_data(show_spinner="Loading the risk-free rate…")
-def load_rf(start: date, end: date) -> pd.Series:
+@st.cache_data(show_spinner="Loading prices…", ttl=CACHE_TTL)
+def load_data(
+    tickers: tuple[str, ...], start: date, end: date | None, lookback: int, day: date | None
+) -> AssetData:
+    """Any Yahoo tickers in USD, calendars aligned. ``day`` keys the cache for latest data."""
+    return load_assets(list(tickers), start, end, lookback=lookback, max_ffill=D["max_ffill"])
+
+
+@st.cache_data(show_spinner="Loading the risk-free rate…", ttl=CACHE_TTL)
+def load_rf(start: date, end: date | None, day: date | None) -> pd.Series:
     return get_risk_free(start, end)
 
 
-@st.cache_data(show_spinner="Fitting the regime model month by month…")
-def load_regime(end: date) -> dict:
+@st.cache_data(show_spinner="Fitting the regime model month by month…", ttl=CACHE_TTL)
+def load_regime(end: date | None, day: date | None) -> dict:
     px = clean_prices(get_prices([R["equity"], R["bond"]], R["start"], end))
     vix = get_prices(["^VIX"], R["start"], end)["^VIX"]
     features = rg.make_features(px, vix, equity=R["equity"], bond=R["bond"])
@@ -127,14 +149,14 @@ def load_regime(end: date) -> dict:
     return {"features": features, "labels": labels, "p_stressed": p_stressed, "report": report}
 
 
-def _strategy(name: str, rf: pd.Series, max_weight: float) -> bt.Strategy:
+def _strategy(name: str, rf: pd.Series, max_weight: float, periods: int) -> bt.Strategy:
     match name:
         case "Equal weight":
             return bt.equal_weight
         case "Min variance":
             return bt.min_variance_strategy(max_weight=max_weight)
         case "Max Sharpe":
-            return bt.max_sharpe_strategy(rf=rf, max_weight=max_weight)
+            return bt.max_sharpe_strategy(rf=rf, max_weight=max_weight, periods_per_year=periods)
         case "Risk parity":
             return bt.risk_parity_strategy(max_weight=max_weight)
         case "60/40 (SPY/AGG)":
@@ -144,31 +166,35 @@ def _strategy(name: str, rf: pd.Series, max_weight: float) -> bt.Strategy:
     raise ValueError(name)
 
 
-@st.cache_data(show_spinner="Running backtests…")
+@st.cache_data(show_spinner="Running backtests…", ttl=CACHE_TTL)
 def run_backtests(
-    tickers: tuple[str, ...],
+    universe: tuple[str, ...],
+    loaded: tuple[str, ...],
     start: date,
-    end: date,
+    end: date | None,
+    day: date | None,
     names: tuple[str, ...],
     max_weight: float,
     cost_bps: float,
     lookback: int,
     regime_threshold: float | None,
 ) -> dict[str, bt.BacktestResult]:
-    prices = load_prices(tickers, start, end)
-    rf = load_rf(start, end)
-    strategies = {name: _strategy(name, rf, max_weight) for name in names}
+    """Strategies run on the chosen universe; benchmarks on SPY/AGG; both on the same dates."""
+    data = load_data(loaded, start, end, lookback, day)
+    rf = load_rf(start, end, day)
+    periods = data.periods_per_year
+    strategies = {name: _strategy(name, rf, max_weight, periods) for name in names}
     if regime_threshold is not None:
-        p = load_regime(end)["p_stressed"]
+        p = load_regime(end, day)["p_stressed"]
         defensive = bt.min_variance_strategy(max_weight=max_weight)
         for name in [n for n in names if n in STRATEGY_NAMES and n != "Min variance"]:
             strategies[f"{name} + regime"] = bt.regime_switch_strategy(
                 strategies[name], defensive, p, regime_threshold
             )
+    run = dict(rebalance=D["rebalance"], lookback=lookback, cost_bps=cost_bps)
+    universe_prices = data.prices[list(universe)]
     return {
-        name: bt.run_backtest(
-            prices, s, rebalance=D["rebalance"], lookback=lookback, cost_bps=cost_bps
-        )
+        name: bt.run_backtest(data.prices if name in BENCHMARK_NAMES else universe_prices, s, **run)
         for name, s in strategies.items()
     }
 
@@ -189,25 +215,43 @@ st.caption(
 )
 
 with st.sidebar:
-    st.header("Universe")
-    assets = st.multiselect("Assets", CFG["assets"], default=CFG["assets"])
+    st.header("Data")
+    period = st.radio(
+        "Period",
+        [LATEST, README_MODE],
+        key="data_period",
+        help="Latest data refreshes daily. The README results use a fixed end date so they can "
+        "be reproduced exactly.",
+    )
     start = st.date_input("Start", date.fromisoformat(D["start"]), min_value=date(2005, 1, 1))
-    end = st.date_input("End", date.fromisoformat(D["end"]), min_value=date(2006, 1, 1))
+    st.header("Assets")
+    chosen_presets = st.multiselect(
+        "Quick picks", list(PRESETS), default=["Default ETFs"], key="presets"
+    )
+    typed = st.text_input(
+        "Add any Yahoo Finance tickers",
+        key="custom_tickers",
+        placeholder="e.g. AAPL, 7010.SR, VOD.L",
+        help="Comma-separated Yahoo Finance symbols: 2222.SR (Saudi), EMAAR.AE (Dubai), "
+        "QNBK.QA (Qatar), NBK.KW (Kuwait), VOD.L (London). Non-USD assets are converted to USD.",
+    )
+    requested = combine_tickers([PRESETS[p] for p in chosen_presets], parse_tickers(typed))
+    st.caption(
+        "Selected: "
+        + (", ".join(f"{t} ({NAMES[t]})" if t in NAMES else t for t in requested) or "none")
+    )
     st.header("Portfolio rules")
     max_weight = st.slider(
         "Max weight per asset", 0.10, 1.00, float(D["max_weight"]), 0.05, key="max_weight"
     )
     cost_bps = st.number_input("Costs (bps on turnover)", 0.0, 100.0, float(D["cost_bps"]), 5.0)
-    lookback = st.select_slider("Estimation window (days)", [126, 252, 504], value=D["lookback"])
-    st.header("Strategies")
-    benchmarks_ok = {"SPY", "AGG"} <= set(assets)
-    names = st.multiselect(
-        "Show",
-        STRATEGY_NAMES + (BENCHMARK_NAMES if benchmarks_ok else []),
-        default=STRATEGY_NAMES + (BENCHMARK_NAMES if benchmarks_ok else []),
+    lookback = st.select_slider(
+        "Estimation window (observations)", [126, 252, 504], value=D["lookback"]
     )
-    if not benchmarks_ok:
-        st.caption("Benchmarks need SPY and AGG in the universe.")
+    st.header("Strategies")
+    names = st.multiselect(
+        "Show", STRATEGY_NAMES + BENCHMARK_NAMES, default=STRATEGY_NAMES + BENCHMARK_NAMES
+    )
     use_regime = st.toggle(
         "Add regime-aware versions",
         key="use_regime",
@@ -220,30 +264,106 @@ with st.sidebar:
     st.divider()
     st.caption(DISCLAIMER)
 
-if len(assets) < 2:
-    st.info("Pick at least two assets.")
-    st.stop()
-if max_weight * len(assets) < 1:
+end = None if period == LATEST else date.fromisoformat(D["end"])
+day = date.today() if end is None else None
+loaded = tuple(combine_tickers([requested], ["SPY", "AGG"]))  # benchmarks always available
+try:
+    data = load_data(loaded, start, end, lookback, day)
+    rf = load_rf(start, end, day)
+except DataUnavailable, ValueError:
     st.error(
-        f"A {pct(max_weight)} cap cannot hold {len(assets)} assets fully invested. Raise the cap."
+        "Yahoo Finance didn't respond just now. This is usually a temporary limit on how often "
+        "prices can be downloaded; nothing is wrong with your selection. Please try again in a "
+        "minute."
     )
-    st.stop()
-if start >= end:
-    st.error("Start must be before end.")
+    if st.button("Retry", type="primary", key="retry"):
+        st.cache_data.clear()
+        st.rerun()
     st.stop()
 
-tickers = tuple(assets)
-prices = load_prices(tickers, start, end)
+bad = {t: why for t, why in data.invalid.items() if t in requested or t in ("SPY", "AGG")}
+if bad:
+    st.warning(
+        "Couldn't load "
+        + "; ".join(f"**{t}** ({why.lower()})" for t, why in bad.items())
+        + ". Check the symbol on finance.yahoo.com. Some exchanges, such as Abu Dhabi (ADX), "
+        "are not covered by Yahoo Finance."
+    )
+universe = [t for t in requested if t in data.prices.columns]
+if len(universe) < 2:
+    st.info("Pick at least two assets with data (quick picks or typed tickers).")
+    st.stop()
+if max_weight * len(universe) < 1:
+    st.error(
+        f"A {pct(max_weight)} cap cannot hold {len(universe)} assets fully invested. Raise the cap."
+    )
+    st.stop()
+
+tickers = tuple(universe)
+periods = data.periods_per_year
+prices = data.prices[universe]
 returns = to_returns(prices)
-rf = load_rf(start, end)
-groups = {
-    GROUP_LABELS.get(g, g.replace("_", " ").capitalize()): [t for t in ts if t in assets]
-    for g, ts in CFG["groups"].items()
-}
-groups = {g: ts for g, ts in groups.items() if ts}
+all_returns = to_returns(data.prices)
+groups = asset_groups(universe, CFG["groups"], GROUP_LABELS)
+st.markdown(
+    f"**Data as of {data.price_as_of:%d %b %Y}** (latest price) · loaded {data.loaded_at} · "
+    f"{'latest data' if end is None else 'fixed sample used in the README'}"
+)
 st.caption(
     f"Sample: **{prices.index[0]:%d %b %Y} – {prices.index[-1]:%d %b %Y}** "
-    f"({len(returns):,} trading days). Every result depends on this period."
+    f"({len(returns):,} observations, {periods} a year). Every result depends on this period."
+)
+
+
+def render_data_notes(history: pd.DataFrame) -> None:
+    shown = history.loc[[t for t in history.index if t in universe or t in ("SPY", "AGG")]]
+    table = pd.DataFrame(
+        {
+            "Name": [NAMES.get(t, "") for t in shown.index],
+            "First date": shown["first_date"].dt.strftime("%d %b %Y"),
+            "Trading days": shown["observations"].map("{:,}".format),
+            "Currency": shown["currency"],
+            "Converted to USD with": shown["conversion"],
+            "Trades on": shown["trading_days"],
+        },
+        index=shown.index,
+    )
+    st.table(table)
+
+
+short = data.history[data.history["too_short"] & data.history.index.isin(universe)]
+with st.expander(
+    "Data notes: start dates, currencies and trading calendars",
+    expanded=bool(data.mixed_calendars or len(short)),
+):
+    render_data_notes(data.history)
+    if data.mixed_calendars:
+        sun_thu = [t for t in data.history.index if "Sun" in data.history.loc[t, "trading_days"]]
+        st.info(
+            f"**Different trading calendars.** {', '.join(sun_thu)} trade Sunday to Thursday, "
+            "while US-listed assets trade Monday to Friday. The analysis uses only the "
+            f"{data.alignment['kept']:,} dates on which every selected market traded (about "
+            f"{periods} a year), so some returns span more than one day; figures are annualised "
+            f"with {periods} periods a year instead of 252."
+        )
+    for t, row in short.iterrows():
+        st.warning(
+            f"**{t}** has only {row['observations']:,} trading days of history (from "
+            f"{row['first_date']:%d %b %Y}), less than the {lookback}-observation estimation "
+            "window plus a month. Strategies that use it start late and its estimates are noisy."
+        )
+    setters = list(data.history.index[data.history["sets_start"]])
+    st.caption(
+        f"The common sample starts on {prices.index[0]:%d %b %Y}, when the most recent asset "
+        f"({', '.join(setters)}) begins."
+    )
+
+enough_history = len(returns) > lookback + 21
+SHORT_SAMPLE = (
+    f"The common sample has only {len(returns):,} observations, not enough for a "
+    f"{lookback}-observation estimation window plus a month of results. It is limited by "
+    f"{', '.join(data.history.index[data.history['sets_start']])}: remove it, add an earlier start "
+    "date, or choose a shorter estimation window in the sidebar."
 )
 
 tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
@@ -253,11 +373,14 @@ tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
 with tab_assets:
     st.subheader("Risk and return by asset")
     show_metrics_table(
-        summary_table(returns, rf=rf, level=D["var_level"]).sort_values("sharpe", ascending=False),
+        summary_table(returns, rf=rf, level=D["var_level"], periods_per_year=periods).sort_values(
+            "sharpe", ascending=False
+        ),
         D["var_level"],
     )
     st.caption(
-        f"Full sample above. Annualised over 252 days. VaR and expected shortfall: 1-day, "
+        f"Full sample above. Annualised over {periods} observations a year. VaR and expected "
+        "shortfall: one observation (usually 1 day), "
         f"{D['var_level']:.0%} confidence, shown as positive losses."
     )
 
@@ -270,7 +393,7 @@ with tab_frontier:
     st.caption(
         f"Every portfolio here is long-only with at most **{pct(max_weight)}** per asset (sidebar)."
     )
-    mu, cov = returns.mean() * 252, returns.cov() * 252
+    mu, cov = returns.mean() * periods, returns.cov() * periods
     rf_annual = float(
         (1 + rf.loc[returns.index[0] :]).prod() ** (252 / len(rf.loc[returns.index[0] :])) - 1
     )
@@ -278,7 +401,7 @@ with tab_frontier:
         "Min variance": min_variance(cov, max_weight),
         "Max Sharpe": max_sharpe(mu, cov, rf_annual, max_weight),
         "Risk parity": risk_parity(cov, max_weight),
-        "Equal weight": pd.Series(1 / len(assets), index=assets),
+        "Equal weight": pd.Series(1 / len(universe), index=universe),
     }
     points = {}
     for name, w in portfolios.items():
@@ -292,11 +415,15 @@ with tab_frontier:
 with tab_backtest:
     if not names:
         st.info("Pick at least one strategy in the sidebar.")
+    elif not enough_history:
+        st.warning(SHORT_SAMPLE)
     else:
         results = run_backtests(
             tickers,
+            loaded,
             start,
             end,
+            day,
             tuple(names),
             max_weight,
             cost_bps,
@@ -304,21 +431,21 @@ with tab_backtest:
             threshold if use_regime else None,
         )
         strat_returns = pd.DataFrame({n: r.returns for n, r in results.items()})
-        table = summary_table(strat_returns, rf=rf, level=D["var_level"])
+        table = summary_table(strat_returns, rf=rf, level=D["var_level"], periods_per_year=periods)
         table["annual_turnover"] = pd.Series(
             {n: r.turnover.iloc[1:].mean() * 12 for n, r in results.items()}
         )
         first_day = next(iter(results.values())).equity.index[0]
         st.subheader("Strategies after costs")
         st.caption(
-            f"Monthly rebalancing on a trailing {lookback}-day window; new weights apply the next "
-            f"day; {cost_bps:g} bps per unit of turnover."
+            f"Monthly rebalancing on a trailing {lookback}-observation window; new weights apply "
+            f"from the next observation; {cost_bps:g} bps per unit of turnover."
         )
         show_metrics_table(table.sort_values("sharpe", ascending=False), D["var_level"])
         st.caption(
             f"**Backtest period: {first_day:%d %b %Y} – {prices.index[-1]:%d %b %Y}.** Each "
-            f"strategy needs {lookback} trading days of history before its first rebalance, so the "
-            f"backtest starts {lookback} days after the data does. Figures (even for SPY) "
+            f"strategy needs {lookback} observations of history before its first rebalance, so the "
+            f"backtest starts {lookback} observations after the data does. Figures (even for SPY) "
             "therefore differ from the Assets tab, which uses the full sample."
         )
         st.caption(
@@ -344,11 +471,15 @@ with tab_mc:
     st.subheader("Monte Carlo: where could today's weights go?")
     if not names:
         st.info("Pick at least one strategy in the sidebar.")
+    elif not enough_history:
+        st.warning(SHORT_SAMPLE)
     else:
         results = run_backtests(
             tickers,
+            loaded,
             start,
             end,
+            day,
             tuple(names),
             max_weight,
             cost_bps,
@@ -380,16 +511,16 @@ with tab_mc:
         weights = results[mc_strategy].weights.iloc[-1]
         weights = weights[weights > 0]
         paths = simulate_paths(
-            returns,
+            all_returns,
             weights,
-            252 * years,
+            periods * years,
             n_paths,
             method=method,
             seed=seed,
             block_size=MC["block_size"],
         )
         if real:
-            paths = to_real(paths, MC["inflation"])
+            paths = to_real(paths, MC["inflation"], periods_per_year=periods)
         stats = terminal_stats(paths)
         st.markdown(f"**Over {years} years, in {units}**")
         m1, m2, m3, m4, m5 = st.columns(5)
@@ -423,7 +554,7 @@ with tab_mc:
 
 with tab_regime:
     st.subheader("Will next month be stressed?")
-    regime = load_regime(end)
+    regime = load_regime(end, day)
     p = regime["p_stressed"].dropna()
     folds, overall = regime["report"]["folds"], regime["report"]["overall"]
     model_scores, base_rate = overall.loc["model"], overall.loc["model", "stressed_share"]
@@ -561,9 +692,9 @@ with tab_agent:
             "root. On Streamlit Community Cloud, add it under *App settings → Secrets*."
         )
     else:
-        settings_key = (tickers, start, end, max_weight, cost_bps, lookback)
+        settings_key = (tickers, loaded, start, end, day, max_weight, cost_bps, lookback)
         if st.session_state.get("analyst_key") != settings_key:
-            regime_data = load_regime(end)
+            regime_data = load_regime(end, day)
             ctx = AnalystContext(
                 prices=prices,
                 rf=rf,
@@ -575,6 +706,7 @@ with tab_agent:
                     "max_weight": max_weight,
                     "cost_bps": cost_bps,
                     "lookback": lookback,
+                    "periods_per_year": periods,
                     "rebalance": D["rebalance"],
                     "var_level": D["var_level"],
                     "regime": R,

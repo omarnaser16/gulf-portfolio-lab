@@ -19,32 +19,60 @@ from test_agent import FakeClient, response, text, tool_use
 APP = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
 
 
+SUN_THU = (".SR", ".QA", ".KW")  # Saudi, Qatari and Kuwaiti markets trade Sunday-Thursday
+FAKE_CURRENCY = {".SR": "SAR", ".QA": "QAR", ".KW": "KWF", ".AE": "AED"}
+FAKE_TODAY = pd.Timestamp("2026-10-22")
+
+
 def synthetic_download(tickers, start=None, end=None, **kwargs) -> pd.DataFrame:
-    """yfinance-shaped random walks for any ticker; reproducible per ticker name."""
+    """yfinance-shaped random walks for any ticker; reproducible per ticker name.
+
+    Tickers starting with NOPE have no data (like a wrong symbol). GCC suffixes trade Sun-Thu.
+    """
     if isinstance(tickers, str):
         tickers = tickers.split()
-    idx = pd.bdate_range(start, pd.Timestamp(end) - pd.Timedelta(days=1))
+    last = pd.Timestamp(end) - pd.Timedelta(days=1) if end is not None else FAKE_TODAY
     close = {}
     for t in tickers:
-        rng = np.random.default_rng(zlib.crc32(t.encode()))
-        if t == "^IRX":
-            close[t] = np.full(len(idx), 3.0)
-        elif t == "^VIX":
-            close[t] = (
-                18 + 6 * np.abs(np.sin(np.arange(len(idx)) / 150)) + rng.normal(0, 1, len(idx))
+        if t.startswith("NOPE"):
+            continue
+        if t.startswith("NEW"):  # a recent listing: only ~100 trading days of history
+            idx = pd.bdate_range(last - pd.Timedelta(days=140), last)
+        elif t.endswith(SUN_THU):
+            idx = pd.DatetimeIndex(
+                [d for d in pd.date_range(start, last) if d.day_of_week in (6, 0, 1, 2, 3)]
             )
         else:
+            idx = pd.bdate_range(start, last)
+        rng = np.random.default_rng(zlib.crc32(t.encode()))
+        if t == "^IRX":
+            values = np.full(len(idx), 3.0)
+        elif t == "^VIX":
+            values = 18 + 6 * np.abs(np.sin(np.arange(len(idx)) / 150)) + rng.normal(0, 1, len(idx))
+        elif t.endswith("=X"):
+            values = np.full(len(idx), 0.3082)
+        else:
             vol = 0.008 + 0.012 * (np.sin(np.arange(len(idx)) / 200) > 0.8)  # occasional stress
-            close[t] = 100 * np.cumprod(1 + rng.normal(0.0003, vol))
-    frame = pd.DataFrame(close, index=idx)
+            values = 100 * np.cumprod(1 + rng.normal(0.0003, vol))
+        close[t] = pd.Series(values, index=idx)
+    if not close:
+        return pd.DataFrame()
+    frame = pd.DataFrame(close)
     out = pd.concat({"Close": frame, "Open": frame}, axis=1, names=["Price", "Ticker"])
     out.index.name = "Date"
     return out
 
 
+class FakeTicker:
+    def __init__(self, symbol: str) -> None:
+        suffix = "." + symbol.rsplit(".", 1)[-1]
+        self.fast_info = {"currency": FAKE_CURRENCY.get(suffix, "USD")}
+
+
 @pytest.fixture
 def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
     monkeypatch.setattr(yf, "download", synthetic_download)
+    monkeypatch.setattr(yf, "Ticker", FakeTicker)
     monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(agent, "has_credentials", lambda: False)  # independent of a local .env
     st.cache_data.clear()
@@ -63,8 +91,8 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Regime",
         "Analyst",
     ]
-    # metric tables (assets, strategies, regime folds) are st.table; frontier weights a dataframe
-    assert len(app.table) == 3 and len(app.dataframe) == 1
+    # static tables: data notes, assets, strategies, regime folds; frontier weights a dataframe
+    assert len(app.table) == 4 and len(app.dataframe) == 1
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -118,7 +146,7 @@ def test_metric_tables_are_readable(app: AppTest) -> None:
 def test_benchmark_label_and_backtest_caption(app: AppTest) -> None:
     _, backtest_table = _metric_tables(app)
     assert "60/40 (SPY/AGG)" in backtest_table.index
-    assert any("starts 252 days after the data" in c.value for c in app.caption)
+    assert any("starts 252 observations after the data" in c.value for c in app.caption)
 
 
 def test_weights_chart_uses_readable_group_names(app: AppTest) -> None:
@@ -260,6 +288,7 @@ def analyst_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[AppTes
         ]
     )
     monkeypatch.setattr(yf, "download", synthetic_download)
+    monkeypatch.setattr(yf, "Ticker", FakeTicker)
     monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(agent, "has_credentials", lambda: True)
     monkeypatch.setattr(agent, "make_client", lambda: client)
@@ -291,3 +320,55 @@ def test_analyst_follow_up_continues_the_conversation(analyst_app) -> None:
     assert any("risk parity" in m.value for m in at.markdown)
     roles = [m["role"] for m in client.requests[-1]["messages"]]
     assert roles[-1] == "user" and roles.count("user") == 3  # profile, tool results, follow-up
+
+
+# --------------------------------------------------------------------- any asset, data period
+
+
+def test_latest_data_is_the_default_with_as_of_line(app: AppTest) -> None:
+    assert app.radio(key="data_period").value == "Latest data"
+    assert any("Data as of 22 Oct 2026" in m.value for m in app.markdown)
+    app.radio(key="data_period").set_value(app.radio(key="data_period").options[1]).run()
+    assert not app.exception, app.exception
+    assert any("Data as of 30 Sep 2026" in m.value and "README" in m.value for m in app.markdown)
+
+
+def test_invalid_typed_ticker_gets_a_friendly_warning(app: AppTest) -> None:
+    app.text_input(key="custom_tickers").set_value("NOPE.AE").run()
+    assert not app.exception, app.exception
+    warning = " ".join(w.value for w in app.warning)
+    assert "NOPE.AE" in warning and "no data on yahoo finance" in warning
+    assert "finance.yahoo.com" in warning
+
+
+def test_gcc_preset_converts_and_aligns_calendars(app: AppTest) -> None:
+    app.multiselect(key="presets").set_value(["GCC stocks"]).run()
+    assert not app.exception, app.exception
+    info = " ".join(i.value for i in app.info)
+    assert "Sunday to Thursday" in info and "periods a year instead of 252" in info
+    notes = next(t.value for t in app.table if "Converted to USD with" in t.value.columns)
+    assert notes.loc["2222.SR", "Converted to USD with"] == "SAR peg 3.75 per USD"
+    assert notes.loc["NBK.KW", "Converted to USD with"].startswith("KWD market rate")
+    assert notes.loc["2222.SR", "Name"] == "Saudi Aramco"
+
+
+def test_short_history_warning(app: AppTest) -> None:
+    app.text_input(key="custom_tickers").set_value("NEWCO").run()
+    assert not app.exception, app.exception
+    assert any("NEWCO" in w.value and "trading days of history" in w.value for w in app.warning)
+    # the common sample is now too short for a backtest: explained, not a crash
+    assert any("It is limited by NEWCO" in w.value for w in app.warning)
+
+
+def test_blocked_download_offers_retry(monkeypatch, tmp_path) -> None:
+    def blocked(*args, **kwargs):
+        raise gpl.data.DataUnavailable("rate limited")
+
+    monkeypatch.setattr(gpl.data, "download_series", blocked)
+    monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(agent, "has_credentials", lambda: False)
+    st.cache_data.clear()
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    assert any("Yahoo Finance didn't respond" in e.value for e in at.error)
+    assert at.button(key="retry").label == "Retry"

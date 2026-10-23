@@ -55,3 +55,17 @@ agent:
   effort: medium                   # low | medium | high
   max_tool_rounds: 8               # safety limit on tool round-trips per question
   price_per_mtok: { input: 0.10, output: 0.50 }   # for the cost estimate shown in the app
+
+# Dashboard quick picks (any Yahoo Finance ticker can also be typed in).
+# Abu Dhabi (ADX) listings such as FAB are not available on Yahoo Finance.
+presets:
+  Default ETFs: [KSA, UAE, QAT, SPY, EFA, EEM, AGG, TLT, GLD]
+  GCC stocks: ["2222.SR", "1120.SR", "EMAAR.AE", "EMIRATESNBD.AE", "QNBK.QA", "NBK.KW"]
+  Global ETFs: [SPY, EFA, EEM, AGG, TLT, GLD]
+ticker_names:
+  "2222.SR": Saudi Aramco
+  "1120.SR": Al Rajhi Bank
+  "EMAAR.AE": Emaar Properties
+  "EMIRATESNBD.AE": Emirates NBD
+  "QNBK.QA": Qatar National Bank
+  "NBK.KW": National Bank of Kuwait
