@@ -323,3 +323,33 @@ def risk_contribution_chart(
     fig.update_xaxes(tickformat=PCT, gridcolor=GRID)
     fig.update_yaxes(tickformat="")
     return fig
+
+
+def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure:
+    """Donut of portfolio weights; beyond seven slices the smallest are combined as 'Others'."""
+    w = weights[weights > 0].sort_values(ascending=False)
+    if len(w) > len(SERIES_COLORS):
+        keep = len(SERIES_COLORS) - 1
+        w = pd.concat(
+            [w.iloc[:keep], pd.Series({f"Others ({len(w) - keep})": w.iloc[keep:].sum()})]
+        )
+    fig = go.Figure(
+        go.Pie(
+            labels=list(w.index),
+            values=w.to_numpy(),
+            hole=0.55,
+            sort=False,
+            marker={"colors": SERIES_COLORS[: len(w)], "line": {"color": SURFACE, "width": 2}},
+            texttemplate="%{label}<br>%{percent:.2%}",
+            hovertemplate="%{label}: %{percent:.2%}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
+        paper_bgcolor=SURFACE,
+        font={"color": TEXT_SECONDARY, "size": 12},
+        showlegend=False,
+        margin={"l": 20, "r": 20, "t": 60, "b": 20},
+        height=360,
+    )
+    return fig

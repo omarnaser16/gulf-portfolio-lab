@@ -14,7 +14,8 @@ import anthropic
 import numpy as np
 import pandas as pd
 import streamlit as st
-from inputs import DEFAULT_HOLDINGS, asset_groups, combine_tickers, parse_holdings, parse_tickers
+import workstation as ws
+from inputs import asset_groups, combine_tickers, parse_tickers
 
 from formatting import pct, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
@@ -27,8 +28,10 @@ from gpl.data import (
     clean_prices,
     get_prices,
     get_risk_free,
+    latest_quote,
     load_assets,
     load_universe,
+    search_securities,
     to_returns,
 )
 from gpl.metrics import drawdown_series, summary_table
@@ -121,6 +124,17 @@ def load_data(
 @st.cache_data(show_spinner="Loading the risk-free rate…", ttl=CACHE_TTL)
 def load_rf(start: date, end: date | None, day: date | None) -> pd.Series:
     return get_risk_free(start, end)
+
+
+@st.cache_data(show_spinner=False, ttl=900)
+def get_quote(ticker: str):
+    """Latest price and market time (refreshed every 15 minutes)."""
+    return latest_quote(ticker)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def find_securities(term: str) -> list[dict]:
+    return search_securities(term)
 
 
 @st.cache_data(show_spinner="Fitting the regime model month by month…", ttl=CACHE_TTL)
@@ -289,11 +303,8 @@ with st.sidebar:
 
 end = None if period == LATEST else date.fromisoformat(D["end"])
 day = date.today() if end is None else None
-MODES = {"Weights (%)": "weights", "Amounts (USD)": "amounts"}
-my_weights, holding_problems, holding_note = parse_holdings(
-    st.session_state.get("holdings", DEFAULT_HOLDINGS),
-    MODES[st.session_state.get("holdings_mode", "Weights (%)")],
-)
+ws.init_state(CFG["groups"])
+my_weights, holding_problems, holding_note = ws.current_weights()
 # Benchmarks and the user's holdings are always loaded, on the same dates as the universe.
 loaded = tuple(combine_tickers([requested, list(my_weights)], ["SPY", "AGG"]))
 try:
@@ -339,7 +350,7 @@ returns = to_returns(prices)
 all_returns = to_returns(data.prices)
 groups = asset_groups(universe, CFG["groups"], GROUP_LABELS)
 missing_holdings = [t for t in my_weights if t not in data.prices.columns]
-portfolio_ok = bool(my_weights) and not missing_holdings and not holding_problems
+portfolio_ok = bool(my_weights) and not missing_holdings
 my_key = tuple(sorted(my_weights.items()))
 st.markdown(
     f"**Data as of {data.price_as_of:%d %b %Y}** (latest price) · loaded {data.loaded_at} · "
@@ -404,8 +415,8 @@ SHORT_SAMPLE = (
     "date, or choose a shorter estimation window in the sidebar."
 )
 
-tab_assets, tab_frontier, tab_backtest, tab_mine, tab_mc, tab_regime, tab_agent = st.tabs(
-    ["Assets", "Frontier", "Backtest", "My portfolio", "Monte Carlo", "Regime", "Analyst"]
+tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
+    ["Portfolio", "Assets", "Frontier", "Backtest", "Monte Carlo", "Regime", "Analyst"]
 )
 
 with tab_assets:
@@ -507,84 +518,109 @@ with tab_backtest:
 
 with tab_mine:
     st.subheader("My portfolio")
-    c1, c2 = st.columns([3, 1])
-    c2.radio("Values are", list(MODES), key="holdings_mode")
-    c1.text_area(
-        "Holdings: one per line, ticker then value",
-        DEFAULT_HOLDINGS,
-        key="holdings",
-        height=150,
-        help="Any Yahoo Finance ticker, e.g. 'SPY 40', '2222.SR 30', 'GLD 30'. Weights are "
-        "scaled to 100% if they don't add up; amounts are turned into weights.",
+    sec_hold, sec_screen, sec_analyse, sec_opt = st.tabs(
+        ["Holdings", "Screen", "Analyse & backtest", "Optimise"]
     )
-    for problem in holding_problems:
-        st.error(problem)
-    if holding_note:
-        st.caption(holding_note)
-    if missing_holdings:
-        st.error(
-            "No price data for " + ", ".join(missing_holdings) + ". Fix or remove these "
-            "holdings (see the warning at the top of the page)."
-        )
-    if not my_weights:
-        st.info("Enter at least one holding.")
-    elif portfolio_ok and not enough_history:
-        st.warning(SHORT_SAMPLE)
-    elif portfolio_ok:
-        w = pd.Series(my_weights)
-        cov = all_returns[w.index].cov() * periods
-        rc = risk_contributions(w, cov)
-        st.markdown("**Holdings: share of money vs share of risk**")
-        st.table(
-            pd.DataFrame(
-                {
-                    "Name": [NAMES.get(t, "") for t in w.index],
-                    "Weight": w.map(pct),
-                    "Share of risk": rc.map(pct),
-                    "Converted to USD with": [data.history.loc[t, "conversion"] for t in w.index],
-                },
-                index=w.index,
+    holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
+
+    with sec_hold:
+        ws.render_holdings(find_securities, get_quote, CFG["groups"], NAMES)
+        for problem in holding_problems:
+            st.warning(problem)
+        if holding_note:
+            st.caption(holding_note)
+        if missing_holdings:
+            st.error(
+                "No price history for " + ", ".join(missing_holdings) + ". Remove these "
+                "holdings or check the symbols (see the warning at the top of the page)."
             )
-        )
-        st.plotly_chart(risk_contribution_chart(w, rc), width="stretch")
+        if my_weights:
+            ws.render_allocation(pd.Series(my_weights), ws.groups_of_holdings())
         st.caption(
-            "Share of risk is each holding's contribution to the portfolio's volatility (full "
-            "sample). A holding whose share of risk is much larger than its weight dominates "
-            "how the portfolio moves."
+            "Prices are the latest quotes from Yahoo Finance (refreshed every 15 minutes), in "
+            "each security's currency and in USD. The analysis uses daily history in USD."
         )
 
-        mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
-        compare_names = STRATEGY_NAMES + [SIXTY_FORTY]
-        others = run_backtests(
-            tickers,
-            loaded,
-            start,
-            end,
-            day,
-            tuple(compare_names),
-            max_weight,
-            cost_bps,
-            lookback,
-            None,
-        )
-        results_mine = {"My portfolio": mine, **others}
-        rets = pd.DataFrame({n: r.returns for n, r in results_mine.items()})
-        table = summary_table(rets, rf=rf, level=D["var_level"], periods_per_year=periods)
-        table["annual_turnover"] = pd.Series(
-            {n: r.turnover.iloc[1:].mean() * 12 for n, r in results_mine.items()}
-        )
-        st.markdown("**Compared with the strategies and 60/40, after costs**")
-        show_metrics_table(table, D["var_level"])
-        st.caption(
-            f"Your weights are rebalanced monthly back to target with {cost_bps:g} bps costs, on "
-            f"the same dates as the strategies ({mine.equity.index[0]:%d %b %Y} – "
-            f"{mine.equity.index[-1]:%d %b %Y}). The strategies choose from the assets in the "
-            "sidebar; your holdings can include others."
-        )
-        equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
-        st.plotly_chart(equity_chart(equity), width="stretch")
-        st.plotly_chart(drawdown_chart(drawdown_series(rets)), width="stretch")
-        st.caption("Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab.")
+    with sec_screen:
+        if not portfolio_ok:
+            st.info("Add holdings with price history on the Holdings tab.")
+        elif len(my_weights) < 2:
+            st.info("Add at least two holdings to compare them.")
+        else:
+            ws.render_screen(
+                ws.screen_table(all_returns, pd.Series(my_weights), rf, D["var_level"], periods),
+                holding_names,
+            )
+            st.caption(
+                f"Over the full common sample ({all_returns.index[0]:%d %b %Y} – "
+                f"{all_returns.index[-1]:%d %b %Y}), annualised with {periods} observations a year."
+            )
+
+    with sec_analyse:
+        if not portfolio_ok:
+            st.info("Add holdings with price history on the Holdings tab.")
+        elif not enough_history:
+            st.warning(SHORT_SAMPLE)
+        else:
+            w = pd.Series(my_weights)
+            cov = all_returns[w.index].cov() * periods
+            rc = risk_contributions(w, cov)
+            st.markdown("**Share of money vs share of risk**")
+            st.table(
+                pd.DataFrame(
+                    {
+                        "Name": [holding_names.get(t, "") for t in w.index],
+                        "Weight": w.map(pct),
+                        "Share of risk": rc.map(pct),
+                        "Converted to USD with": [
+                            data.history.loc[t, "conversion"] for t in w.index
+                        ],
+                    },
+                    index=w.index,
+                )
+            )
+            st.plotly_chart(risk_contribution_chart(w, rc), width="stretch")
+            st.caption(
+                "Share of risk is each holding's contribution to the portfolio's volatility (full "
+                "sample). A holding whose share of risk is much larger than its weight dominates "
+                "how the portfolio moves."
+            )
+            mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
+            others = run_backtests(
+                tickers,
+                loaded,
+                start,
+                end,
+                day,
+                tuple(STRATEGY_NAMES + [SIXTY_FORTY]),
+                max_weight,
+                cost_bps,
+                lookback,
+                None,
+            )
+            results_mine = {"My portfolio": mine, **others}
+            rets = pd.DataFrame({n: r.returns for n, r in results_mine.items()})
+            table = summary_table(rets, rf=rf, level=D["var_level"], periods_per_year=periods)
+            table["annual_turnover"] = pd.Series(
+                {n: r.turnover.iloc[1:].mean() * 12 for n, r in results_mine.items()}
+            )
+            st.markdown("**Backtest after costs, compared with the strategies and 60/40**")
+            show_metrics_table(table, D["var_level"])
+            st.caption(
+                f"Your weights are rebalanced monthly back to target with {cost_bps:g} bps costs, "
+                f"on the same dates as the strategies ({mine.equity.index[0]:%d %b %Y} – "
+                f"{mine.equity.index[-1]:%d %b %Y}). The strategies choose from the assets in the "
+                "sidebar; your holdings can include others."
+            )
+            equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
+            st.plotly_chart(equity_chart(equity), width="stretch")
+            st.plotly_chart(drawdown_chart(drawdown_series(rets)), width="stretch")
+            st.caption(
+                "Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab."
+            )
+
+    with sec_opt:
+        st.info("AI-driven optimisation is coming next.")
 
 with tab_mc:
     st.subheader("Monte Carlo: where could today's weights go?")

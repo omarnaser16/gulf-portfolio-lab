@@ -6,6 +6,7 @@ import pytest
 
 from gpl.plots import (
     SERIES_COLORS,
+    allocation_chart,
     drawdown_chart,
     equity_chart,
     fan_chart,
@@ -97,3 +98,14 @@ def test_risk_contribution_chart_pairs_weight_and_risk() -> None:
     assert [t.name for t in fig.data] == ["Weight", "Share of risk"]
     assert list(fig.data[1].y) == ["AGG", "SPY"]  # sorted by risk share
     np.testing.assert_allclose(fig.data[0].x, [0.4, 0.6])
+
+
+def test_allocation_chart_groups_small_slices() -> None:
+    w = pd.Series(
+        {f"T{i}": v for i, v in enumerate([0.3, 0.2, 0.1, 0.1, 0.1, 0.05, 0.05, 0.04, 0.03, 0.03])}
+    )
+    fig = allocation_chart(w)
+    labels = list(fig.data[0].labels)
+    assert len(labels) == 8 and labels[-1] == "Others (3)"
+    assert fig.data[0].values[-1] == pytest.approx(0.10)
+    assert list(allocation_chart(pd.Series({"A": 0.6, "B": 0.4})).data[0].labels) == ["A", "B"]

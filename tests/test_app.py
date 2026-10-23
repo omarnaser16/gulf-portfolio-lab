@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 import zlib
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from gpl.agent import analyst as agent
 from test_agent import FakeClient, response, text, tool_use
 
 APP = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
+sys.path.insert(0, str(Path(APP).parent))  # the app's own modules (workstation, inputs)
 
 
 SUN_THU = (".SR", ".QA", ".KW")  # Saudi, Qatari and Kuwaiti markets trade Sunday-Thursday
@@ -83,18 +85,19 @@ def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
 
 def test_app_renders_every_tab(app: AppTest) -> None:
     assert not app.exception, app.exception
-    assert [t.label for t in app.tabs] == [
+    sections = {"Holdings", "Screen", "Analyse & backtest", "Optimise"}  # inside Portfolio
+    assert [t.label for t in app.tabs if t.label not in sections] == [
+        "Portfolio",
         "Assets",
         "Frontier",
         "Backtest",
-        "My portfolio",
         "Monte Carlo",
         "Regime",
         "Analyst",
     ]
-    # static tables: data notes, assets, strategies, my holdings, my comparison, regime folds;
-    # frontier weights a dataframe
-    assert len(app.table) == 6 and len(app.dataframe) == 1
+    # static tables: data notes, screen, my holdings, my comparison, assets, strategies,
+    # regime folds; dataframes: the editable holdings table and the frontier weights
+    assert len(app.table) == 7 and len(app.dataframe) == 2
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -132,7 +135,11 @@ def test_frontier_tab_follows_the_sidebar_cap(app: AppTest, cap: float) -> None:
 
 def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
     """Assets and Backtest-tab metric tables (static st.table, so headers can wrap)."""
-    tables = [t.value for t in app.table if "Sharpe" in t.value.columns]
+    tables = [
+        t.value
+        for t in app.table
+        if "Sharpe" in t.value.columns and "Correlation to rest" not in t.value.columns
+    ]
     return [t for t in tables if "My portfolio" not in t.index][:2]
 
 
@@ -392,9 +399,23 @@ def test_my_portfolio_default_compares_with_strategies(app: AppTest) -> None:
     assert holdings.loc["SPY", "Weight"] == "50.00%"
 
 
-def test_my_portfolio_amounts_outside_universe_and_mixed_calendar(app: AppTest) -> None:
-    app.radio(key="holdings_mode").set_value("Amounts (USD)").run()
-    app.text_area(key="holdings").set_value("SPY 6,000\n2222.SR 4000").run()
+def _set_holdings(app: AppTest, rows: list[dict], mode: str = "Weight (%)") -> None:
+    app.session_state["ws_rows"] = rows
+    app.session_state["ws_mode"] = mode
+    app.session_state["ws_mode_prev"] = mode
+    app.session_state["ws_version"] = app.session_state["ws_version"] + 1
+    app.run()
+
+
+def test_holdings_in_usd_outside_universe_and_mixed_calendar(app: AppTest) -> None:
+    _set_holdings(
+        app,
+        [
+            {"ticker": "SPY", "group": "Global equity", "value": 6000.0},
+            {"ticker": "2222.SR", "group": "GCC", "value": 4000.0},
+        ],
+        mode="USD amount",
+    )
     assert not app.exception, app.exception
     holdings = next(t.value for t in app.table if "Share of risk" in t.value.columns)
     assert holdings.loc["SPY", "Weight"] == "60.00%"
@@ -403,14 +424,67 @@ def test_my_portfolio_amounts_outside_universe_and_mixed_calendar(app: AppTest) 
     assert "My portfolio" in _my_comparison(app).index
 
 
-def test_my_portfolio_reports_bad_lines_and_unknown_tickers(app: AppTest) -> None:
-    app.text_area(key="holdings").set_value("SPY 60\nnot a holding\nNOPE1 40").run()
+def test_holdings_report_bad_values_and_unknown_tickers(app: AppTest) -> None:
+    _set_holdings(
+        app,
+        [
+            {"ticker": "SPY", "group": "Global equity", "value": 60.0},
+            {"ticker": "AGG", "group": "Bonds", "value": 0.0},
+            {"ticker": "NOPE1", "group": "Other", "value": 40.0},
+        ],
+    )
     assert not app.exception, app.exception
-    errors = " ".join(e.value for e in app.error)
-    assert "Line 2" in errors and "No price data for NOPE1" in errors
+    assert any("AGG: enter a positive weight" in w.value for w in app.warning)
+    assert any("No price history for NOPE1" in e.value for e in app.error)
     assert not any(
         "My portfolio" in t.value.index for t in app.table if "Sharpe" in t.value.columns
     )
+
+
+def test_switching_to_usd_keeps_the_weights(app: AppTest) -> None:
+    app.radio(key="ws_mode").set_value("USD amount").run()
+    assert not app.exception, app.exception
+    values = {r["ticker"]: r["value"] for r in app.session_state["ws_rows"]}
+    assert values == {"SPY": 5000.0, "AGG": 3000.0, "GLD": 1000.0, "KSA": 1000.0}
+
+
+def test_import_list_replaces_holdings(app: AppTest) -> None:
+    app.text_area(key="ws_import").set_value("SPY 70\nTLT 30")
+    app.button(key="ws_import_go").click().run()
+    assert not app.exception, app.exception
+    rows = app.session_state["ws_rows"]
+    assert [(r["ticker"], r["value"]) for r in rows] == [("SPY", 70.0), ("TLT", 30.0)]
+
+
+def test_picking_a_search_result_adds_it(monkeypatch, tmp_path) -> None:
+    import workstation  # noqa: PLC0415 - the app's module, importable once the path is set
+
+    monkeypatch.setattr(yf, "download", synthetic_download)
+    monkeypatch.setattr(yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(agent, "has_credentials", lambda: False)
+    monkeypatch.setattr(workstation, "st_searchbox", lambda *a, **k: "2222.SR")
+    st.cache_data.clear()
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    assert not at.exception, at.exception
+    rows = {r["ticker"]: r for r in at.session_state["ws_rows"]}
+    assert rows["2222.SR"]["group"] == "GCC" and rows["2222.SR"]["value"] == 10.0
+    assert len(rows) == 5  # added once, not again on the rerun
+
+
+def test_screen_ranks_holdings(app: AppTest) -> None:
+    screen = next(t.value for t in app.table if "Correlation to rest" in t.value.columns)
+    assert set(screen.index) == {"SPY", "AGG", "GLD", "KSA"} and list(screen["Rank"]) == [
+        1,
+        2,
+        3,
+        4,
+    ]
+    app.selectbox(key="ws_rank_by").set_value("Volatility (ann.)").run()
+    screen = next(t.value for t in app.table if "Correlation to rest" in t.value.columns)
+    vols = [float(v.rstrip("%")) for v in screen["Volatility (ann.)"]]
+    assert vols == sorted(vols)
 
 
 def test_monte_carlo_offers_my_portfolio(app: AppTest) -> None:

@@ -632,7 +632,7 @@ def latest_quote(ticker: str) -> Quote | None:
     stamp = info.get("regularMarketTime")
     zone = info.get("exchangeTimezoneName") or "UTC"
     as_of = (
-        datetime.fromtimestamp(stamp, UTC).astimezone(ZoneInfo(zone)).strftime("%d %b %Y %H:%M %Z")
+        datetime.fromtimestamp(stamp, UTC).astimezone(ZoneInfo(zone)).strftime("%d %b %H:%M %Z")
         if stamp
         else "unknown"
     )
