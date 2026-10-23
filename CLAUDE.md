@@ -73,6 +73,9 @@ streamlit run app/streamlit_app.py
 - **The LLM never calculates numbers.** Every figure in a memo comes from a tool result, and the memo
   says which tool produced it. The system prompt requires this and code flags any figure no tool
   returned.
+- **The LLM never chooses weights.** For optimisation it only transcribes the user's goals into a
+  spec (objective and limits, percentages as written) through a strict tool with no weights field;
+  the user confirms the spec before the optimiser runs.
 - API key in `.env` as `ANTHROPIC_API_KEY` (or Streamlit secrets when deployed); never committed.
   The model name lives in config, not in code.
 - Memos carry a "not investment advice" disclaimer, appended by code.
