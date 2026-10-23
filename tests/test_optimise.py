@@ -16,6 +16,8 @@ from gpl.optimise import (
     max_sharpe,
     min_variance,
     portfolio_performance,
+    risk_contributions,
+    risk_parity,
 )
 
 TICKERS = ["A", "B", "C"]
@@ -147,3 +149,45 @@ def test_efficient_frontier_more_return_costs_more_risk(mu3, cov_corr) -> None:
     assert (front["vol"].diff().dropna() >= -1e-8).all()
     # top point: best achievable return under the cap = 0.6 * 10% + 0.4 * 6%
     assert front["ret"].iloc[-1] == pytest.approx(0.6 * 0.10 + 0.4 * 0.06, abs=1e-6)
+
+
+# ---------------------------------------------------------------------- risk_contributions
+
+
+def test_risk_contributions_hand_values(cov3) -> None:
+    # w = (0.2, 0.4, 0.4); variance pieces w_i^2 * var_i = 0.0016, 0.0016, 0.0016 (equal!)
+    rc = risk_contributions(np.array([0.2, 0.4, 0.4]), cov3)
+    np.testing.assert_allclose(rc.to_numpy(), [1 / 3, 1 / 3, 1 / 3])
+    assert list(rc.index) == TICKERS
+
+
+def test_risk_contributions_equal_weight_is_not_equal_risk(cov3) -> None:
+    # Equal weights: pieces are 0.04, 0.01, 0.01 (/9) -> A carries 4/6 of the risk
+    rc = risk_contributions(np.full(3, 1 / 3), cov3)
+    np.testing.assert_allclose(rc.to_numpy(), [4 / 6, 1 / 6, 1 / 6])
+
+
+def test_risk_contributions_sum_to_one(cov_corr) -> None:
+    rc = risk_contributions(pd.Series([0.5, 0.3, 0.2], index=TICKERS), cov_corr)
+    assert rc.sum() == pytest.approx(1.0)
+
+
+# ----------------------------------------------------------------------------- risk_parity
+
+
+def test_risk_parity_uncorrelated_is_inverse_vol(cov3) -> None:
+    # 1/vol = 5, 10, 10 -> weights 0.2, 0.4, 0.4
+    w = risk_parity(cov3)
+    np.testing.assert_allclose(w.to_numpy(), [0.2, 0.4, 0.4], atol=1e-6)
+
+
+def test_risk_parity_equalises_risk_when_correlated(cov_corr) -> None:
+    w = risk_parity(cov_corr)
+    assert w.sum() == pytest.approx(1.0)
+    assert (w > 0).all()
+    np.testing.assert_allclose(risk_contributions(w, cov_corr).to_numpy(), 1 / 3, atol=1e-6)
+
+
+def test_risk_parity_gives_low_vol_asset_more_weight(cov_corr) -> None:
+    w = risk_parity(cov_corr)
+    assert w["C"] > w["B"] > w["A"]  # vols 5% < 15% < 20%

@@ -242,7 +242,10 @@ def risk_contributions(weights: Weights, cov: pd.DataFrame) -> pd.Series:
     pd.Series
         ``w_i * (cov @ w)_i / (w @ cov @ w)``, indexed by ticker; sums to 1.
     """
-    raise NotImplementedError
+    w = _as_array(weights, cov.index)
+    sigma = cov.to_numpy()
+    marginal = sigma @ w  # how much each asset adds to risk per unit of weight
+    return pd.Series(w * marginal / (w @ marginal), index=cov.index)
 
 
 def risk_parity(cov: pd.DataFrame) -> pd.Series:
@@ -259,4 +262,27 @@ def risk_parity(cov: pd.DataFrame) -> pd.Series:
         Weights indexed by ticker such that every asset's risk contribution is
         ``1 / n_assets``.
     """
-    raise NotImplementedError
+    sigma = cov.to_numpy()
+    n = len(cov)
+
+    # Convex formulation (Spinu 2013): minimise 0.5 * y'Sy - (1/n) * sum(log y), y > 0.
+    # At the optimum every y_i * (S y)_i = 1/n, i.e. equal risk contributions;
+    # rescaling y to sum to 1 keeps that property.
+    def objective(y: np.ndarray) -> float:
+        return 0.5 * y @ sigma @ y - np.log(y).sum() / n
+
+    def gradient(y: np.ndarray) -> np.ndarray:
+        return sigma @ y - 1 / (n * y)
+
+    y0 = 1 / np.sqrt(np.diag(sigma))  # inverse-vol start, already close
+    result = minimize(
+        objective,
+        x0=y0 / y0.sum(),
+        jac=gradient,
+        method="L-BFGS-B",
+        bounds=[(1e-10, None)] * n,
+        options={"ftol": 1e-15, "gtol": 1e-12, "maxiter": 10_000},
+    )
+    if not result.success:
+        raise ValueError(f"risk parity optimiser failed: {result.message}")
+    return pd.Series(result.x / result.x.sum(), index=cov.index)
