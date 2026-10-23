@@ -19,6 +19,8 @@ dependencies = [
     "plotly",
     "scikit-learn",
     "streamlit",
+    "anthropic",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]

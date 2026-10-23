@@ -47,3 +47,11 @@ montecarlo:
   method: block_bootstrap          # block_bootstrap | bootstrap | gbm
   block_size: 21                   # trading days per block (about a month)
   inflation: 0.025                 # fixed annual inflation for the "real terms" toggle
+
+# AI analyst (Week 3). The model ID lives here, not in code.
+agent:
+  model: claude-haiku-5-5          # cheap default; switch to a larger model for richer memos
+  max_tokens: 16000
+  effort: medium                   # low | medium | high
+  max_tool_rounds: 8               # safety limit on tool round-trips per question
+  price_per_mtok: { input: 0.10, output: 0.50 }   # for the cost estimate shown in the app

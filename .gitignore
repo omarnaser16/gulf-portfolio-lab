@@ -19,3 +19,6 @@ dist/
 # Data cache (keep the folder, ignore the contents)
 data/cache/*
 !data/cache/.gitkeep
+
+# Streamlit secrets (API key on Streamlit Community Cloud)
+.streamlit/secrets.toml
