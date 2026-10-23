@@ -206,6 +206,8 @@ def describe_spec(spec: OptimisationSpec) -> list[str]:
         "max_return": "Maximise expected return",
         "target_volatility": "Maximise return with volatility at most the cap",
         "target_return": "Minimise volatility with return at least the floor",
+        "risk_parity": "Equal risk contributions, or as close as the limits allow",
+        "max_diversification": "Maximise the diversification ratio",
     }
     lines = [names[spec.objective]]
     if spec.max_weight < 1:

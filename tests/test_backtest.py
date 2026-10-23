@@ -19,7 +19,7 @@ from gpl.backtest import (
     run_backtest,
     spec_strategy,
 )
-from gpl.optimise import OptimisationSpec
+from gpl.optimise import OptimisationSpec, optimise
 
 DATES = pd.bdate_range("2024-01-01", "2024-03-29")  # 65 business days
 
@@ -257,3 +257,20 @@ def test_spec_strategy_holds_fallback_until_limits_can_be_met(random_returns: pd
     assert strategy.infeasible_dates == [stormy.index[-1]]
     calm = strategy(random_returns.iloc[120:240])
     assert calm.to_dict() != held.to_dict()  # switches once the limits can be met
+
+
+def test_spec_strategy_with_ledoit_wolf_uses_only_the_window(random_returns: pd.DataFrame) -> None:
+    from gpl.optimise import ledoit_wolf_cov
+
+    spec = OptimisationSpec("min_variance", max_weight=0.6)
+    window = random_returns.iloc[:100]
+    got = spec_strategy(spec, cov_method="ledoit_wolf")(window)
+    cov, shrinkage = ledoit_wolf_cov(window, 252)
+    expected = optimise(window.mean() * 252, cov, spec).weights
+    pd.testing.assert_series_equal(got, expected)
+    assert 0 < shrinkage < 1
+    # the default (sample covariance) is unchanged and differs from the shrunk version
+    sample = spec_strategy(spec)(window)
+    pd.testing.assert_series_equal(
+        sample, optimise(window.mean() * 252, window.cov() * 252, spec).weights
+    )

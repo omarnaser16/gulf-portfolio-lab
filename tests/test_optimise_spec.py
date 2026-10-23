@@ -13,9 +13,12 @@ import pytest
 
 from gpl.optimise import (
     OptimisationSpec,
+    diversification_ratio,
+    ledoit_wolf_cov,
     max_sharpe,
     min_variance,
     optimise,
+    risk_parity,
 )
 
 MU = pd.Series({"A": 0.10, "B": 0.05})
@@ -178,6 +181,95 @@ def test_results_always_respect_every_constraint(seed: int) -> None:
     assert w.sum() == pytest.approx(1.0) and (w >= -1e-9).all()
     assert (w <= spec.max_weight + 1e-6).all()
     assert w[mu.index[0]] <= spec.asset_bounds[mu.index[0]][1] + 1e-6
+    gcc = sum(w[t] for t, g in groups.items() if g == "GCC")
+    assert gcc >= spec.group_bounds["GCC"][0] - 1e-6
+    if spec.max_volatility is not None:
+        assert result.volatility <= spec.max_volatility + 1e-6
+
+
+# --------------------------------------------------- risk parity, max diversification, shrinkage
+
+
+def test_risk_parity_and_max_diversification_hand_values() -> None:
+    # Uncorrelated: both give weights proportional to 1/vol -> A 1/3, B 2/3
+    rp = optimise(MU, COV, OptimisationSpec("risk_parity"))
+    md = optimise(MU, COV, OptimisationSpec("max_diversification"))
+    assert weights(rp) == pytest.approx((1 / 3, 2 / 3), abs=1e-5)
+    assert weights(md) == pytest.approx((1 / 3, 2 / 3), abs=1e-4)
+    assert rp.risk_shares.to_numpy() == pytest.approx([0.5, 0.5], abs=1e-5)  # equal risk
+    # diversification ratio: (0.2/3 + 0.1*2/3) / sqrt(0.04/9 + 0.01*4/9) = sqrt(2)
+    assert diversification_ratio(md.weights, COV) == pytest.approx(math.sqrt(2), rel=1e-4)
+
+
+def test_equal_volatility_uncorrelated_assets_get_equal_weights() -> None:
+    cov = pd.DataFrame(np.eye(4) * 0.04, index=list("ABCD"), columns=list("ABCD"))
+    mu = pd.Series(0.05, index=cov.index)
+    for objective in ("risk_parity", "max_diversification"):
+        w = optimise(mu, cov, OptimisationSpec(objective)).weights
+        assert w.to_numpy() == pytest.approx([0.25] * 4, abs=1e-4), objective
+
+
+def test_risk_parity_with_only_a_cap_is_the_exact_solution() -> None:
+    cov = pd.DataFrame(
+        [[0.04, 0.006, 0.0], [0.006, 0.01, 0.002], [0.0, 0.002, 0.0025]],
+        index=list("ABC"),
+        columns=list("ABC"),
+    )
+    got = optimise(MU.reindex(cov.index).fillna(0.05), cov, OptimisationSpec("risk_parity", 0.5))
+    pd.testing.assert_series_equal(got.weights, risk_parity(cov, 0.5), atol=1e-8)
+
+
+def test_risk_parity_within_a_group_limit() -> None:
+    # Equal risk needs A at 1/3; "at least 50% GCC" (A) forces A to 50%: closest is the limit
+    result = optimise(
+        MU, COV, OptimisationSpec("risk_parity", groups=GCC, group_bounds={"GCC": (0.5, None)})
+    )
+    assert weights(result) == pytest.approx((0.5, 0.5), abs=1e-5)
+    # A's share of risk: 0.04*0.25 / (0.04*0.25 + 0.01*0.25) = 80%
+    assert result.risk_shares["A"] == pytest.approx(0.8, abs=1e-5)
+
+
+def test_ledoit_wolf_matches_its_formula() -> None:
+    rng = np.random.default_rng(3)
+    x = rng.normal(0, 0.01, size=(60, 4)) + rng.normal(0, 0.01, size=(60, 1))
+    frame = pd.DataFrame(x, columns=list("ABCD"))
+    cov, d = ledoit_wolf_cov(frame, periods_per_year=252)
+    s = np.cov(x, rowvar=False, bias=True)  # maximum-likelihood sample covariance
+    target = np.trace(s) / 4 * np.eye(4)
+    np.testing.assert_allclose(cov.to_numpy(), ((1 - d) * s + d * target) * 252, rtol=1e-10)
+    assert 0 <= d <= 1 and np.allclose(cov, cov.T)
+    assert np.linalg.eigvalsh(cov.to_numpy()).min() > 0  # positive definite
+
+
+def test_ledoit_wolf_with_fewer_observations_than_assets() -> None:
+    rng = np.random.default_rng(4)
+    frame = pd.DataFrame(rng.normal(0, 0.01, size=(5, 8)))
+    cov, d = ledoit_wolf_cov(frame)
+    # the sample covariance is singular here (rank <= 4); the shrunk one is invertible
+    assert np.linalg.matrix_rank(np.cov(frame.to_numpy(), rowvar=False)) < 8
+    assert np.linalg.eigvalsh(cov.to_numpy()).min() > 0 and d > 0
+
+
+@pytest.mark.parametrize("seed", range(15))
+def test_new_objectives_respect_every_constraint(seed: int) -> None:
+    rng = np.random.default_rng(100 + seed)
+    n = int(rng.integers(3, 8))
+    mu, cov = _random_problem(n, rng)
+    groups = {t: ("GCC" if i % 2 == 0 else "Other") for i, t in enumerate(mu.index)}
+    spec = OptimisationSpec(
+        objective=str(rng.choice(["risk_parity", "max_diversification"])),
+        max_weight=float(rng.uniform(1 / n + 0.05, 1.0)),
+        groups=groups,
+        group_bounds={"GCC": (float(rng.uniform(0, 0.5)), None)},
+        max_volatility=float(rng.uniform(0.08, 0.3)) if rng.random() < 0.5 else None,
+    )
+    result = optimise(mu, cov, spec, rf=0.02)
+    if not result.feasible:
+        assert result.reasons and result.weights is None
+        return
+    w = result.weights
+    assert w.sum() == pytest.approx(1.0) and (w >= -1e-9).all()
+    assert (w <= spec.max_weight + 1e-6).all()
     gcc = sum(w[t] for t, g in groups.items() if g == "GCC")
     assert gcc >= spec.group_bounds["GCC"][0] - 1e-6
     if spec.max_volatility is not None:

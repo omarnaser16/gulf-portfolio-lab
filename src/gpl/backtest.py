@@ -8,13 +8,21 @@ only, and apply from the next trading day. Between rebalances, weights drift wit
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 
 from gpl.data import to_returns
 from gpl.metrics import PERIODS_PER_YEAR
-from gpl.optimise import OptimisationSpec, max_sharpe, min_variance, optimise, risk_parity
+from gpl.optimise import (
+    OptimisationSpec,
+    ledoit_wolf_cov,
+    max_sharpe,
+    min_variance,
+    optimise,
+    risk_parity,
+)
 
 type Strategy = Callable[[pd.DataFrame], pd.Series]
 """Maps a trailing window of daily returns (rows = dates, columns = tickers) to target
@@ -273,8 +281,12 @@ def spec_strategy(
     rf: float | pd.Series = 0.0,
     periods_per_year: int = PERIODS_PER_YEAR,
     fallback: Mapping[str, float] | None = None,
+    cov_method: Literal["sample", "ledoit_wolf"] = "sample",
 ) -> Strategy:
     """Re-optimise ``spec`` each rebalance on the trailing window only (walk-forward).
+
+    ``cov_method="ledoit_wolf"`` shrinks each window's covariance (fitted on that window only,
+    so no look-ahead); expected returns are the window's mean in both cases.
 
     If the constraints can't be met on a window, the previous weights are kept (that month
     is recorded in ``strategy.infeasible_dates``). Before the first window where they can be
@@ -285,7 +297,10 @@ def spec_strategy(
 
     def strategy(window: pd.DataFrame) -> pd.Series:
         mu = window.mean() * periods_per_year
-        cov = window.cov() * periods_per_year
+        if cov_method == "ledoit_wolf":
+            cov, _ = ledoit_wolf_cov(window, periods_per_year)
+        else:
+            cov = window.cov() * periods_per_year
         result = optimise(mu, cov, spec, _annual_rf_at(rf, window.index[-1]))
         if result.feasible:
             state["last"] = result.weights

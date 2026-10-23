@@ -456,7 +456,13 @@ def risk_parity(
 # ------------------------------------------------------------- constrained optimisation
 
 Objective = Literal[
-    "max_sharpe", "min_variance", "max_return", "target_volatility", "target_return"
+    "max_sharpe",
+    "min_variance",
+    "max_return",
+    "target_volatility",
+    "target_return",
+    "risk_parity",
+    "max_diversification",
 ]
 OBJECTIVES: tuple[str, ...] = (
     "max_sharpe",
@@ -464,6 +470,8 @@ OBJECTIVES: tuple[str, ...] = (
     "max_return",
     "target_volatility",
     "target_return",
+    "risk_parity",
+    "max_diversification",
 )
 _TOL = 1e-6
 
@@ -477,7 +485,8 @@ class OptimisationSpec:
     objective : str
         ``max_sharpe``; ``min_variance``; ``max_return``; ``target_volatility`` (highest return
         with volatility at most ``max_volatility``); ``target_return`` (lowest volatility with
-        return at least ``min_return``).
+        return at least ``min_return``); ``risk_parity`` (as close to equal risk contributions
+        as the limits allow); ``max_diversification`` (highest diversification ratio).
     max_weight : float
         Cap on every asset (1.0 = no cap).
     asset_bounds : mapping
@@ -520,6 +529,7 @@ class OptimisationResult:
     volatility: float | None = None
     sharpe: float | None = None
     binding: list[str] = field(default_factory=list)
+    risk_shares: pd.Series | None = None  # each asset's share of portfolio variance
 
 
 def _linear_constraints(
@@ -740,7 +750,11 @@ def optimise(
             else:
                 w = _slsqp(lambda w: -(w @ m), lambda w: -m, start, lo, hi, rows, floor + vol_cap)
         case "max_sharpe":
-            w = _constrained_max_sharpe(sigma, m, rf, start, lo, hi, rows, floor + vol_cap)
+            w = _max_ratio(sigma, m - rf, start, lo, hi, rows, floor + vol_cap)
+        case "max_diversification":
+            w = _max_ratio(sigma, np.sqrt(np.diag(sigma)), start, lo, hi, rows, floor + vol_cap)
+        case "risk_parity":
+            w = _risk_parity_within(cov, spec, start, lo, hi, rows, floor + vol_cap)
     if not _satisfies(w, lo, hi, rows, sigma, m, spec):
         return OptimisationResult(
             False, None, ["The optimiser could not find weights meeting every limit."]
@@ -757,31 +771,100 @@ def optimise(
         vol,
         (ret - rf) / vol if vol > 0 else None,
         _binding(weights.to_numpy(), lo, hi, rows, vol, ret, spec, index),
+        risk_contributions(weights, cov),
     )
 
 
-def _constrained_max_sharpe(sigma, m, rf, start, lo, hi, rows, extra) -> np.ndarray | None:
-    """Max Sharpe under general constraints: best of several SLSQP starts (incl. the LP point)."""
-    excess = m - rf
+def _max_ratio(sigma, a, start, lo, hi, rows, extra) -> np.ndarray | None:
+    """Maximise ``(w @ a) / sqrt(w' S w)`` under the constraints: best of several SLSQP starts.
 
-    def neg_sharpe(w):
-        return -(w @ excess) / np.sqrt(w @ sigma @ w)
+    With ``a`` = excess returns this is the Sharpe ratio; with ``a`` = asset volatilities it is
+    the diversification ratio.
+    """
 
-    def neg_sharpe_grad(w):
-        ex, var = w @ excess, w @ sigma @ w
+    def neg_ratio(w):
+        return -(w @ a) / np.sqrt(w @ sigma @ w)
+
+    def neg_ratio_grad(w):
+        num, var = w @ a, w @ sigma @ w
         vol = np.sqrt(var)
-        return -(excess / vol - ex * (sigma @ w) / (var * vol))
+        return -(a / vol - num * (sigma @ w) / (var * vol))
 
-    starts = [start, _lp(-m, lo, hi, rows)]
+    starts = [start, _lp(-a, lo, hi, rows)]
     mv = _slsqp(lambda w: w @ sigma @ w, lambda w: 2 * sigma @ w, start, lo, hi, rows, extra)
     if mv is not None:
         starts.append(mv)
     best = None
     for x0 in [s for s in starts if s is not None]:
-        w = _slsqp(neg_sharpe, neg_sharpe_grad, x0, lo, hi, rows, extra)
-        if w is not None and (best is None or neg_sharpe(w) < neg_sharpe(best)):
+        w = _slsqp(neg_ratio, neg_ratio_grad, x0, lo, hi, rows, extra)
+        if w is not None and (best is None or neg_ratio(w) < neg_ratio(best)):
             best = w
     return best
+
+
+def _risk_parity_within(cov, spec, start, lo, hi, rows, extra) -> np.ndarray | None:
+    """Equal risk contributions, or as close as the limits allow.
+
+    With only a per-asset cap this is the exact ``risk_parity``. Otherwise SLSQP minimises
+    ``sum_i (RC_i - 1/n)^2``, where ``RC_i = w_i (S w)_i / w' S w`` is asset i's share of risk.
+    """
+    sigma, n = cov.to_numpy(), len(cov)
+    only_cap = not (
+        spec.asset_bounds or spec.group_bounds or spec.max_volatility or spec.min_return
+    )
+    if only_cap:
+        return risk_parity(cov, spec.max_weight).to_numpy()
+
+    def gap(w):
+        g = sigma @ w
+        return w * g / (w @ g) - 1 / n
+
+    def objective(w):
+        return float(gap(w) @ gap(w))
+
+    def gradient(w):
+        g = sigma @ w
+        v = w @ g
+        jac = (np.diag(g) + w[:, None] * sigma) / v - np.outer(w * g, 2 * g) / v**2
+        return 2 * jac.T @ gap(w)
+
+    inverse_vol = 1 / np.sqrt(np.diag(sigma))
+    best = None
+    for x0 in (start, inverse_vol / inverse_vol.sum()):
+        w = _slsqp(objective, gradient, x0, lo, hi, rows, extra)
+        if w is not None and (best is None or objective(w) < objective(best)):
+            best = w
+    return best
+
+
+def diversification_ratio(weights: Weights, cov: pd.DataFrame) -> float:
+    """Weighted average asset volatility ÷ portfolio volatility (1 = no diversification).
+
+    Higher means correlations below 1 are cancelling more of the individual risks.
+    """
+    w = _as_array(weights, cov.index)
+    sigma = cov.to_numpy()
+    return float(w @ np.sqrt(np.diag(sigma)) / np.sqrt(w @ sigma @ w))
+
+
+def ledoit_wolf_cov(
+    returns: pd.DataFrame, periods_per_year: int = 252
+) -> tuple[pd.DataFrame, float]:
+    """Annualised Ledoit-Wolf shrinkage covariance and the shrinkage intensity.
+
+    The sample covariance ``S`` is noisy when there are few observations per asset; Ledoit
+    and Wolf (2004) blend it with a simple target, ``(1 - d) S + d (tr(S)/n) I``, choosing the
+    weight ``d`` (0 = sample, 1 = target) that minimises expected estimation error. This
+    pulls extreme correlations towards zero, so optimisers chase noise less. ``S`` here is
+    the maximum-likelihood estimate (divides by T, not T - 1), as in scikit-learn.
+    """
+    from sklearn.covariance import LedoitWolf
+
+    fit = LedoitWolf().fit(returns.to_numpy())
+    cov = pd.DataFrame(
+        fit.covariance_ * periods_per_year, index=returns.columns, columns=returns.columns
+    )
+    return cov, float(fit.shrinkage_)
 
 
 def _binding(w, lo, hi, rows, vol, ret, spec, index, tol=1e-4) -> list[str]:
