@@ -80,3 +80,15 @@
 - **Open:** should the threshold be higher than 0.5 (fewer false alarms)? Tuning it on this sample would
   overfit, so it would need its own hold-out period. GCC-specific stress isn't modelled at all.
 - **Next:** open the dashboard and check the charts by eye, then Week 3 (agent + README + deploy).
+
+## Week 2 fixes — 2026-10-23 · weight cap, max Sharpe robustness, frontier labels
+- **Fixed:** the optimiser now refuses infeasible solver output instead of rescaling it (rescaling could
+  push weights past the cap). Max Sharpe is solved in convex form (minimise risk for a fixed excess
+  return, then rescale), with a multi-start fallback. It no longer fails on short or awkward samples:
+  0 failures in 6,000 random tests. Frontier labels no longer sit on the curve. Tabs show the cap in use.
+- **Unresolved:** once, with untouched defaults (no slider, asset or date changes, no reload, server
+  started right after Week 2), the Frontier tab showed min variance 75% AGG and max Sharpe 52.6% SPY /
+  47.4% GLD. Those are exactly the results at a 75% cap. It couldn't be reproduced and now shows 40%.
+  If it happens again: screenshot the tab with the sidebar and the "at most X% per asset" caption.
+- **Learned:** maximising a ratio directly is fragile; rewriting it as a convex problem is the standard
+  fix. "Can't reproduce" isn't the same as "not a bug", so I wrote it down.
