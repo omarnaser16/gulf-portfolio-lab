@@ -234,6 +234,9 @@ with tab_frontier:
         "Uses the whole sample's means and covariances, so nobody could have held these at "
         "the time. The backtest tab is the honest test."
     )
+    st.caption(
+        f"Every portfolio here is long-only with at most **{max_weight:.0%}** per asset (sidebar)."
+    )
     mu, cov = returns.mean() * 252, returns.cov() * 252
     rf_annual = float(
         (1 + rf.loc[returns.index[0] :]).prod() ** (252 / len(rf.loc[returns.index[0] :])) - 1
@@ -282,6 +285,10 @@ with tab_backtest:
             f"day; {cost_bps:g} bps per unit of turnover."
         )
         show_table(table.sort_values("sharpe", ascending=False))
+        st.caption(
+            f"Strategies hold at most **{max_weight:.0%}** per asset (sidebar). Benchmarks are "
+            "fixed by definition (60/40 holds 60% SPY; SPY holds 100%)."
+        )
         equity = first_eight(pd.DataFrame({n: r.equity for n, r in results.items()}))
         st.plotly_chart(equity_chart(equity), width="stretch")
         st.plotly_chart(

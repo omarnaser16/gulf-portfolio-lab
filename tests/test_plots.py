@@ -62,3 +62,14 @@ def test_regime_chart_shades_realised_stress() -> None:
     rects = [s for s in fig.layout.shapes if s.type == "rect"]
     assert len(rects) == 2  # two stressed stretches
     assert fig.data[0].name == "P(stressed)"
+
+
+def test_frontier_labels_point_away_from_the_line() -> None:
+    # Frontier from (5%, 4%) to (15%, 10%). Max Sharpe sits on it; equal weight is inside.
+    front = pd.DataFrame({"vol": [0.05, 0.08, 0.15], "ret": [0.04, 0.07, 0.10]})
+    fig = frontier_chart(front, {"Max Sharpe": (0.08, 0.07), "Equal weight": (0.12, 0.06)})
+    labels = {a.text: a for a in fig.layout.annotations}
+    on, inside = labels["Max Sharpe"], labels["Equal weight"]
+    assert on.ax < 0 and on.ay < 0  # up-left: the empty side of the frontier
+    assert inside.ax > 0 and inside.ay > 0  # down-right: away from the curve
+    assert all(t.mode == "markers" for t in fig.data[1:])  # no text glued to markers

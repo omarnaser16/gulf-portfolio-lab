@@ -120,6 +120,13 @@ def weights_chart(
     return fig
 
 
+def _on_frontier(frontier: pd.DataFrame, vol: float, ret: float, tol: float = 0.002) -> bool:
+    """True if (vol, ret) lies on the frontier line (within ``tol`` of its volatility)."""
+    ordered = frontier.sort_values("ret")
+    frontier_vol = np.interp(ret, ordered["ret"], ordered["vol"])
+    return vol <= frontier_vol + tol
+
+
 def frontier_chart(
     frontier: pd.DataFrame,
     portfolios: Mapping[str, tuple[float, float]] | None = None,
@@ -127,7 +134,9 @@ def frontier_chart(
 ) -> go.Figure:
     """Frontier line (``vol`` vs ``ret``) with named portfolios as labelled markers.
 
-    ``portfolios`` maps a name to ``(vol, ret)``.
+    ``portfolios`` maps a name to ``(vol, ret)``. Labels never sit on the frontier line:
+    points on the frontier are labelled up-left (that region is empty by definition: no
+    portfolio has more return for the same risk), points inside it down-right.
     """
     portfolios = dict(portfolios or {})
     _check_series_count(1 + len(portfolios))
@@ -147,13 +156,26 @@ def frontier_chart(
                 x=[vol],
                 y=[ret],
                 name=name,
-                mode="markers+text",
-                text=[name],
-                textposition="middle right",
-                textfont={"color": TEXT_PRIMARY},
+                mode="markers",
                 marker={"color": color, "size": 10, "line": {"color": SURFACE, "width": 2}},
                 hovertemplate="vol %{x:.1%}<br>return %{y:.1%}",
             )
+        )
+        up_left = _on_frontier(frontier, vol, ret)
+        fig.add_annotation(
+            x=vol,
+            y=ret,
+            text=name,
+            showarrow=True,
+            arrowhead=0,
+            arrowwidth=1,
+            arrowcolor=TEXT_SECONDARY,
+            ax=-45 if up_left else 45,  # pixel offsets from the point
+            ay=-30 if up_left else 30,
+            xanchor="right" if up_left else "left",
+            font={"color": TEXT_PRIMARY},
+            bgcolor=SURFACE,
+            borderpad=2,
         )
     fig = _base_layout(fig, title, "Expected return (annual)", ".0%")
     fig.update_xaxes(title="Volatility (annual)", tickformat=".0%")

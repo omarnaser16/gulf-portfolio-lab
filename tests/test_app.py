@@ -72,3 +72,23 @@ def test_regime_toggle_adds_regime_strategies(app: AppTest) -> None:
 def test_infeasible_cap_shows_error(app: AppTest) -> None:
     app.slider(key="max_weight").set_value(0.10).run()  # 10% x 9 assets < 100%
     assert app.error
+
+
+def _frontier_weights(app: AppTest) -> pd.DataFrame:
+    tables = [  # weights table: portfolios as rows, tickers as columns (no metric columns)
+        df.value
+        for df in app.dataframe
+        if "Min variance" in df.value.index and "sharpe" not in df.value.columns
+    ]
+    assert len(tables) == 1
+    return tables[0]
+
+
+@pytest.mark.parametrize("cap", [0.15, 0.30, 0.75])
+def test_frontier_tab_follows_the_sidebar_cap(app: AppTest, cap: float) -> None:
+    app.slider(key="max_weight").set_value(cap).run()
+    assert not app.exception, app.exception
+    weights = _frontier_weights(app)
+    assert (weights.max(axis=1) <= cap + 1e-9).all(), weights.max(axis=1)
+    np.testing.assert_allclose(weights.sum(axis=1), 1.0)
+    assert any(f"{cap:.0%}" in c.value for c in app.caption)  # the cap in use is shown

@@ -71,8 +71,23 @@ def _solve(
     )
     if not result.success:
         raise ValueError(f"optimiser failed: {result.message}")
-    # Remove tiny numerical noise (e.g. -1e-17) and renormalise.
-    w = np.clip(result.x, 0.0, max_weight)
+    return _checked_weights(result.x, index, max_weight)
+
+
+def _checked_weights(
+    x: np.ndarray, index: pd.Index, max_weight: float, tol: float = 1e-6
+) -> pd.Series:
+    """Remove numerical noise, then refuse (rather than repair) any real constraint breach.
+
+    Clipping and renormalising a solution that doesn't sum to 1 would silently scale weights
+    *above* the cap, so a genuine violation raises instead.
+    """
+    if abs(x.sum() - 1) > tol or x.min() < -tol or x.max() > max_weight + tol:
+        raise ValueError(
+            f"optimiser returned infeasible weights (sum={x.sum():.6f}, "
+            f"min={x.min():.6f}, max={x.max():.6f}, cap={max_weight})"
+        )
+    w = np.clip(x, 0.0, max_weight)  # e.g. -1e-17 -> 0
     return pd.Series(w / w.sum(), index=index)
 
 
@@ -348,4 +363,4 @@ def risk_parity(
     while (w > max_weight + 1e-10).any():
         capped |= w > max_weight + 1e-10
         w = _capped_equal_risk(sigma, capped, max_weight, tol, max_iter)
-    return pd.Series(w, index=cov.index)
+    return _checked_weights(w, cov.index, max_weight)

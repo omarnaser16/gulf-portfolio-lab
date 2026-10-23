@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from gpl.optimise import (
+    _checked_weights,
     efficient_frontier,
     max_sharpe,
     min_variance,
@@ -238,3 +239,42 @@ def test_risk_parity_cap_not_binding_is_unchanged(cov_corr) -> None:
 def test_risk_parity_infeasible_cap_raises(cov3) -> None:
     with pytest.raises(ValueError):
         risk_parity(cov3, max_weight=0.30)
+
+
+# ------------------------------------------------- property: every optimiser obeys the cap
+
+
+def _random_problem(n: int, seed: int) -> tuple[pd.Series, pd.DataFrame]:
+    rng = np.random.default_rng(seed)
+    tickers = [f"T{i}" for i in range(n)]
+    returns = rng.normal(0.0004, 0.01, size=(500, n)) * rng.uniform(0.3, 2.5, size=n)
+    returns += rng.normal(0, 0.006, size=(500, 1))  # common factor -> correlation
+    frame = pd.DataFrame(returns, columns=tickers)
+    return frame.mean() * 252, frame.cov() * 252
+
+
+@pytest.mark.parametrize("seed", range(10))
+@pytest.mark.parametrize("max_weight", [0.25, 0.40, 0.75, 1.0])
+def test_no_optimiser_output_exceeds_max_weight(seed: int, max_weight: float) -> None:
+    mu, cov = _random_problem(n=4 + seed % 6, seed=seed)
+    outputs = {
+        "min_variance": min_variance(cov, max_weight),
+        "max_sharpe": max_sharpe(mu, cov, rf=0.02, max_weight=max_weight),
+        "risk_parity": risk_parity(cov, max_weight),
+    }
+    frontier = efficient_frontier(mu, cov, n_points=8, max_weight=max_weight)
+    for i, row in frontier[cov.index].iterrows():
+        outputs[f"frontier[{i}]"] = row
+    for name, w in outputs.items():
+        assert w.max() <= max_weight + 1e-9, f"{name} breaks the {max_weight} cap: {w.max():.4f}"
+        assert w.min() >= 0, name
+        assert w.sum() == pytest.approx(1.0), name
+
+
+def test_infeasible_solver_output_is_refused_not_rescaled() -> None:
+    idx = pd.Index(["A", "B", "C"])
+    # 0.4 + 0.36 + 0 = 0.76: renormalising would give 52.6% > 40%, so it must raise
+    with pytest.raises(ValueError, match="infeasible"):
+        _checked_weights(np.array([0.4, 0.36, 0.0]), idx, max_weight=0.4)
+    ok = _checked_weights(np.array([0.4, 0.6 + 1e-12, -1e-17]), idx, max_weight=0.6)
+    assert ok.min() == 0.0 and ok.sum() == pytest.approx(1.0)
