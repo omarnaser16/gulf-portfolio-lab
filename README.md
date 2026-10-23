@@ -34,22 +34,23 @@ code flags any figure that no tool produced.**
 | Part | What it does |
 |---|---|
 | **Data** | Any Yahoo Finance ticker, adjusted prices cached per ticker as parquet; converted to USD (official pegs for SAR, AED, QAR, BHD and OMR; market rates for other currencies; sub-units such as Kuwaiti fils scaled); different trading calendars aligned on common dates; history and data notes shown for every asset. |
-| **Metrics** | Annual return, CAGR, volatility, Sharpe, Sortino, drawdowns, historical and normal VaR, expected shortfall. |
-| **Optimisation** | Min variance, max Sharpe (solved in convex form), efficient frontier, risk parity with a 40% weight cap; a constrained optimiser with five objectives (max Sharpe, min variance, max return, target volatility, target return), per-asset and group limits, exact feasibility checks and plain-language reasons when limits can't all be met. |
+| **Metrics** | Annual return, CAGR, volatility, Sharpe, Sortino, Calmar, drawdowns, historical and normal VaR, expected shortfall, trailing 1- and 3-year returns; against a benchmark: beta, Jensen's alpha, tracking error, information ratio, up/down capture, relative drawdown; correlation clusters. |
+| **Optimisation** | Min variance, max Sharpe (solved in convex form), efficient frontier, risk parity with a 40% weight cap; a constrained optimiser (max Sharpe, min variance, max return, target volatility, target return, risk parity and max diversification) with per-asset and group limits, exact feasibility checks and plain-language reasons when limits can't all be met; Ledoit-Wolf covariance shrinkage. |
 | **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, 10 bps costs on turnover. |
 | **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with eight tools wrapping the engine; memos for an investor profile, about the user's own portfolio, or explaining an optimisation, with audit trail and number check. It also turns plain-English goals into an optimisation spec the user confirms; it never chooses weights. |
-| **Dashboard** | A *Portfolio* workstation (search, holdings, screen, analyse & backtest, AI-assisted optimisation) plus tabs for Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
+| **AI analyst** | Claude (Haiku 5.5 by default) with nine tools wrapping the engine; memos for an investor profile, about the user's own portfolio, or explaining a recommendation, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
+| **Dashboard** | A *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
 
 > 📸 *Screenshot placeholder: `docs/screenshots/analyst.png` (Analyst tab: memo, audit trail, cost line)*
 
 ## Using it as an investor
 
-- **Any asset.** Pick quick-pick groups (the default ETFs, GCC stocks such as Saudi Aramco `2222.SR`,
-  Al Rajhi `1120.SR`, Emaar `EMAAR.AE`, Emirates NBD `EMIRATESNBD.AE`, QNB `QNBK.QA` and NBK
-  `NBK.KW`, or global ETFs) or type any Yahoo Finance symbol. Tickers with no data get a clear
-  message. Abu Dhabi (ADX) listings such as FAB are not on Yahoo Finance.
+- **Any asset, one portfolio.** Your holdings are the universe for every tab. Search by name or
+  ticker ("Aramco", "Emaar", "SPY"), paste a list, or start from a preset (the README universe of
+  nine ETFs, GCC stocks such as Saudi Aramco `2222.SR`, Al Rajhi `1120.SR`, Emaar `EMAAR.AE`,
+  Emirates NBD `EMIRATESNBD.AE`, QNB `QNBK.QA` and NBK `NBK.KW`, or global ETFs). Tickers with no
+  data get a clear message. Abu Dhabi (ADX) listings such as FAB are not on Yahoo Finance.
 - **One currency.** Everything is analysed in USD. The Gulf pegs are used for SAR, AED, QAR, BHD and
   OMR because Yahoo's quotes for these currencies are noisy (the riyal series is more than 1% off its
   3.75 peg on about 100 days since 2015). Other currencies use market rates (e.g. `KWD=X`).
@@ -58,21 +59,29 @@ code flags any figure that no tool produced.**
   (about 183 a year for the GCC preset with SPY), and figures are annualised with that number instead
   of 252. The dashboard says so, and shows each asset's start date, currency, conversion and trading
   days, warning about assets with too little history.
-- **Your own portfolio (the *Portfolio* tab).** Search by name or ticker ("Aramco", "Emaar", "SPY")
-  to add a security with its latest price and quote time, then edit holdings in USD or percent
-  (weights are normalised), assign groups, or import a pasted list. *Screen* ranks holdings by return,
-  volatility, Sharpe, max drawdown and correlation to the rest of the portfolio. *Analyse & backtest*
-  shows share of money vs share of risk and a backtest after costs vs 60/40; the portfolio is also
-  available in the Monte Carlo and Analyst tabs.
-- **Optimise from plain English.** Describe goals such as "max 12% vol, at least 20% GCC, no single
-  asset over 25%". The AI transcribes them into a spec (objective and limits, percentages exactly as
-  written); numbers that don't appear in your text are flagged, and requests it can't express are
-  listed. You confirm or edit the spec, or set the limits yourself, and only then does the optimiser
-  run. Results show current vs optimised weights, which limits bind, in-sample figures and backtests
-  after costs, including a walk-forward version that re-optimises monthly with only past data. If
-  the limits can't all be met, it says why (e.g. "the lowest volatility these limits allow is 12.31%
-  a year, above the 8.00% cap") and shows no weights. An optional memo explains the changes and
-  trade-offs.
+- **Your own portfolio (the *Portfolio* tab).** Holdings show each security's latest price and
+  quote time; edit them in USD or percent (white columns are editable), use *Equal weight* or
+  *Normalise to 100%*, and assign groups. *Screen* ranks holdings by any of 14 measures (return,
+  CAGR, 1Y and 3Y return, volatility, Sharpe, Sortino, Calmar, max drawdown, VaR, expected
+  shortfall, beta to the benchmark, share of portfolio risk, correlation to the rest). *Analyse &
+  backtest* shows share of money vs share of risk and a backtest after costs vs the strategies.
+- **Benchmarks.** Compare against 60/40 (default), the S&P 500 (SPY), FTSE 100 (ISF.L, converted
+  from pence to USD), MSCI World (URTH), the Saudi (KSA) or UAE (UAE) market, cash (13-week
+  T-bills) or any loaded asset. These are total-return ETF proxies, so dividends count as they do
+  in your portfolio. The *Benchmark* tab shows return, volatility, Sharpe, max drawdown, beta,
+  alpha, tracking error, information ratio, up/down capture and correlation, with growth-of-$1 and
+  relative-drawdown charts. A benchmark's holidays never shorten your sample.
+- **Optimise like an analyst.** (1) *Diagnose*: each holding's share of money vs share of risk,
+  volatility, Sharpe and beta, clusters of holdings that move together, and the portfolio vs the
+  benchmark. (2) *Goal*: maximise risk-adjusted return, reduce risk, reach a target return, hit a
+  target volatility, or beat the benchmark with less risk, picked from a list or described in plain
+  English (the AI fills in the goal and limits for you to check; numbers not in your text are
+  flagged). (3) *Candidates*: max Sharpe, min variance, risk parity, max diversification and target
+  volatility, each within your limits, re-optimised monthly on past data only (Ledoit-Wolf
+  covariance) and evaluated after costs against your current portfolio and the benchmark. (4)
+  *Recommendation*: a fixed rule per goal picks the method that fits the goal **and** held up out
+  of sample, or says to keep your current portfolio, and shows its reasons. (5) An optional AI memo
+  explains it. Results are historical and risk-adjusted, never presented as higher returns to come.
 - **Latest or reproducible.** The dashboard opens on the latest data ("Data as of …" at the top). The
   *Reproduce README results* option uses the fixed sample below and reproduces this README's tables
   exactly.
@@ -142,26 +151,44 @@ uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class w
 because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
 
 **AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The eight tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
-`backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_optimisation_result`,
-`get_regime_view`) wrap the engine and return pre-formatted numbers. The system prompt forbids arithmetic and requires a bracketed tool citation for every figure. After each answer,
+The nine tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
+`backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_portfolio_diagnosis`,
+`get_optimisation_result`, `get_regime_view`) wrap the engine and return pre-formatted numbers.
+The system prompt forbids arithmetic and requires a bracketed tool citation for every figure. After
+each answer,
 code compares every decimal, percentage and multiple in it with the tool outputs and flags any that
 don't match (a re-rounded "15.3%" for "15.27%" is flagged). Every tool call is shown in an audit
 trail, and the disclaimer is appended by code.
 
-**Goals to optimisation.** A separate, single model call fills one strict tool, `propose_spec`,
-whose schema *is* the spec: an objective, a per-asset cap, asset and group limits, a volatility cap
-and a return floor, in percent as the user wrote them. There is no field for weights. Code converts
-percent to fractions, checks every number against the user's text, and shows the spec for
-confirmation. The optimiser first checks feasibility exactly (a linear program for the weight and
-group limits, then the lowest achievable volatility and highest achievable return), so impossible
-requests get a specific reason instead of a solver failure; solver output is re-checked against every
-limit. Two backtests are shown: *hindsight* (weights fitted on the whole sample, flattering) and
-*walk-forward* (re-optimised each month on the trailing window, the fair test). In walk-forward months
-where the limits can't be met with the data available, the previous weights are kept and the months
-are counted.
+**Goals to a recommendation.** A separate, single model call fills one strict tool,
+`propose_spec`, whose schema is the spec: one of five goals, a target if the goal needs one, a
+per-asset cap, asset and group limits, a volatility cap and a return floor, in percent as the user
+wrote them. There is no field for weights or methods. Code converts percent to fractions and checks
+every number against the user's text. Each candidate method is the constrained optimiser with a
+different objective; it first checks feasibility exactly (a linear program for the weight and group
+limits, then the lowest achievable volatility and highest achievable return), so impossible limits
+get a specific reason instead of a solver failure, and solver output is re-checked against every
+limit. Covariances use Ledoit-Wolf shrinkage, fitted each month on the trailing window only.
 
-**Testing.** 417 tests (`pytest`), most with expected values small enough to check by hand. They
+The recommendation comes from `gpl/recommend.py`, not from the model. For each goal there is one
+written rule applied to the walk-forward results after costs (e.g. *reduce risk*: lowest volatility
+below the current portfolio's, with the higher Sharpe ratio winning when two are within 0.50
+percentage points). A method "held up" if it kept at least half of its in-sample Sharpe ratio out of
+sample; one that ranked first but didn't hold up is skipped, and if nothing improves on the current
+portfolio for the goal, the rule says to keep it. Every branch is unit-tested.
+
+Example on the README sample (holdings SPY 50%, AGG 30%, GLD 10%, KSA 10%; at least 10% GCC;
+walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
+- *Reduce risk* (at most 45% per asset): the rule chose risk parity, with volatility 7.69% vs
+  10.73% and max drawdown −14.47% vs −21.18%, but CAGR 7.34% vs 10.29% and Sharpe 0.65 vs 0.75. It is
+  a lower-risk choice, not a better risk-adjusted one.
+- *Beat the benchmark with less risk* (at most 40% per asset): the rule chose max Sharpe (CAGR
+  9.95% vs the benchmark's 9.83%, volatility 10.16% vs 11.28%). Its Sharpe ratio beat the current
+  portfolio's by under 0.01 (0.7575 vs 0.7512) while trading 1.70× a year vs 0.24×; with data to 23
+  Oct 2026 the same request recommended keeping the current portfolio. The rule has no minimum
+  improvement, so a near-tie can flip with a few weeks of data (see Limitations).
+
+**Testing.** 479 tests (`pytest`), most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -187,11 +214,18 @@ a scripted fake model, so the suite never touches the network.
 - **AI analyst:** the number check covers decimals, percentages and multiples, not bare integers or
   numbers written in words, and the model can still mis-describe a correct number. Treat the audit
   trail as the source of truth.
-- **Optimisation uses history.** Expected returns are historical means, which are noisy; max Sharpe
-  and max return are especially sensitive to them. In-sample and hindsight figures flatter the
-  optimised portfolio. Tight limits can leave little room: with four holdings and a 25% cap, 25% each
-  is the only allowed portfolio. The spec check catches invented numbers, not a misread objective, so
-  read the confirmation before running.
+- **Optimisation uses history.** Expected returns are historical means, which are noisy (Ledoit-Wolf
+  only shrinks the covariance); max Sharpe is especially sensitive to them. Picking the best of five
+  methods on the same period is itself a mild form of hindsight, and the target-volatility level is
+  set from the whole period. Tight limits can leave little room: with four holdings and a 25% cap,
+  25% each is the only allowed portfolio. The spec check catches invented numbers, not a misread
+  goal, so read the confirmation before running.
+- **The recommendation rule has no materiality threshold:** any improvement on the goal metric
+  counts, so a method can be recommended for a tiny gain (e.g. 0.006 of Sharpe) despite much higher
+  turnover, and near-ties can flip as data is added.
+- **Benchmarks** are ETF proxies with fund fees, compared without trading costs (as indices are).
+  On dates when the benchmark's market was closed but yours traded, it shows 0% and catches up next
+  day. Against cash, beta, alpha, capture and correlation are not defined.
 - **Search and quotes** come from Yahoo Finance too: suggestions can be incomplete and quotes delayed;
   groups are guessed from the exchange and name and can be changed in the table.
 - **Data source:** `yfinance` is unofficial and can break or rate-limit. Downloads are cached per
@@ -224,7 +258,7 @@ git clone <your-repo-url> && cd gulf-portfolio-lab
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 417 tests, no network needed
+pytest -q                       # 479 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 
@@ -237,13 +271,15 @@ Monte Carlo) and `notebooks/02_week2_regime.ipynb` (regime model and regime-awar
 config/universe.yaml     tickers, groups, defaults, regime, Monte Carlo and agent settings
 src/gpl/data.py          download, cache, clean, returns, risk-free rate (all I/O lives here)
 src/gpl/metrics.py       risk and performance metrics
-src/gpl/optimise.py      min variance, max Sharpe, frontier, risk parity, constrained optimiser
+src/gpl/optimise.py      min variance, max Sharpe, frontier, risk parity, constrained optimiser,
+                         Ledoit-Wolf covariance
+src/gpl/recommend.py     goals, candidate methods and the recommendation rule
 src/gpl/backtest.py      monthly-rebalanced backtester and strategies
 src/gpl/montecarlo.py    simulations, goal probability, path drawdowns
 src/gpl/regime.py        labels, features, models, evaluation, walk-forward
 src/gpl/plots.py         plotly charts shared by notebooks and the app
 src/gpl/agent/           tools.py (tool schemas wrapping gpl), analyst.py (tool-use loop),
-                         spec.py (plain-English goals -> optimisation spec)
+                         spec.py (plain-English goals -> goal and limits)
 app/                     Streamlit dashboard (workstation.py: Portfolio tab)
 tests/                   pytest suite
 ```
@@ -258,8 +294,9 @@ My role (Omar Naser) was to **direct, review and test**:
   instructions (`BRIEF.md`, `CLAUDE.md`) were drafted with Claude from those requirements. I set the
   priorities for each session, approved every new dependency, and chose among the options
   presented, for example capping risk parity at 40%, fixing the end date for reproducibility, and
-  making the block bootstrap the default. I specified the Portfolio workstation and the rule that
-  the AI only turns goals into limits I confirm, never into weights.
+  making the block bootstrap the default. I specified the Portfolio workstation, the benchmark
+  set, the analyst-style Optimise workflow, and the rules that the AI only turns goals into limits I
+  confirm (never weights) and that a coded rule, not the AI, makes the recommendation.
 - **Reviewed:** I read the results, notebooks and explanations, and asked for changes where something
   looked wrong or unclear, for example checking whether the regime model's probabilities were
   calibrated, leading with ROC AUC rather than accuracy, and stating limitations such as the 2022

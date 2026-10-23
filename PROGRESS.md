@@ -193,3 +193,30 @@ days; the work itself was done in a series of sessions.
   portfolio, so "optimised" can have a lower Sharpe than what I hold.
 - **Status:** 417 tests passing.
 - **Next:** deploy on Streamlit Community Cloud; answer the outstanding quizzes.
+
+## Quant-style Optimise, benchmarks, holdings everywhere — 2026-10-24
+- **Directed:** I asked for the Optimise tab to work like a quant analyst (diagnose, agree the goal,
+  try several methods with Ledoit-Wolf, judge them walk-forward after costs, recommend the one that
+  fits and held up), plus Portfolio fixes: obviously editable weights with Equal weight and
+  Normalise buttons, holdings driving every tab, a richer Screen, and a benchmark comparison. I chose
+  the benchmark set (60/40 default, S&P 500, FTSE 100, MSCI World, Saudi, UAE, cash, any asset) and
+  decided that a coded rule, not the AI, makes the recommendation.
+- **Built by Claude Code:** beta, Jensen's alpha, tracking error, information ratio, up/down
+  capture, Calmar, trailing returns, relative drawdown and correlation clusters (hand-value tests);
+  benchmark loading on my portfolio's dates; risk parity and max diversification within any limits;
+  Ledoit-Wolf covariance; `recommend.py` with one tested rule per goal; diagnosis and candidate tools;
+  the new Optimise and Benchmark tabs. The sidebar asset picker is gone; README mode plus the README
+  preset still reproduces the README table exactly.
+- **Caught:** against cash, the drifting T-bill rate gave a beta of 0.22 and a 355% "up capture",
+  so those are now undefined for cash. A live memo read "months the limits couldn't be met" as
+  "breached the limits", so the label now says the previous weights were kept. The diagnosis and
+  the candidates table disagreed by 0.02% of CAGR (one included the buying day); now aligned.
+  Streamlit can't colour editable columns, so the read-only ones are greyed instead. I could not
+  reproduce the empty pie chart.
+- **Learned:** a method that wins in sample can fall apart out of sample (synthetic test: max Sharpe
+  1.13 in sample, 0.17 walk-forward); "reduce risk" usually costs return (risk parity: volatility
+  7.69% vs 10.73%, Sharpe 0.65 vs 0.75); against cash the information ratio is the Sharpe ratio.
+  The rule recommended max Sharpe for a 0.006 Sharpe gain at 1.70× turnover, and the answer flipped
+  with three more weeks of data, so it may need a minimum improvement.
+- **Status:** 479 tests passing.
+- **Next:** decide on a minimum-improvement threshold; deploy; answer the outstanding quizzes.

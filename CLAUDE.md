@@ -48,6 +48,13 @@ it switched to build + explain mode, which has been used since:
   (Yahoo's quotes for them are noisy); other currencies, including KWD (pegged to a basket), use
   Yahoo market rates (`C=X`, local units per USD). Sub-unit quotes (KWF fils, GBp pence) are scaled
   first. Conversion lives in `data.py` (`to_usd`, `load_assets`).
+- **Universe:** the user's holdings (Portfolio tab) are the universe for every tab; the regime
+  model alone uses SPY/AGG/VIX. The per-asset cap is set on Portfolio › Optimise.
+- **Benchmarks:** total-return ETF proxies in USD (config `benchmark_choices`), put on the
+  portfolio's dates without shortening its sample; cash has no market risk, so beta, alpha, capture
+  and correlation against it are undefined.
+- **Covariance for the Optimise tab:** Ledoit-Wolf shrinkage, fitted per window (no look-ahead);
+  other tabs keep the sample covariance.
 - **Calendars:** assets on different weekly calendars (Sun–Thu vs Mon–Fri) are aligned on the dates
   all of them traded, and annualised with the observed periods per year instead of 252.
 - **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
@@ -73,9 +80,12 @@ streamlit run app/streamlit_app.py
 - **The LLM never calculates numbers.** Every figure in a memo comes from a tool result, and the memo
   says which tool produced it. The system prompt requires this and code flags any figure no tool
   returned.
-- **The LLM never chooses weights.** For optimisation it only transcribes the user's goals into a
-  spec (objective and limits, percentages as written) through a strict tool with no weights field;
-  the user confirms the spec before the optimiser runs.
+- **The LLM never chooses weights or methods.** For optimisation it only transcribes the user's
+  goals into a spec (one of five goals, a target, limits; percentages as written) through a strict
+  tool with no weights or method field; the user confirms the spec before anything runs.
+- **Recommendations are chosen by code.** `gpl/recommend.py` applies a fixed, tested rule per goal
+  to walk-forward, after-cost results; the AI only explains the rule's choice and trade-offs, and
+  never presents results as guaranteed or higher future returns.
 - API key in `.env` as `ANTHROPIC_API_KEY` (or Streamlit secrets when deployed); never committed.
   The model name lives in config, not in code.
 - Memos carry a "not investment advice" disclaimer, appended by code.
