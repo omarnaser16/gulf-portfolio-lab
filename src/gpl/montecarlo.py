@@ -44,7 +44,27 @@ def simulate_paths(
     np.ndarray
         Shape ``(horizon_days + 1, n_paths)``. Row 0 is 1.0 (starting wealth).
     """
-    raise NotImplementedError
+    if method not in ("bootstrap", "gbm"):
+        raise ValueError(f"method must be 'bootstrap' or 'gbm', got {method!r}")
+    if returns.isna().any().any():
+        raise ValueError("returns contain NaN; clean the data first")
+
+    # Daily-rebalanced portfolio return for each historical day (whole rows keep correlation).
+    port = (returns[weights.index] @ weights).to_numpy()
+    rng = np.random.default_rng(seed)
+
+    if method == "bootstrap":
+        days = rng.integers(0, len(port), size=(horizon_days, n_paths))
+        log_growth = np.log1p(port[days])
+    else:
+        # GBM: daily log returns are normal. Fitting mu to *log* returns already includes the
+        # volatility drag, so no extra -sigma^2/2 term is needed.
+        log_port = np.log1p(port)
+        mu, sigma = log_port.mean(), log_port.std(ddof=1)
+        log_growth = mu + sigma * rng.standard_normal(size=(horizon_days, n_paths))
+
+    wealth = np.exp(np.cumsum(log_growth, axis=0))
+    return np.vstack([np.ones(n_paths), wealth])
 
 
 def terminal_stats(
@@ -65,7 +85,11 @@ def terminal_stats(
     pd.Series
         Index ``p5``, ``p25``, ... and ``mean``.
     """
-    raise NotImplementedError
+    terminal = paths[-1]
+    values = np.percentile(terminal, percentiles)
+    stats = pd.Series(values, index=[f"p{p:g}" for p in percentiles])
+    stats["mean"] = terminal.mean()
+    return stats
 
 
 def goal_probability(paths: np.ndarray, target: float) -> float:
@@ -83,4 +107,4 @@ def goal_probability(paths: np.ndarray, target: float) -> float:
     float
         Share of paths with terminal wealth ``>= target``.
     """
-    raise NotImplementedError
+    return float((paths[-1] >= target).mean())
