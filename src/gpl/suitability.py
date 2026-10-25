@@ -14,7 +14,14 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from gpl.client import IPS, PEGGED, cash_like_holdings, excluded_holdings, month_text
+from gpl.client import (
+    IPS,
+    PEGGED,
+    cash_like_holdings,
+    excluded_holdings,
+    in_region,
+    month_text,
+)
 from gpl.data import SUBUNITS
 from gpl.metrics import annualised_volatility, max_drawdown
 from gpl.scenarios import episode_performance
@@ -49,6 +56,7 @@ def check_suitability(
     value: float | None = None,
     liquid_max_volatility: float = 0.03,
     cash_like: Sequence[str] = (),
+    regions: Mapping[str, str] | None = None,
 ) -> list[Check]:
     """Check ``weights`` against every IPS rule.
 
@@ -67,6 +75,8 @@ def check_suitability(
         Configured cash, short-term bond and sukuk funds; together with the "Cash & short-term"
         group and the volatility rule they hold the reserve for cash needs due soon
         (``gpl.client.cash_like_holdings``).
+    regions : mapping, optional
+        Ticker -> region (``gpl.scenarios.classify_holdings``), for the region minimums.
     """
     w = weights[weights > 0]
     port = returns[list(w.index)] @ w
@@ -222,6 +232,48 @@ def check_suitability(
             )
         )
 
+    # Region minimums (e.g. at least 10% in Saudi Arabia)
+    minimums = lim["region_minimums"]
+    if not minimums:
+        checks.append(
+            Check("Region minimums", "pass", "–", "none", "The client set no region minimums.")
+        )
+    elif regions is None:
+        checks.append(
+            Check(
+                "Region minimums",
+                "review",
+                "–",
+                ", ".join(f"{r} {m:.2%}" for r, m in minimums.items()),
+                "Holdings' regions are unknown: check the region minimums by hand.",
+            )
+        )
+    else:
+        shares = {
+            r: float(sum(v for t, v in w.items() if in_region(regions.get(t, ""), r)))
+            for r in minimums
+        }
+        gaps = {r: minimums[r] - shares[r] for r in minimums if shares[r] < minimums[r] - 1e-9}
+        worst = max(gaps, key=lambda r: gaps[r] / minimums[r]) if gaps else None
+        shown = worst or next(iter(minimums))
+        checks.append(
+            Check(
+                "Region minimums",
+                "fail" if gaps else "pass",
+                f"{shown} {shares[shown]:.2%}",
+                f"at least {minimums[shown]:.2%}",
+                "; ".join(
+                    f"{r}: {shares[r]:.2%} (at least {m:.2%} required"
+                    + (", short" if r in gaps else ", met")
+                    + ")"
+                    for r, m in minimums.items()
+                )
+                + ".",
+                gaps[worst] if worst else None,
+                minimums[worst] if worst else None,
+            )
+        )
+
     # Liquidity
     vols = returns[list(w.index)].std() * (periods_per_year**0.5)
     liquid = cash_like_holdings(
@@ -370,7 +422,7 @@ def breach_text(check: Check) -> str:
     )
 
 
-MINIMUM_RULES = {"Home-market bias"}
+MINIMUM_RULES = {"Home-market bias", "Region minimums"}
 
 
 def suitability_table(results: Mapping[str, Sequence[Check] | Mapping[str, Check]]) -> pd.DataFrame:

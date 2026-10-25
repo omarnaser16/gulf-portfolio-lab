@@ -191,3 +191,32 @@ def test_cash_like_holdings_hold_the_cash_need() -> None:
     assert next(c for c in regrouped if c.rule == "Liquidity").status == "pass"
     due = month_after(date.today(), 12)
     assert f"by {date(int(due[:4]), int(due[5:]), 1):%b %Y}" in off_list.reason
+
+
+def test_region_minimums_rule() -> None:
+    from gpl.suitability import breach_text
+
+    client = ips(region_minimums={"Saudi Arabia": 25.0})
+    regions = {"GCC": "Saudi Arabia", "EQ": "United States (listing)", "BOND": "United States"}
+
+    def check(weights, regions=regions):
+        out = check_suitability(
+            pd.Series(weights),
+            RETURNS,
+            client,
+            ATTRS,
+            CURRENCIES,
+            GROUPS,
+            252,
+            EPISODES,
+            regions=regions,
+        )
+        return next(c for c in out if c.rule == "Region minimums")
+
+    short = check({"EQ": 0.5, "BOND": 0.3, "GCC": 0.2})
+    assert short.status == "fail" and short.breach == pytest.approx(0.05)
+    assert breach_text(short) == (
+        "Region minimums: Saudi Arabia 20.00%, 5.00 pp below the 25.00% minimum"
+    )
+    assert check({"EQ": 0.5, "BOND": 0.2, "GCC": 0.3}).status == "pass"
+    assert check({"EQ": 1.0}, regions=None).status == "review"

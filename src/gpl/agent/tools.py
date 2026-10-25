@@ -790,9 +790,16 @@ def duplicate_candidates(
 
 def _ips_checks(ctx: AnalystContext, weights: pd.Series) -> list:
     """``check_suitability`` of ``weights`` against the client's IPS (ctx.ips must be set)."""
+    from gpl.scenarios import classify_holdings
     from gpl.suitability import check_suitability
 
     currencies = ctx.asset_notes["currency"].to_dict() if ctx.asset_notes is not None else {}
+    classes = classify_holdings(
+        list(weights.index),
+        ctx.settings.get("exposure_meta", {}),
+        ctx.holding_groups or {},
+        currencies,
+    )
     return check_suitability(
         weights,
         ctx.all_returns,
@@ -805,6 +812,7 @@ def _ips_checks(ctx: AnalystContext, weights: pd.Series) -> list:
         ctx.portfolio_value or ctx.ips.client.portfolio_value_usd,
         ctx.settings.get("liquid_max_volatility", 0.03),
         ctx.settings.get("cash_like", []),
+        {t: c["region"] for t, c in classes.items()},
     )
 
 

@@ -12,7 +12,15 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
-from gpl.client import CLASSIFICATIONS, ClientProfile, month_after
+from gpl.client import (
+    CLASSIFICATIONS,
+    JURISDICTIONS,
+    REGIONS,
+    ClientProfile,
+    month_after,
+    parse_month,
+    regulator_for,
+)
 
 PROFILE_SYSTEM_PROMPT = """\
 You fill in a wealth manager's client form from their notes. You never calculate, estimate or \
@@ -24,7 +32,22 @@ Call the propose_profile tool exactly once:
 - Use null (or an empty list) for anything the notes don't state. Don't infer residency from \
 a city unless the country is obvious from it (Dubai -> UAE, Riyadh -> Saudi Arabia, Doha -> \
 Qatar).
-- goals: each goal the client states, with an amount, a multiple of today's value, or years, \
+- name: the client's name if written. age: if written.
+- jurisdiction: where the client is booked, from the notes: Abu Dhabi or ADGM -> "ADGM (Abu \
+Dhabi)"; DIFC -> "DIFC (Dubai)"; elsewhere in the UAE without DIFC or ADGM (e.g. Dubai, \
+Sharjah) -> "UAE onshore"; Saudi Arabia -> "Saudi Arabia"; Qatar or QFC -> "QFC (Qatar)"; \
+null if the notes don't say.
+- tax_notes: anything about taxes, tax residence or citizenship, in the notes' words.
+- name, tax_notes, residency: "" when the notes don't say. residency is the country only \
+("UAE"); anything more about taxes goes in tax_notes.
+- liquidity_needs: each cash withdrawal the client needs. Copy when, never convert it: a \
+month or date as YYYY-MM ("Oct 2028" -> "2028-10"; a year alone -> that year's January, \
+"2028" -> "2028-01"), or a relative time as written ("in 18 months", "in 2 years"); "" if \
+the notes give no time. Never turn a date into months or years yourself.
+- region_minimums: minimum allocations to a country or region ("at least 10% in Saudi" -> \
+Saudi Arabia, 10). A minimum for the Gulf or GCC as a whole goes in home_bias_gcc_pct.
+- goals: each investment goal the client states (cash withdrawals go only in \
+liquidity_needs, not here), with an amount, a multiple of today's value, or years, \
 as written.
 - max_volatility_pct / max_drawdown_pct: only if the notes state a limit ("can't lose more \
 than 20%" is a drawdown limit of 20).
@@ -44,9 +67,38 @@ def profile_tool() -> dict:
         "horizon_years": _num(),
         "return_target_pct": _num(),
         "portfolio_value_usd": _num(),
-        "liquidity_need_usd": _num(),
-        "liquidity_months": _num(),
-        "residency": {"type": ["string", "null"]},
+        "name": {"type": "string"},
+        "age": _num(),
+        "jurisdiction": {
+            "anyOf": [{"type": "string", "enum": list(JURISDICTIONS)}, {"type": "null"}]
+        },
+        "tax_notes": {"type": "string"},
+        "liquidity_needs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string"},
+                    "amount_usd": {"type": "number"},
+                    "when": {"type": "string"},
+                },
+                "required": ["description", "amount_usd", "when"],
+                "additionalProperties": False,
+            },
+        },
+        "region_minimums": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string", "enum": list(REGIONS)},
+                    "min_pct": {"type": "number"},
+                },
+                "required": ["region", "min_pct"],
+                "additionalProperties": False,
+            },
+        },
+        "residency": {"type": "string"},
         "us_person": {"type": ["boolean", "null"]},
         # strict mode: an enum can't share a type list with null, so offer either explicitly
         "classification": {
@@ -109,8 +161,7 @@ def _draft_numbers(draft: dict) -> list[float]:
         "horizon_years",
         "return_target_pct",
         "portfolio_value_usd",
-        "liquidity_need_usd",
-        "liquidity_months",
+        "age",
         "home_bias_gcc_pct",
         "max_volatility_pct",
         "max_drawdown_pct",
@@ -118,6 +169,15 @@ def _draft_numbers(draft: dict) -> list[float]:
     values = [draft.get(k) for k in keys]
     for g in draft.get("goals") or []:
         values += [g.get("amount_usd"), g.get("multiple"), g.get("years")]
+    for need in draft.get("liquidity_needs") or []:
+        values.append(need.get("amount_usd"))
+        when = str(need.get("when") or "").strip()
+        if re.match(r"^\d{4}-\d{2}", when):  # the year must be in the notes (month may be a name)
+            values.append(when[:4])
+        else:
+            values += re.findall(r"\d+(?:\.\d+)?", when)
+    for item in draft.get("region_minimums") or []:
+        values.append(item.get("min_pct"))
     return [float(v) for v in values if v is not None]
 
 
@@ -133,6 +193,7 @@ class ProfileProposal:
     unmapped: list[str]
     summary: str
     numbers_not_in_notes: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)  # e.g. a cash need with no date
 
 
 def propose_profile(client: Any, model: str, notes: str, effort: str = "low") -> ProfileProposal:
@@ -149,36 +210,81 @@ def propose_profile(client: Any, model: str, notes: str, effort: str = "low") ->
     if response.stop_reason == "refusal" or not calls:
         raise ValueError("The model did not fill the form. Try rephrasing the notes.")
     draft = dict(calls[0].input)
+    problems = [
+        f"Cash need '{n.get('description')}' (USD {n.get('amount_usd') or 0:,.0f}) has no "
+        "usable date in the notes: add it on the form."
+        for n in draft.get("liquidity_needs") or []
+        if need_date(n, date.today()) is None
+    ]
     return ProfileProposal(
         draft,
         list(draft.get("unmapped_requests") or []),
         str(draft.get("summary") or ""),
         numbers_not_in_notes(draft, notes),
+        problems,
     )
 
 
-def apply_proposal(profile: ClientProfile, draft: dict) -> ClientProfile:
-    """Copy the stated facts onto the profile; questionnaire answers are never touched."""
+def need_date(need: dict, today: date) -> str | None:
+    """The month a need is due, 'YYYY-MM', from the model's copy of the notes' ``when``:
+    a month as written ('2028-10'), or a relative time ('in 18 months', 'in 2 years') added
+    to ``today`` here, in code, never by the model. None if neither can be read."""
+    when = str(need.get("when") or "").strip().lower()
+    if re.match(r"^\d{4}-\d{2}", when):
+        try:
+            parse_month(when)
+            return when[:7]
+        except ValueError:
+            return None
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(year|yr|month|mo)", when)
+    if not match:
+        return None
+    n = float(match.group(1))
+    return month_after(today, round(n * 12 if match.group(2).startswith("y") else n))
+
+
+def apply_proposal(profile: ClientProfile, draft: dict, today: date | None = None) -> ClientProfile:
+    """Copy the stated facts onto the profile; questionnaire answers are never touched.
+
+    The regulator comes from the jurisdiction by a fixed rule (``regulator_for``); dated needs
+    get their month from code (``need_date``).
+    """
+    today = today or date.today()
     simple = [
         "horizon_years",
         "return_target_pct",
         "portfolio_value_usd",
+        "name",
+        "tax_notes",
         "residency",
         "us_person",
         "classification",
         "sharia_only",
         "home_bias_gcc_pct",
     ]
-    updates = {k: draft[k] for k in simple if draft.get(k) is not None}
-    if draft.get("liquidity_need_usd"):
-        months = int(draft.get("liquidity_months") or 12)
-        updates["liquidity_needs"] = [
-            {
-                "description": "Cash need",
-                "amount_usd": float(draft["liquidity_need_usd"]),
-                "date": month_after(date.today(), months),
-            }
-        ]
+    # null (or "" for text) means "not in the notes": the form keeps what it had
+    updates = {k: draft[k] for k in simple if draft.get(k) not in (None, "")}
+    if draft.get("age") is not None:
+        updates["age"] = int(draft["age"])
+    if regulator_for(draft.get("jurisdiction")):
+        updates["regulator"] = regulator_for(draft["jurisdiction"])
+    needs = []
+    for need in draft.get("liquidity_needs") or []:
+        when = need_date(need, today)
+        if when and need.get("amount_usd"):
+            needs.append(
+                {
+                    "description": need.get("description") or "Cash need",
+                    "amount_usd": float(need["amount_usd"]),
+                    "date": when,
+                }
+            )
+    if needs:
+        updates["liquidity_needs"] = needs
+    if draft.get("region_minimums"):
+        updates["region_minimums"] = {
+            r["region"]: float(r["min_pct"]) for r in draft["region_minimums"]
+        }
     if draft.get("excluded_sectors"):
         updates["excluded_sectors"] = [s[:1].upper() + s[1:] for s in draft["excluded_sectors"]]
     if draft.get("goals"):

@@ -72,6 +72,7 @@ from gpl.plots import (
 )
 from gpl.recommend import GOALS, KEEP
 from gpl.report import ReportInputs, client_report
+from gpl.scenarios import classify_holdings
 from gpl.suitability import check_suitability, suitability_table
 
 CFG = load_universe()
@@ -788,6 +789,7 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
             holding_groups,
             get_attributes(tuple(my_weights)),
             cash_like_now(),
+            holding_regions(),
         )
         limits = tighter(limits, ips_spec)
         for note in notes:
@@ -821,6 +823,17 @@ ATTRIBUTES = CFG.get("security_attributes", {})
 def get_attributes(tickers: tuple[str, ...]) -> dict[str, dict]:
     """Sharia status and sector: config first, then Yahoo's sector for stocks (cached)."""
     return security_attributes(list(tickers), ATTRIBUTES)
+
+
+def holding_regions() -> dict[str, str]:
+    """Each holding's region (``gpl.scenarios.classify_holdings``), for region minimums."""
+    classes = classify_holdings(
+        list(my_weights),
+        CFG.get("exposure_meta", {}),
+        ws.groups_of_holdings(),
+        data.history["currency"].to_dict(),
+    )
+    return {t: c["region"] for t, c in classes.items()}
 
 
 def cash_like_now() -> list[str]:
@@ -888,6 +901,12 @@ def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
         return None
     currencies = data.history["currency"].to_dict()
     tickers = tuple(sorted(set().union(*[set(w.index) for w in portfolios.values()])))
+    regions = {
+        t: c["region"]
+        for t, c in classify_holdings(
+            list(tickers), CFG.get("exposure_meta", {}), ws.groups_of_holdings(), currencies
+        ).items()
+    }
     return {
         name: check_suitability(
             w,
@@ -901,6 +920,7 @@ def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
             portfolio_value(),
             0.03,
             CFG.get("cash_like", []),
+            regions,
         )
         for name, w in portfolios.items()
     }
@@ -1163,6 +1183,7 @@ with tab_client:
         agent.make_client,
         A["model"],
         cash_like_now() if portfolio_ok else [],
+        holding_regions() if portfolio_ok else {},
     )
     if client_ui.current_profile() is not None:
         st.divider()

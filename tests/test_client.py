@@ -285,3 +285,18 @@ def test_tighter_merges_sets() -> None:
     sets = tighter(a, b).sets
     assert sets["Cash need"] == (frozenset({"BIL"}), 0.3, 0.9)
     assert sets["Saudi Arabia"] == (frozenset({"KSA"}), 0.1, None)
+
+
+def test_region_minimum_becomes_an_optimiser_set() -> None:
+    p = profile(region_minimums={"Saudi Arabia": 10.0, "Qatar": 5.0})
+    ips = build_ips(p, CFG, today=TODAY)
+    regions = {"2222.SR": "Saudi Arabia", "KSA": "Saudi Arabia", "SPY": "United States (listing)"}
+    spec, notes = ips_constraints(ips, ["2222.SR", "KSA", "SPY"], {}, {}, regions=regions)
+    assert spec.sets["Region Saudi Arabia"] == (frozenset({"2222.SR", "KSA"}), 0.10, None)
+    assert spec.sets["Region Qatar"][0] == frozenset()  # infeasible, with a reason
+    assert any("At least 5.00% in Qatar can't be met" in n for n in notes)
+    assert "At least 10% in Saudi Arabia." in ips.sections["Unique circumstances"]
+    from gpl.client import in_region
+
+    assert in_region("United States (listing)", "United States")
+    assert not in_region("United Kingdom", "United States")

@@ -1248,3 +1248,26 @@ def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
     assert not app.exception, app.exception
     assert app.session_state["main_tab"] == "Portfolio"
     assert app.session_state["portfolio_tab"] == "Rebalance"
+
+
+def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) -> None:
+    from test_agent_profile import QA_DRAFT, QA_NOTES
+
+    at, client = optimise_app([response([tool_use("p1", "propose_profile", QA_DRAFT)], "tool_use")])
+    at.button(key="client_new").click().run()
+    at.text_area(key="client_notes").set_value(QA_NOTES)
+    at.button(key="client_interpret").click().run()
+    assert not at.exception, at.exception
+    assert not at.error, [e.value for e in at.error]
+    v = at.session_state["client_v"]
+    assert at.text_input(key=f"cl_name_{v}").value == "Khalid Al Mansoori"
+    assert at.number_input(key=f"cl_age_{v}").value == 58
+    assert at.selectbox(key=f"cl_reg_{v}").value == "FSRA (ADGM)"
+    assert at.text_area(key=f"cl_tax_{v}").value.startswith("UAE tax resident")
+    ips = next(m.value for m in at.markdown if m.value.startswith("**Return.**"))
+    assert "USD 600,000 by Oct 2028" in ips and "At least 10% in Saudi Arabia." in ips
+    # the client's value (USD 3m) is the portfolio value; the IPS limits reach Optimise
+    assert at.session_state["ctx"].portfolio_value == 3_000_000.0
+    plan = next(m.value for m in at.markdown if m.value.startswith("**Goal:**"))
+    assert "Region Saudi Arabia (KSA): at least 10.00%" in plan
+    assert "Cash need (no holding): at least 20.00%" in plan

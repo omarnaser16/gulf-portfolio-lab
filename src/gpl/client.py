@@ -75,7 +75,44 @@ REGULATORS = [
     "Other",
 ]
 CLASSIFICATIONS = ["Retail", "Professional"]
+# where the client is booked -> who regulates the advice (the adviser confirms)
+JURISDICTIONS: dict[str, str] = {
+    "ADGM (Abu Dhabi)": "FSRA (ADGM)",
+    "DIFC (Dubai)": "DFSA (DIFC)",
+    "UAE onshore": "SCA (UAE)",
+    "Saudi Arabia": "CMA (Saudi Arabia)",
+    "QFC (Qatar)": "QFCRA (Qatar)",
+    "Other": "Other",
+}
+# regions for minimum allocations; the names gpl.scenarios.classify_holdings gives holdings
+REGIONS = [
+    "Saudi Arabia",
+    "UAE",
+    "Qatar",
+    "Kuwait",
+    "Bahrain",
+    "Oman",
+    "United States",
+    "United Kingdom",
+    "Developed ex-US",
+    "Emerging markets",
+    "Global",
+]
 PEGGED = {"USD", "SAR", "AED", "QAR", "BHD", "OMR"}
+
+
+def regulator_for(jurisdiction: str | None) -> str | None:
+    """The regulator for a booking jurisdiction (``JURISDICTIONS``); None if unknown.
+
+    ADGM (Abu Dhabi Global Market) -> FSRA; DIFC (Dubai) -> DFSA; onshore UAE -> SCA;
+    Saudi Arabia -> CMA; QFC (Qatar) -> QFCRA.
+    """
+    return JURISDICTIONS.get(jurisdiction or "")
+
+
+def in_region(holding_region: str, region: str) -> bool:
+    """'United States (listing)' counts for 'United States'; otherwise names must match."""
+    return holding_region == region or holding_region.startswith(region + " (")
 
 
 def horizon_score(years: float) -> int:
@@ -167,6 +204,7 @@ class ClientProfile:
 
     reference: str = ""
     name: str = ""
+    age: int | None = None
     classification: str = "Retail"
     regulator: str = "DFSA (DIFC)"
     residency: str = "UAE"
@@ -183,6 +221,7 @@ class ClientProfile:
     sharia_only: bool = False
     excluded_sectors: list[str] = field(default_factory=list)
     home_bias_gcc_pct: float | None = None
+    region_minimums: dict[str, float] = field(default_factory=dict)  # region -> minimum %
     max_non_pegged_currency_pct: float = 20.0
     unique_notes: str = ""
     answers: dict[str, int] = field(default_factory=dict)
@@ -217,6 +256,11 @@ class ClientProfile:
                 setattr(out, name, float(getattr(out, name)))
             except (TypeError, ValueError) as e:
                 raise ValueError(f"{name} must be a number, got {getattr(out, name)!r}") from e
+        try:
+            out.region_minimums = {str(r): float(v) for r, v in out.region_minimums.items()}
+            out.age = None if out.age in (None, "") else int(out.age)
+        except (TypeError, ValueError, AttributeError) as e:
+            raise ValueError(f"bad age or region minimums: {e}") from e
         needs = []
         for need in out.liquidity_needs:
             try:
@@ -331,6 +375,7 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
     limits["cash_needs_due"] = soon
     limits["cash_needs_later"] = later
     limits["cash_need_window_months"] = window
+    limits["region_minimums"] = {r: v / 100 for r, v in profile.region_minimums.items() if v}
     limits["sharia_only"] = profile.sharia_only
     limits["excluded_sectors"] = list(profile.excluded_sectors)
 
@@ -355,7 +400,8 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
     sections = {
         "Return": f"Goals: {goals}{target}",
         "Risk": risk_text,
-        "Time horizon": f"{profile.horizon_years:g} years.",
+        "Time horizon": f"{profile.horizon_years:g} years."
+        + (f" Client age: {profile.age}." if profile.age else ""),
         "Taxes": (
             f"Residency: {profile.residency}. US person: {'yes' if profile.us_person else 'no'}."
             + (f" {profile.tax_notes}" if profile.tax_notes else "")
@@ -375,6 +421,9 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
                 f"At least {profile.home_bias_gcc_pct:g}% in GCC holdings (home-market bias)."
                 if profile.home_bias_gcc_pct
                 else "",
+                " ".join(
+                    f"At least {v:g}% in {r}." for r, v in profile.region_minimums.items() if v
+                ),
                 f"At most {profile.max_non_pegged_currency_pct:g}% in currencies not pegged to "
                 "the US dollar.",
                 profile.unique_notes,
@@ -441,6 +490,7 @@ def ips_constraints(
     groups: dict[str, str],
     attributes: dict[str, dict],
     cash_like: list[str] | None = None,
+    regions: dict[str, str] | None = None,
 ) -> tuple[OptimisationSpec, list[str]]:
     """IPS limits as optimiser limits, plus notes for the adviser.
 
@@ -448,7 +498,9 @@ def ips_constraints(
     automatically but noted for review. The drawdown limit can't be an optimiser constraint
     (it isn't convex); the suitability check enforces it. Cash needs due soon (plus any
     reserve) become a hard minimum on the ``cash_like`` holdings (see ``cash_like_holdings``);
-    with none of them held, the limit can't be met and the note says what to add.
+    with none of them held, the limit can't be met and the note says what to add. Region
+    minimums (e.g. Saudi Arabia >= 10%) become minimums on the holdings in that region
+    (``regions``: ticker -> region, from ``gpl.scenarios.classify_holdings``).
     """
     excluded, review = excluded_holdings(ips, holdings, attributes)
     lim = ips.limits
@@ -471,6 +523,19 @@ def ips_constraints(
                 "short-term bonds or sukuk. Add one (e.g. BIL, T-bills) or put a holding in the "
                 f"'{CASH_GROUP}' group."
             )
+    for region, minimum in lim["region_minimums"].items():
+        members = [
+            t
+            for t in holdings
+            if t not in excluded and in_region((regions or {}).get(t, ""), region)
+        ]
+        sets[f"Region {region}"] = (frozenset(members), minimum, None)
+        notes.append(
+            f"At least {minimum:.2%} in {region} ({', '.join(members)})."
+            if members
+            else f"At least {minimum:.2%} in {region} can't be met: no holding is in {region}. "
+            "Add one (e.g. a country ETF or local stock)."
+        )
     spec = OptimisationSpec(
         objective="max_sharpe",
         max_weight=lim["max_weight"] or 1.0,

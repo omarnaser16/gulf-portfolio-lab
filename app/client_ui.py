@@ -17,6 +17,7 @@ from gpl.client import (
     CLASSIFICATIONS,
     EXAMPLE_CLIENTS,
     QUESTIONS,
+    REGIONS,
     REGULATORS,
     ClientProfile,
     build_ips,
@@ -101,10 +102,11 @@ def _opt(value):
 def _form(p: ClientProfile, v: int) -> ClientProfile:
     """Draw the form from ``p`` and return the profile the widgets now describe."""
     k = f"_{v}"
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns([3, 3, 1, 2])
     reference = c1.text_input("Client reference", p.reference, key="cl_ref" + k)
     name = c2.text_input("Name (optional)", p.name, key="cl_name" + k)
-    classification = c3.selectbox(
+    age = c3.number_input("Age", 18, 110, p.age, 1, key="cl_age" + k, placeholder="–")
+    classification = c4.selectbox(
         "Classification",
         CLASSIFICATIONS,
         index=CLASSIFICATIONS.index(p.classification) if p.classification in CLASSIFICATIONS else 0,
@@ -209,6 +211,22 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         5.0,
         key="cl_fx" + k,
     )
+    st.caption("Minimum allocations to a country or region (e.g. Saudi Arabia at least 10%).")
+    regions_table = st.data_editor(
+        pd.DataFrame(
+            [{"region": r, "min_pct": v} for r, v in p.region_minimums.items()],
+            columns=["region", "min_pct"],
+        ),
+        num_rows="dynamic",
+        key="cl_regions" + k,
+        width="stretch",
+        column_config={
+            "region": st.column_config.SelectboxColumn("Region", options=REGIONS),
+            "min_pct": st.column_config.NumberColumn(
+                "At least (%)", min_value=0.0, max_value=100.0, format="%.2f"
+            ),
+        },
+    )
     sectors = st.multiselect(
         "Excluded sectors",
         sorted(set(SECTOR_CHOICES) | set(p.excluded_sectors)),
@@ -247,7 +265,10 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
                 placeholder="from band",
             ),
         }
-    with st.expander("Notes (taxes, legal, unique circumstances, adviser)"):
+    with st.expander(
+        "Notes (taxes, legal, unique circumstances, adviser)",
+        expanded=bool(p.tax_notes or p.legal_notes or p.unique_notes),
+    ):
         tax_notes = st.text_area("Tax notes", p.tax_notes, key="cl_tax" + k)
         legal_notes = st.text_area("Legal / regulatory notes", p.legal_notes, key="cl_legal" + k)
         unique_notes = st.text_area(
@@ -273,6 +294,11 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
                 "date": str(row["date"]).strip()[:7],
             }
         )
+    region_minimums = {
+        str(row["region"]): float(row["min_pct"])
+        for _, row in regions_table.iterrows()
+        if pd.notna(row["region"]) and pd.notna(row["min_pct"]) and row["min_pct"] > 0
+    }
     goal_rows = []
     for _, row in goals.iterrows():
         g = {c: row[c] for c in goals.columns if pd.notna(row[c]) and row[c] != ""}
@@ -281,6 +307,7 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
     return ClientProfile(
         reference=reference,
         name=name,
+        age=None if age is None else int(age),
         classification=classification,
         regulator=regulator,
         residency=residency,
@@ -296,6 +323,7 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         sharia_only=sharia,
         excluded_sectors=list(sectors),
         home_bias_gcc_pct=home_bias,
+        region_minimums=region_minimums,
         max_non_pegged_currency_pct=non_pegged,
         unique_notes=unique_notes,
         answers=answers,
@@ -313,6 +341,7 @@ def render_client_tab(
     make_client: Callable,
     model: str,
     cash_like: list[str] | None = None,
+    regions: Mapping[str, str] | None = None,
 ) -> None:
     st.subheader("Client profile and Investment Policy Statement")
     st.caption(
@@ -331,8 +360,8 @@ def render_client_tab(
         st.text_area(
             "Adviser's notes",
             key="client_notes",
-            placeholder="e.g. Dubai resident, $500k, needs 50k next year for a "
-            "property deposit, Sharia-compliant only, at least 20% in the Gulf.",
+            placeholder="e.g. Ahmed, 52, booked in Abu Dhabi, $2m. Needs $400k in Oct 2028 for "
+            "a property. Sharia-compliant only, at least 10% in Saudi. UAE tax resident.",
         )
         st.button(
             "Fill the form with AI",
@@ -348,6 +377,8 @@ def render_client_tab(
                 st.info(f"**The AI recorded:** {proposal.summary}")
             for item in proposal.unmapped:
                 st.warning(f"Not recorded (no field for it): “{item}”")
+            for problem in proposal.problems:
+                st.warning(problem)
             if proposal.numbers_not_in_notes:
                 st.warning(
                     "These numbers are not in your notes, please check them: "
@@ -377,7 +408,9 @@ def render_client_tab(
     st.markdown("**Investment Policy Statement (RRTTLLU)**")
     st.markdown("\n\n".join(f"**{name}.** {text}" for name, text in ips.sections.items()))
     if holdings:
-        _, notes = ips_constraints(ips, holdings, dict(groups), dict(attributes), cash_like)
+        _, notes = ips_constraints(
+            ips, holdings, dict(groups), dict(attributes), cash_like, dict(regions or {})
+        )
         for note in notes:
             st.caption("• " + note)
     d1, d2 = st.columns(2)
