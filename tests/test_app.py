@@ -1311,3 +1311,16 @@ def test_report_uses_the_optimiser_recommendation_not_a_chat_what_if(
     assert inputs.value == 250_000.0 and "Value (USD)" in inputs.holdings.columns
     if not keep and rec["status"] == "recommended":
         assert inputs.trades is not None and inputs.trades["rows"][0][0] == "Holding"
+
+
+def test_headline_figures_and_suitability_name_their_periods(app: AppTest) -> None:
+    caption = next(c.value for c in app.caption if c.value.startswith("**Backtest period "))
+    assert "–" in caption and "deltas against" in caption
+    app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    app.button(key="client_load_example").click().run()
+    periods = next(c.value for c in app.caption if c.value.startswith("**Periods.**"))
+    assert "full history" in periods and "backtest period" in periods
+    assert any(
+        m.value.startswith("**Your portfolio vs") and "backtest period" in m.value
+        for m in app.markdown
+    )

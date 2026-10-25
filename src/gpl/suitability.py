@@ -23,7 +23,7 @@ from gpl.client import (
     month_text,
 )
 from gpl.data import SUBUNITS
-from gpl.metrics import annualised_volatility, max_drawdown
+from gpl.metrics import annualised_volatility, max_drawdown, period_label
 from gpl.scenarios import episode_performance
 
 STATUS = {"pass": "Pass", "fail": "Fail", "review": "Review"}
@@ -38,6 +38,7 @@ class Check:
     reason: str
     breach: float | None = None  # how far past the limit (limit's units: fraction or USD)
     scale: float | None = None  # the limit's size, to compare breaches across rules
+    period: str = ""  # the dates the measured value covers (risk rules: the full history)
 
 
 def _pct(x: float | None) -> str:
@@ -57,6 +58,7 @@ def check_suitability(
     liquid_max_volatility: float = 0.03,
     cash_like: Sequence[str] = (),
     regions: Mapping[str, str] | None = None,
+    headline_dates: pd.Index | None = None,
 ) -> list[Check]:
     """Check ``weights`` against every IPS rule.
 
@@ -77,6 +79,10 @@ def check_suitability(
         (``gpl.client.cash_like_holdings``).
     regions : mapping, optional
         Ticker -> region (``gpl.scenarios.classify_holdings``), for the region minimums.
+    headline_dates : pd.Index, optional
+        The dates of the headline figures (the backtest period). Volatility and drawdown are
+        judged on the full history, which is longer and includes earlier crises; over these
+        dates they are added to the reasons too, so both periods are visible and labelled.
     """
     w = weights[weights > 0]
     port = returns[list(w.index)] @ w
@@ -112,7 +118,8 @@ def check_suitability(
                 "pass" if ok else "fail",
                 _pct(vol),
                 _pct(lim["max_volatility"]),
-                f"Historical volatility {vol:.2%} is {'within' if ok else 'above'} the "
+                f"Volatility over the full history ({returns.index[0]:%b %Y} - "
+                f"{returns.index[-1]:%b %Y}) is {vol:.2%}, {'within' if ok else 'above'} the "
                 f"{lim['max_volatility']:.2%} IPS limit ({source('max_volatility')}).",
                 None if ok else vol - lim["max_volatility"],
                 lim["max_volatility"],
@@ -381,6 +388,28 @@ def check_suitability(
             cap_fx or 1.0,
         )
     )
+    full = period_label(returns.index)
+    for c in checks:
+        if c.rule in ("Volatility", "Max drawdown", "Liquidity"):
+            c.period = f"full history: {full}"
+        elif c.rule == "Worst stress episode":
+            c.period = "historical episodes"
+        else:
+            c.period = "today's weights"
+    if headline_dates is not None:
+        dates = returns.index.intersection(headline_dates)
+        if len(dates) > 1:
+            short = port.loc[dates]
+            label = period_label(dates)
+            extra = {
+                "Volatility": f" Over the backtest period ({label}): "
+                f"{float(annualised_volatility(short, periods_per_year)):.2%}.",
+                "Max drawdown": f" Over the backtest period ({label}): "
+                f"{float(max_drawdown(short)):.2%}.",
+            }
+            for c in checks:
+                if c.rule in extra:
+                    c.reason += extra[c.rule]
     return checks
 
 

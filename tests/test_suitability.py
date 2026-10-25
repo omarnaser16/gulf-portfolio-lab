@@ -72,7 +72,8 @@ def test_volatility_and_drawdown_rules() -> None:
     vol = float(RETURNS["EQ"].std() * np.sqrt(252))
     assert risky["Volatility"].status == "fail"
     assert risky["Volatility"].measured == f"{vol:.2%}" and risky["Volatility"].limit == "12.00%"
-    assert f"{vol:.2%} is above the 12.00% IPS limit (band 3" in risky["Volatility"].reason
+    assert f"is {vol:.2%}, above the 12.00% IPS limit (band 3" in risky["Volatility"].reason
+    assert "Volatility over the full history (Jan 2019 - " in risky["Volatility"].reason
     calm = run({"BOND": 1.0})
     assert calm["Volatility"].status == "pass" and calm["Max drawdown"].status == "pass"
 
@@ -220,3 +221,28 @@ def test_region_minimums_rule() -> None:
     )
     assert check({"EQ": 0.5, "BOND": 0.2, "GCC": 0.3}).status == "pass"
     assert check({"EQ": 1.0}, regions=None).status == "review"
+
+
+def test_checks_name_their_period_and_show_the_headline_period_too() -> None:
+    from gpl.metrics import annualised_volatility, period_label
+
+    headline = RETURNS.index[500:]
+    out = check_suitability(
+        pd.Series({"EQ": 1.0}),
+        RETURNS,
+        ips(),
+        ATTRS,
+        CURRENCIES,
+        GROUPS,
+        252,
+        EPISODES,
+        headline_dates=headline,
+    )
+    checks = {c.rule: c for c in out}
+    assert checks["Volatility"].period == f"full history: {period_label(RETURNS.index)}"
+    assert checks["Concentration"].period == "today's weights"
+    short_vol = float(annualised_volatility(RETURNS["EQ"].loc[headline], 252))
+    assert (
+        f"Over the backtest period ({period_label(headline)}): {short_vol:.2%}."
+        in checks["Volatility"].reason
+    )

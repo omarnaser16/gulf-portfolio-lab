@@ -627,6 +627,15 @@ def _bullets(lines: Sequence[str]) -> list:
     return [Paragraph(_inline(t), STYLES["bullet"], bulletText="•") for t in lines]
 
 
+def _periods(results: dict) -> str:
+    """The full-history period the risk checks used ('' if not recorded)."""
+    for checks in results.values():
+        for ch in checks:
+            if ch.period.startswith("full history: "):
+                return ch.period.removeprefix("full history: ")
+    return ""
+
+
 def _suitability_table(results: dict) -> Table:
     names = list(results)
     by_rule: dict[str, dict] = {}
@@ -709,6 +718,7 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
         )
         story.append(
             para(
+                f"Period: {inputs.kpis.attrs.get('period', 'the backtest period')}. "
                 "How today's mix would have done in the past, rebalanced monthly after costs. "
                 "The difference is your portfolio minus the benchmark. Past results do not "
                 "predict future results.",
@@ -787,8 +797,11 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
         story.append(_suitability_table(inputs.suitability))
         story.append(
             para(
-                "Risk figures use each mix over the holdings' full shared history, which can "
-                "include earlier crises than the performance period above.",
+                "Risk figures (volatility, drawdown) use each mix over the holdings' full shared "
+                "history"
+                + (f" ({_periods(inputs.suitability)})" if _periods(inputs.suitability) else "")
+                + ", which can include earlier crises than the performance period above; the "
+                "reasons also give the performance-period figures.",
                 "small",
             )
         )

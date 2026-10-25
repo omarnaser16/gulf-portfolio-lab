@@ -552,6 +552,13 @@ def rolling_volatility(
     return (returns.rolling(window).std(ddof=1) * np.sqrt(periods_per_year)).iloc[window - 1 :]
 
 
+def period_label(index: pd.Index) -> str:
+    """'1 Apr 2021 – 30 Sep 2026': the first and last dates of ``index`` (empty: '–')."""
+    if len(index) == 0:
+        return "–"
+    return f"{index[0]:%d %b %Y} – {index[-1]:%d %b %Y}"
+
+
 def kpi_table(
     returns: pd.Series,
     benchmark: pd.Series,
@@ -561,7 +568,8 @@ def kpi_table(
     """Headline figures for the portfolio and the benchmark on their shared dates, with deltas.
 
     Rows: ``cagr``, ``volatility``, ``sharpe``, ``max_drawdown``. Columns: ``portfolio``,
-    ``benchmark``, ``delta`` (portfolio minus benchmark).
+    ``benchmark``, ``delta`` (portfolio minus benchmark). ``attrs["period"]`` names the dates
+    the figures cover (``period_label``).
     """
     dates = returns.index.intersection(benchmark.index)
     table = summary_table(
@@ -573,4 +581,6 @@ def kpi_table(
         index={"ann_vol": "volatility"}
     )
     out["delta"] = out["portfolio"] - out["benchmark"]
-    return out.astype(float)
+    out = out.astype(float)
+    out.attrs["period"] = period_label(dates)
+    return out

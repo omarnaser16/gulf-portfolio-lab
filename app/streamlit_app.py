@@ -42,7 +42,13 @@ from gpl.data import (
     to_returns,
 )
 from gpl.domicile import domicile_report, format_domicile
-from gpl.metrics import drawdown_series, kpi_table, relative_drawdown, summary_table
+from gpl.metrics import (
+    drawdown_series,
+    kpi_table,
+    period_label,
+    relative_drawdown,
+    summary_table,
+)
 from gpl.montecarlo import (
     goal_probability,
     path_max_drawdowns,
@@ -926,6 +932,7 @@ def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
             0.03,
             CFG.get("cash_like", []),
             regions,
+            headline_dates(),
         )
         for name, w in portfolios.items()
     }
@@ -948,10 +955,20 @@ def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
         with st.expander(f"Reasons: {name}"):
             for c in checks:
                 st.markdown(f"{SUITABILITY_ICON[c.status]} **{c.rule}.** {c.reason}")
+    full = period_label(all_returns.index)
+    dates = headline_dates()
     st.caption(
-        f"Client {ips.client.reference or '(no reference)'}. Historical figures at today's "
-        "weights; ⚠️ Review means the data can't decide and the adviser must check. Decision "
-        "support for a licensed adviser."
+        f"**Periods.** Policy risk checks (volatility, drawdown) use the full history, {full}: "
+        "longer than the headline cards and including earlier crises. "
+        + (
+            f"The headline cards cover the backtest period, {period_label(dates)}; the reasons "
+            "give both. "
+            if dates is not None
+            else ""
+        )
+        + f"Client {ips.client.reference or '(no reference)'}. Today's weights; ⚠️ Review means "
+        "the data can't decide and the adviser must check. Decision support for a licensed "
+        "adviser."
     )
 
 
@@ -1310,14 +1327,21 @@ def portfolio_kpis() -> pd.DataFrame | None:
     return kpi_table(mine.returns.iloc[1:], bench.returns, rf, periods)
 
 
+def headline_dates() -> pd.Index | None:
+    """Dates of the headline figures: the backtest period of today's weights."""
+    if not portfolio_ok or not enough_history:
+        return None
+    return run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback).returns.index[1:]
+
+
 def render_portfolio_kpis() -> None:
-    ws.render_kpis(
-        portfolio_kpis(), ws.portfolio_value_text(), bench_name, bench is not None and bench.is_cash
-    )
-    if portfolio_ok and enough_history and bench is not None:
+    kpi = portfolio_kpis()
+    ws.render_kpis(kpi, ws.portfolio_value_text(), bench_name, bench is not None and bench.is_cash)
+    if kpi is not None:
         st.caption(
-            "Return, volatility, Sharpe and max drawdown: your current weights rebalanced monthly "
-            f"after costs, over the backtest period; deltas against {bench_name}."
+            f"**Backtest period {kpi.attrs['period']}.** Return, volatility, Sharpe and max "
+            "drawdown: your current weights rebalanced monthly after costs; deltas against "
+            f"{bench_name}."
         )
 
 
@@ -1445,7 +1469,10 @@ with tab_mine:
         else:
             mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
             port = mine.returns.iloc[1:]  # from the first full day held
-            st.markdown(f"**Your portfolio vs {bench_name}**")
+            st.markdown(
+                f"**Your portfolio vs {bench_name}** · backtest period "
+                f"{period_label(port.index.intersection(bench.returns.index))}"
+            )
             st.table(ws.benchmark_comparison(port, bench.returns, rf, periods, bench.is_cash))
             dates = port.index.intersection(bench.returns.index)
             st.caption(

@@ -120,3 +120,14 @@ def test_benchmark_metrics_bundle_and_cash() -> None:
     assert not np.isnan(raw["beta"])  # numerically defined, but meaningless
     cash = benchmark_metrics(R, drifting, market_risk=False)
     assert all(np.isnan(cash[k]) for k in ("beta", "alpha", "up_capture", "correlation"))
+
+
+def test_period_label_and_kpi_period() -> None:
+    from gpl.metrics import kpi_table, period_label
+
+    idx = pd.bdate_range("2021-04-01", "2026-09-30")
+    assert period_label(idx) == "01 Apr 2021 – 30 Sep 2026"
+    assert period_label(pd.DatetimeIndex([])) == "–"
+    r = pd.Series(0.001, index=idx)
+    b = pd.Series(0.0005, index=idx[10:])
+    assert kpi_table(r, b).attrs["period"] == period_label(idx[10:])  # shared dates only
