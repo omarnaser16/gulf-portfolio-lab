@@ -117,3 +117,10 @@ def test_normalise_values() -> None:
     assert normalise_holdings(out, "pct")[2] == ""  # no "scaled to 100%" note afterwards
     assert normalise_values({"A": 0, "B": 0}) == {"A": 0, "B": 0}  # nothing to scale
     assert normalise_values({"A": 20, "B": 0}) == {"A": 100.0, "B": 0}
+
+
+def test_parse_amounts_keeps_raw_values() -> None:
+    from inputs import parse_amounts
+
+    text = "SPY 120,000\nagg: 80000\nbad line\nSPY 5000\nGLD 0"
+    assert parse_amounts(text) == {"SPY": 125_000.0, "AGG": 80_000.0}

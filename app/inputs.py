@@ -41,6 +41,7 @@ def asset_groups(
 
 
 DEFAULT_HOLDINGS = "SPY 50\nAGG 30\nGLD 10\nKSA 10"
+_LINE = r"^([A-Za-z0-9^][A-Za-z0-9.\-=^]*)[\s,:;]+([\d,]*\.?\d+)\s*%?$"
 
 
 def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], list[str], str]:
@@ -65,7 +66,7 @@ def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], 
         line = raw.strip()
         if not line:
             continue
-        match = re.match(r"^([A-Za-z0-9^][A-Za-z0-9.\-=^]*)[\s,:;]+([\d,]*\.?\d+)\s*%?$", line)
+        match = re.match(_LINE, line)
         if not match:
             problems.append(f"Line {n} (“{line}”): expected a ticker and a number, e.g. “SPY 40”.")
             continue
@@ -80,6 +81,21 @@ def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], 
         note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
     weights = {t: v / total for t, v in holdings.items()} if total else {}
     return weights, problems, note
+
+
+def parse_amounts(text: str) -> dict[str, float]:
+    """Raw values of valid "TICKER value" lines (amounts in USD), summed per ticker.
+
+    Lines ``parse_holdings`` rejects are skipped here (it reports them).
+    """
+    out: dict[str, float] = {}
+    for raw in (text or "").splitlines():
+        match = re.match(_LINE, raw.strip())
+        if match:
+            value = float(match.group(2).replace(",", ""))
+            if value > 0:
+                out[match.group(1).upper()] = out.get(match.group(1).upper(), 0.0) + value
+    return out
 
 
 # ------------------------------------------------------------------- workstation holdings

@@ -15,6 +15,7 @@ from inputs import (
     guess_group,
     normalise_holdings,
     normalise_values,
+    parse_amounts,
     parse_holdings,
 )
 from streamlit_searchbox import st_searchbox
@@ -34,7 +35,7 @@ from gpl.plots import allocation_chart
 ROWS, MODE, VERSION, LAST_PICK, META = "ws_rows", "ws_mode", "ws_version", "ws_last_pick", "ws_meta"
 CASH_LIKE = "ws_cash_like"  # configured cash-like funds (grouped as "Cash & short-term")
 USD, PCT = "USD amount", "Weight (%)"
-DEFAULT_TOTAL_USD = 10_000.0
+PF_VALUE, PF_VERSION = "pf_value", "pf_v"  # the one portfolio value (USD), entered once
 EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
 READ_ONLY = {"background-color": "#1b1d22", "color": "#8f8c85"}  # muted = can't edit
 READ_ONLY_COLUMNS = ["Name", "Weight", "Price"]
@@ -62,6 +63,48 @@ def current_weights() -> tuple[dict[str, float], list[str], str]:
     return normalise_holdings(values, mode)
 
 
+def portfolio_value() -> float | None:
+    """The single portfolio value (USD) used everywhere: the total of the USD amounts when
+    holdings are entered in USD, otherwise the value entered once (Holdings or Client tab).
+    None when unknown; there is no default."""
+    if st.session_state.get(MODE) == USD:
+        total = sum(r["value"] for r in st.session_state.get(ROWS, []) if (r["value"] or 0) > 0)
+        return total or None
+    value = st.session_state.get(PF_VALUE)
+    return float(value) if value and value > 0 else None
+
+
+def set_portfolio_value(value: float | None) -> None:
+    """Record the entered value (ignored in USD mode, where the amounts define it)."""
+    st.session_state[PF_VALUE] = float(value) if value and value > 0 else None
+    st.session_state[PF_VERSION] = st.session_state.get(PF_VERSION, 0) + 1
+
+
+def _value_entered(key: str) -> None:
+    set_portfolio_value(st.session_state.get(key))
+
+
+def value_input(container, key_prefix: str, label: str = "Portfolio value (USD)") -> None:
+    """The portfolio value input; every copy of it edits the same value."""
+    key = f"{key_prefix}_{st.session_state.get(PF_VERSION, 0)}"
+    usd = st.session_state.get(MODE) == USD
+    container.number_input(
+        label,
+        min_value=0.0,
+        value=portfolio_value(),
+        step=1000.0,
+        format="%.2f",
+        key=key,
+        placeholder="enter once",
+        disabled=usd,
+        on_change=_value_entered,
+        args=(key,),
+        help="The total of the USD amounts on Holdings."
+        if usd
+        else "Used for the suitability check, rebalancing trades, domicile check and report.",
+    )
+
+
 def groups_of_holdings() -> dict[str, str]:
     return {r["ticker"]: r["group"] for r in st.session_state.get(ROWS, [])}
 
@@ -71,14 +114,26 @@ def _bump() -> None:
 
 
 def _convert_mode() -> None:
-    """When switching USD <-> %, keep the same weights."""
+    """When switching USD <-> %, keep the same weights and the same portfolio value.
+
+    % -> USD needs the portfolio value (there is no default); without it the switch is undone.
+    """
     new, old = st.session_state[MODE], st.session_state.get("ws_mode_prev", PCT)
     if new == old:
         return
-    weights, _, _ = normalise_holdings(
-        {r["ticker"]: r["value"] for r in st.session_state[ROWS]}, "usd" if old == USD else "pct"
-    )
-    total = DEFAULT_TOTAL_USD
+    values = {r["ticker"]: r["value"] for r in st.session_state[ROWS]}
+    weights, _, _ = normalise_holdings(values, "usd" if old == USD else "pct")
+    if new == USD:
+        total = st.session_state.get(PF_VALUE)
+        if not total:
+            st.session_state[MODE] = old
+            st.session_state["ws_mode_error"] = (
+                "Enter the portfolio value first, so the weights can be turned into USD amounts."
+            )
+            return
+    else:
+        total = sum(v for v in values.values() if v and v > 0)
+        set_portfolio_value(total)  # the USD total becomes the entered value
     for r in st.session_state[ROWS]:
         w = weights.get(r["ticker"], 0.0)
         r["value"] = round(w * (total if new == USD else 100), 2)
@@ -89,7 +144,9 @@ def _convert_mode() -> None:
 def _set_equal() -> None:
     rows = st.session_state[ROWS]
     usd = st.session_state[MODE] == USD
-    total = sum(r["value"] for r in rows if r["value"] > 0) or DEFAULT_TOTAL_USD
+    total = sum(r["value"] for r in rows if (r["value"] or 0) > 0)  # USD: keep the same total
+    if usd and not total:
+        return
     values = equal_values([r["ticker"] for r in rows], usd, total)
     for r in rows:
         r["value"] = values[r["ticker"]]
@@ -153,7 +210,11 @@ def render_holdings(
         st.rerun()
 
     rows = st.session_state[ROWS]
-    st.radio("Enter holdings as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
+    m1, m2 = st.columns([1, 1])
+    m1.radio("Enter holdings as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
+    value_input(m2, "pf_value_holdings")
+    if st.session_state.get("ws_mode_error"):
+        st.warning(st.session_state.pop("ws_mode_error"))
     if not rows:
         st.info("Search above to add your first holding, or import a list below.")
     else:
@@ -293,12 +354,12 @@ def _load_preset(
 def _import_list(quote: Callable[[str], object], config_groups) -> None:
     text = st.session_state.get("ws_import", "")
     kind = st.session_state.get("ws_import_kind", "Weights (%)")
-    weights, problems, _ = parse_holdings(
-        text, "weights" if kind.startswith("Weights") else "amounts"
-    )
+    amounts = not kind.startswith("Weights")
+    weights, problems, _ = parse_holdings(text, "amounts" if amounts else "weights")
     st.session_state["ws_import_problems"] = problems
     if not weights:
         return
+    raw = parse_amounts(text) if amounts else {}
     new_rows = []
     for t, w in weights.items():
         q = quote(t)
@@ -310,10 +371,15 @@ def _import_list(quote: Callable[[str], object], config_groups) -> None:
             config_groups,
             st.session_state.get(CASH_LIKE, ()),
         )
-        new_rows.append({"ticker": t, "group": group, "value": round(w * 100, 4)})
+        new_rows.append(
+            {"ticker": t, "group": group, "value": raw[t] if amounts else round(w * 100, 4)}
+        )
     st.session_state[ROWS] = new_rows
-    st.session_state[MODE] = PCT
-    st.session_state["ws_mode_prev"] = PCT
+    mode = USD if amounts else PCT  # amounts stay amounts: they define the portfolio value
+    st.session_state[MODE] = mode
+    st.session_state["ws_mode_prev"] = mode
+    if amounts:
+        set_portfolio_value(sum(raw.values()))
     _bump()
 
 
@@ -494,11 +560,9 @@ def render_kpis(
 
 
 def portfolio_value_text() -> str:
-    """Total in USD when holdings are entered as amounts; otherwise a hint."""
-    if st.session_state.get(MODE) == USD:
-        total = sum(r["value"] for r in st.session_state.get(ROWS, []) if r["value"] > 0)
-        return f"${total:,.0f}"
-    return "–"
+    """The portfolio value as text, or '–' when it hasn't been entered."""
+    value = portfolio_value()
+    return "–" if value is None else f"${value:,.0f}"
 
 
 def _norm(heading: str) -> str:
@@ -550,7 +614,7 @@ def render_rebalance(
     default_target: pd.Series,
     target_source: str,
     usd_values: pd.Series | None,
-    default_value: float,
+    value: float | None,
     price_usd: Callable[[str], float | None],
     cost_bps: float,
     cash_need: Mapping | None = None,
@@ -593,18 +657,10 @@ def render_rebalance(
         c1.number_input("Drift band (± percentage points)", 0.5, 50.0, 5.0, 0.5, key="rb_band")
         / 100
     )
-    value = c2.number_input(
-        "Portfolio value (USD)",
-        0.0,
-        1e11,
-        float(default_value),
-        1000.0,
-        key="rb_value",
-        disabled=usd_values is not None,
-        help="Taken from the USD amounts on Holdings."
-        if usd_values is not None
-        else "Enter holdings as USD amounts to use their value.",
-    )
+    value_input(c2, "pf_value_rebalance")
+    if value is None:
+        st.info("Enter the portfolio value (here or on Holdings) to see the drift and trades.")
+        return None
     if abs(target.sum() - 1) > 1e-4:
         st.warning(f"Targets add up to {target.sum():.2%}; they must add up to 100.00%.")
         return None

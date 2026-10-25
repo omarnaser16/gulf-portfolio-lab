@@ -99,11 +99,11 @@ def test_app_renders_every_tab(app: AppTest) -> None:
     ]
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
     # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings,
-    # rebalance drift, domicile check;
+    # domicile check (the rebalance drift table needs a portfolio value: none by default);
     # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
     # limits editors, the rebalance targets and the frontier weights
-    assert len(app.table) == 12 and len(app.dataframe) == 6
+    assert len(app.table) == 11 and len(app.dataframe) == 6
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -489,10 +489,11 @@ def test_holdings_report_bad_values_and_unknown_tickers(app: AppTest) -> None:
 
 
 def test_switching_to_usd_keeps_the_weights(app: AppTest) -> None:
+    app.number_input(key="pf_value_holdings_0").set_value(20_000.0).run()
     app.radio(key="ws_mode").set_value("USD amount").run()
     assert not app.exception, app.exception
     values = {r["ticker"]: r["value"] for r in app.session_state["ws_rows"]}
-    assert values == {"SPY": 5000.0, "AGG": 3000.0, "GLD": 1000.0, "KSA": 1000.0}
+    assert values == {"SPY": 10000.0, "AGG": 6000.0, "GLD": 2000.0, "KSA": 2000.0}
 
 
 def test_import_list_replaces_holdings(app: AppTest) -> None:
@@ -519,6 +520,7 @@ def test_equal_weight_and_normalise_buttons(app: AppTest) -> None:
     values = [r["value"] for r in app.session_state["ws_rows"]]
     assert values == pytest.approx([45.4545, 27.2727, 27.2727], abs=1e-4)
     assert not any("scaled to 100.00%" in c.value for c in app.caption)
+    app.number_input(key="pf_value_holdings_0").set_value(20_000.0).run()
     app.radio(key="ws_mode").set_value("USD amount").run()
     assert app.button(key="ws_normalise").disabled
 
@@ -799,7 +801,7 @@ def test_kpi_cards_with_deltas_vs_the_benchmark(app: AppTest) -> None:
     assert app.metric[0].value == "–"
     assert app.metric[1].delta.endswith(" pp") and app.metric[1].value.endswith("%")
     assert any("deltas against 60/40 (SPY/AGG)" in c.value for c in app.caption)
-    app.radio(key="ws_mode").set_value("USD amount").run()  # 10,000 USD by default
+    app.number_input(key="pf_value_holdings_0").set_value(10_000.0).run()  # entered once
     assert app.metric[0].value == "$10,000"
     app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
     assert app.metric[3].delta in (None, "")  # no Sharpe delta against cash
@@ -1053,6 +1055,10 @@ def test_client_report_button_builds_a_pdf(app: AppTest) -> None:
 
 
 def test_rebalance_no_drift_by_default(app: AppTest) -> None:
+    # no portfolio value yet (no $10,000 default): Rebalance asks for it
+    assert any("Enter the portfolio value" in i.value for i in app.info)
+    app.number_input(key="pf_value_holdings_0").set_value(250_000.0).run()
+    assert not app.exception, app.exception
     drift = next(t.value for t in app.table if "Outside band" in t.value.columns)
     assert set(drift["Outside band"]) == {"no"}
     assert any("no rebalance needed" in s.value for s in app.success)
@@ -1089,5 +1095,60 @@ def test_domicile_check_on_analyst_and_client_tabs(app: AppTest) -> None:
     assert table.loc["SPY", "Irish-domiciled alternative"].startswith("CSPX.L")
     assert any("Information, not tax advice" in i.value for i in app.info)
     assert any("Enter the portfolio value" in c.value for c in app.caption)
-    app.radio(key="ws_mode").set_value("USD amount").run()  # 10,000 USD: below the exemption
+    app.number_input(key="pf_value_holdings_0").set_value(10_000.0).run()  # below the exemption
     assert any("estate tax if the client died today: USD 0 " in c.value for c in app.caption)
+
+
+# ------------------------------------------------------------------- one portfolio value
+
+
+def _metric(app: AppTest, label: str) -> str:
+    return next(m.value for m in app.metric if m.label == label)
+
+
+def test_one_portfolio_value_everywhere(app: AppTest) -> None:
+    # no default value; switching to USD needs one
+    assert _metric(app, "Portfolio value") == "–"
+    app.radio(key="ws_mode").set_value("USD amount").run()
+    assert app.radio(key="ws_mode").value == "Weight (%)"
+    assert any("Enter the portfolio value first" in w.value for w in app.warning)
+    # a client's value fills the single value; every copy of the input shows it
+    app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
+    app.button(key="client_load_example").click().run()
+    assert not app.exception, app.exception
+    v = app.session_state[ws.PF_VERSION]
+    for key in ("pf_value_holdings", "pf_value_client", "pf_value_rebalance"):
+        assert app.number_input(key=f"{key}_{v}").value == 1_000_000.0
+    assert _metric(app, "Portfolio value") == "$1,000,000"
+    reasons = " ".join(m.value for m in app.markdown)
+    assert "the client needs USD 100,000 held now" in reasons  # suitability uses the value
+    # switching to USD keeps the weights and turns them into amounts of that value
+    app.radio(key="ws_mode").set_value("USD amount").run()
+    amounts = {r["ticker"]: r["value"] for r in app.session_state[ws.ROWS]}
+    assert amounts == {"SPY": 500_000.0, "AGG": 300_000.0, "GLD": 100_000.0, "KSA": 100_000.0}
+    # editing the value on the Client tab changes it everywhere
+    app.radio(key="ws_mode").set_value("Weight (%)").run()
+    v = app.session_state[ws.PF_VERSION]
+    app.number_input(key=f"pf_value_client_{v}").set_value(750_000.0).run()
+    assert _metric(app, "Portfolio value") == "$750,000"
+    assert app.session_state["ctx"].portfolio_value == 750_000.0
+
+
+def test_import_as_usd_amounts_keeps_the_amounts(app: AppTest) -> None:
+    app.text_area(key="ws_import").set_value("SPY 120,000\nAGG 80000\nGLD 50,000")
+    app.radio(key="ws_import_kind").set_value("Amounts (USD)")
+    app.button(key="ws_import_go").click().run()
+    assert not app.exception, app.exception
+    assert app.radio(key="ws_mode").value == "USD amount"
+    amounts = {r["ticker"]: r["value"] for r in app.session_state[ws.ROWS]}
+    assert amounts == {"SPY": 120_000.0, "AGG": 80_000.0, "GLD": 50_000.0}
+    assert _metric(app, "Portfolio value") == "$250,000"
+
+
+def test_no_hidden_default_portfolio_value() -> None:
+    import inspect
+
+    import workstation
+
+    assert not hasattr(workstation, "DEFAULT_TOTAL_USD")
+    assert "10_000" not in inspect.getsource(workstation)

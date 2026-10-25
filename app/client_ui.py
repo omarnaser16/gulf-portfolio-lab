@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 
 import pandas as pd
 import streamlit as st
+import workstation as ws
 
 from gpl.agent.profile import apply_proposal, propose_profile
 from gpl.client import (
@@ -38,11 +39,18 @@ SECTOR_CHOICES = [
 
 
 def current_profile() -> ClientProfile | None:
+    """The client profile, with the app's single portfolio value (``ws.portfolio_value``)."""
     data = st.session_state.get(CLIENT)
-    return None if data is None else ClientProfile.from_dict(data)
+    if data is None:
+        return None
+    profile = ClientProfile.from_dict(data)
+    profile.portfolio_value_usd = ws.portfolio_value()
+    return profile
 
 
 def _set_profile(profile: ClientProfile) -> None:
+    if profile.portfolio_value_usd and st.session_state.get(ws.MODE) != ws.USD:
+        ws.set_portfolio_value(profile.portfolio_value_usd)  # USD holdings define it otherwise
     st.session_state[CLIENT] = profile.to_dict()
     st.session_state[VERSION] = st.session_state.get(VERSION, 0) + 1
     st.session_state.pop("ws_draft", None)  # the Optimise form re-reads the IPS
@@ -119,15 +127,7 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
     horizon = c1.number_input(
         "Time horizon (years)", 0.5, 60.0, float(p.horizon_years), 0.5, key="cl_hor" + k
     )
-    value = c2.number_input(
-        "Portfolio value (USD)",
-        0.0,
-        1e10,
-        _opt(p.portfolio_value_usd),
-        1000.0,
-        key="cl_val" + k,
-        placeholder="not set",
-    )
+    ws.value_input(c2, "pf_value_client")
     target = c3.number_input(
         "Return target (% a year, optional)",
         -20.0,
@@ -288,7 +288,7 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         horizon_years=horizon,
         goals=goal_rows,
         return_target_pct=target,
-        portfolio_value_usd=value,
+        portfolio_value_usd=ws.portfolio_value(),
         liquidity_needs=need_rows,
         reserve_pct=reserve,
         tax_notes=tax_notes,

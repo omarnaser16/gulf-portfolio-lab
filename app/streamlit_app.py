@@ -849,11 +849,8 @@ def cash_need_for_trades() -> dict | None:
 
 
 def portfolio_value() -> float | None:
-    """USD total of the holdings if entered as amounts, else the client's stated value."""
-    if st.session_state.get(ws.MODE) == ws.USD:
-        return sum(r["value"] for r in st.session_state.get(ws.ROWS, []) if r["value"] > 0)
-    profile = client_ui.current_profile()
-    return None if profile is None else profile.portfolio_value_usd
+    """The one portfolio value (USD) used by every tab (see ``ws.portfolio_value``)."""
+    return ws.portfolio_value()
 
 
 def domicile_section() -> dict | None:
@@ -1473,7 +1470,7 @@ with tab_mine:
                 )
                 if usd
                 else None,
-                portfolio_value() or ws.DEFAULT_TOTAL_USD,
+                portfolio_value(),
                 lambda t: getattr(get_quote(t), "price_usd", None),
                 cost_bps,
                 cash_need_for_trades(),
