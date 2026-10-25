@@ -100,3 +100,33 @@ optimise_lab:
   cluster_threshold: 0.70          # holdings with average correlation >= this form a cluster
   volatility_tolerance: 0.005      # 0.50 pp: "about the same" / "on target" volatility
   held_up_ratio: 0.50              # keeps >= 50% of its in-sample Sharpe out of sample
+
+# Historical stress episodes (Analyst stress test). Returns run from the close on `start` to the
+# close on `end`.
+stress_episodes:
+  - name: COVID crash
+    start: "2020-02-19"
+    end: "2020-03-23"
+    description: "S&P 500 peak to trough as the pandemic spread (19 Feb - 23 Mar 2020)."
+  - name: 2020 oil crash
+    start: "2020-03-06"
+    end: "2020-04-21"
+    description: "OPEC+ talks collapse to US oil (WTI) trading below zero (6 Mar - 21 Apr 2020)."
+  - name: 2022 rate shock
+    start: "2022-01-03"
+    end: "2022-10-12"
+    description: "S&P 500 2022 peak to trough as the Fed raised rates fast (3 Jan - 12 Oct 2022)."
+
+# Region and asset type for known tickers (others: exchange suffix and holding group).
+exposure_meta:
+  SPY: { region: United States, asset_type: Equity }
+  EFA: { region: Developed ex-US, asset_type: Equity }
+  EEM: { region: Emerging markets, asset_type: Equity }
+  URTH: { region: World (developed), asset_type: Equity }
+  KSA: { region: Saudi Arabia, asset_type: Equity }
+  UAE: { region: UAE, asset_type: Equity }
+  QAT: { region: Qatar, asset_type: Equity }
+  AGG: { region: United States, asset_type: Bonds }
+  TLT: { region: United States, asset_type: Bonds }
+  GLD: { region: Global, asset_type: Gold / commodities }
+  "ISF.L": { region: United Kingdom, asset_type: Equity }

@@ -37,7 +37,7 @@ from gpl.data import (
     search_securities,
     to_returns,
 )
-from gpl.metrics import drawdown_series, relative_drawdown, summary_table
+from gpl.metrics import drawdown_series, kpi_table, relative_drawdown, summary_table
 from gpl.montecarlo import (
     goal_probability,
     path_max_drawdowns,
@@ -1010,8 +1010,31 @@ with tab_backtest:
                 ),
                 width="stretch",
             )
+
+
+def portfolio_kpis() -> pd.DataFrame | None:
+    """KPI table (``gpl.metrics.kpi_table``): current weights rebalanced monthly after costs vs
+    the benchmark, on the dates both cover. None if the portfolio or benchmark isn't usable."""
+    if not portfolio_ok or not enough_history or bench is None:
+        return None
+    mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
+    return kpi_table(mine.returns.iloc[1:], bench.returns, rf, periods)
+
+
+def render_portfolio_kpis() -> None:
+    ws.render_kpis(
+        portfolio_kpis(), ws.portfolio_value_text(), bench_name, bench is not None and bench.is_cash
+    )
+    if portfolio_ok and enough_history and bench is not None:
+        st.caption(
+            "Return, volatility, Sharpe and max drawdown: your current weights rebalanced monthly "
+            f"after costs, over the backtest period; deltas against {bench_name}."
+        )
+
+
 with tab_mine:
     st.subheader("My portfolio")
+    render_portfolio_kpis()
     sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt = st.tabs(
         ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"]
     )

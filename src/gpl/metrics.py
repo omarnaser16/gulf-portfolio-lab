@@ -540,3 +540,37 @@ def benchmark_metrics(
         "start": dates[0],
         "end": dates[-1],
     }
+
+
+def rolling_volatility(
+    returns: Returns, window: int = PERIODS_PER_YEAR, periods_per_year: int = PERIODS_PER_YEAR
+) -> Returns:
+    """Annualised volatility over a trailing window (e.g. one year of observations).
+
+    The first ``window - 1`` dates have no full window and are left out (not filled).
+    """
+    return (returns.rolling(window).std(ddof=1) * np.sqrt(periods_per_year)).iloc[window - 1 :]
+
+
+def kpi_table(
+    returns: pd.Series,
+    benchmark: pd.Series,
+    rf: float | pd.Series = 0.0,
+    periods_per_year: int = PERIODS_PER_YEAR,
+) -> pd.DataFrame:
+    """Headline figures for the portfolio and the benchmark on their shared dates, with deltas.
+
+    Rows: ``cagr``, ``volatility``, ``sharpe``, ``max_drawdown``. Columns: ``portfolio``,
+    ``benchmark``, ``delta`` (portfolio minus benchmark).
+    """
+    dates = returns.index.intersection(benchmark.index)
+    table = summary_table(
+        pd.DataFrame({"portfolio": returns.loc[dates], "benchmark": benchmark.loc[dates]}),
+        rf=rf,
+        periods_per_year=periods_per_year,
+    )
+    out = table[["cagr", "ann_vol", "sharpe", "max_drawdown"]].T.rename(
+        index={"ann_vol": "volatility"}
+    )
+    out["delta"] = out["portfolio"] - out["benchmark"]
+    return out.astype(float)

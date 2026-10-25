@@ -442,3 +442,48 @@ def benchmark_comparison(
     for name, value in relative.items():
         out.loc[name] = [value, "–"]
     return out
+
+
+def render_kpis(
+    kpi: pd.DataFrame | None, value_text: str, benchmark_name: str, is_cash: bool
+) -> None:
+    """Five KPI cards: value, return (CAGR), volatility, Sharpe, max drawdown, with deltas vs the
+    benchmark (from ``gpl.metrics.kpi_table``). Lower volatility counts as better."""
+    cols = st.columns(5)
+    cols[0].metric("Portfolio value", value_text)
+    if kpi is None:
+        labels = ["Return (CAGR)", "Volatility", "Sharpe", "Max drawdown"]
+        for c, label in zip(cols[1:], labels, strict=True):
+            c.metric(label, "–")
+        return
+    vs = f"vs {benchmark_name}"
+
+    def pp(x: float) -> str:
+        return f"{x * 100:+.2f} pp {vs}"
+
+    sharpe_delta = kpi.loc["sharpe", "delta"]
+    cols[1].metric("Return (CAGR)", pct(kpi.loc["cagr", "portfolio"]), pp(kpi.loc["cagr", "delta"]))
+    cols[2].metric(
+        "Volatility",
+        pct(kpi.loc["volatility", "portfolio"]),
+        pp(kpi.loc["volatility", "delta"]),
+        delta_color="inverse",
+    )
+    cols[3].metric(
+        "Sharpe",
+        f"{kpi.loc['sharpe', 'portfolio']:.2f}",
+        None if pd.isna(sharpe_delta) or is_cash else f"{sharpe_delta:+.2f} {vs}",
+    )
+    cols[4].metric(
+        "Max drawdown",
+        pct(kpi.loc["max_drawdown", "portfolio"]),
+        None if is_cash else pp(kpi.loc["max_drawdown", "delta"]),
+    )
+
+
+def portfolio_value_text() -> str:
+    """Total in USD when holdings are entered as amounts; otherwise a hint."""
+    if st.session_state.get(MODE) == USD:
+        total = sum(r["value"] for r in st.session_state.get(ROWS, []) if r["value"] > 0)
+        return f"${total:,.0f}"
+    return "enter USD amounts"

@@ -779,3 +779,20 @@ def test_rank_screen_puts_missing_values_last() -> None:
     assert list(shown.index) == ["B", "A", "C"] and shown.loc["C", "3Y return (ann.) ▼"] == "–"
     shown = ws.rank_screen(table, "Volatility (ann.)")  # lower is better
     assert list(shown.index) == ["A", "B", "C"] and shown.loc["A", "Sharpe"] == "0.10"
+
+
+def test_kpi_cards_with_deltas_vs_the_benchmark(app: AppTest) -> None:
+    labels = [m.label for m in app.metric]
+    assert labels[:5] == [
+        "Portfolio value",
+        "Return (CAGR)",
+        "Volatility",
+        "Sharpe",
+        "Max drawdown",
+    ]
+    assert app.metric[0].value == "enter USD amounts"
+    assert "vs 60/40 (SPY/AGG)" in app.metric[1].delta and app.metric[1].value.endswith("%")
+    app.radio(key="ws_mode").set_value("USD amount").run()  # 10,000 USD by default
+    assert app.metric[0].value == "$10,000"
+    app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
+    assert app.metric[3].delta in (None, "")  # no Sharpe delta against cash
