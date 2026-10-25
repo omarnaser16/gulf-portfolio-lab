@@ -16,6 +16,7 @@ import pandas as pd
 
 from gpl import backtest as bt
 from gpl import regime as rg
+from gpl.agent.charts import CHART_TYPES
 from gpl.data import (
     BenchmarkData,
     clean_prices,
@@ -88,6 +89,10 @@ class AnalystContext:
     optimisation: dict | None = None  # latest optimisation report (set by the app)
     benchmark: BenchmarkData | None = None  # the benchmark chosen on the Portfolio tab
     diagnosis: dict | None = None  # latest diagnose_portfolio report (set by the app)
+    proposed: dict | None = None  # {"name", "weights", "source"}: latest what-if or recommendation
+    holding_groups: Mapping[str, str] | None = None  # ticker -> group chosen on the Portfolio tab
+    charts: list = field(default_factory=list)  # ChartData requested via show_chart, by chart id
+    last_user_message: str = ""  # set by the Analyst; what-if numbers must come from it
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -212,6 +217,8 @@ def build_context(
             "regime": r,
             "montecarlo": cfg["montecarlo"],
             "optimise_lab": cfg.get("optimise_lab", {}),
+            "stress_episodes": cfg.get("stress_episodes", []),
+            "exposure_meta": cfg.get("exposure_meta", {}),
         },
         universe=[t for t in universe if t in data.prices.columns],
         user_portfolio=dict(portfolio) if portfolio else None,
@@ -701,6 +708,98 @@ def run_candidates(
     return report, CandidateRun(equity, latest, rec)
 
 
+def show_chart(ctx: AnalystContext, chart: str, section: str) -> dict:
+    """Compute a whitelisted chart's data with the engine and keep it for the app to draw.
+
+    The model only names the chart and the memo section; it gets back formatted key figures
+    (which it may quote) and a chart id, never raw series to copy.
+    """
+    from gpl.agent.charts import chart_data, chart_summary
+
+    if chart not in CHART_TYPES:
+        raise ToolError(f"unknown chart {chart!r}; choose from {list(CHART_TYPES)}")
+    try:
+        data = chart_data(ctx, chart)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    ctx.charts.append(data)
+    return {
+        "chart_id": len(ctx.charts) - 1,
+        "chart": chart,
+        "section": section,
+        "title": data.title,
+        "key_figures": chart_summary(data),
+        "notes": data.notes,
+    }
+
+
+def what_if_portfolio(ctx: AnalystContext, changes: list[dict]) -> dict:
+    """Apply the user's own what-if weights (others scaled pro-rata) and compare with today.
+
+    Every weight must appear in the user's latest message: the model transcribes, it never
+    works out a weight (e.g. "halve NVDA" must be answered with a question, not a number).
+    """
+    from gpl.agent.spec import numbers_not_in_goals
+    from gpl.scenarios import apply_what_if
+
+    if not ctx.user_portfolio:
+        raise ToolError("the user has not entered a portfolio on the Portfolio tab")
+    if not changes:
+        raise ToolError("name at least one holding and its new weight")
+    invented = numbers_not_in_goals(
+        {"asset_limits": [{"min_pct": c["weight_pct"], "max_pct": None} for c in changes]},
+        ctx.last_user_message,
+    )
+    if invented:
+        raise ToolError(
+            f"these weights are not in the user's message: {', '.join(invented)}. Ask the user "
+            "for the exact weights instead of working them out."
+        )
+    unknown = [c["ticker"] for c in changes if c["ticker"] not in ctx.prices.columns]
+    if unknown:
+        raise ToolError(f"no price data loaded for {', '.join(unknown)}")
+    try:
+        new = apply_what_if(
+            ctx.user_portfolio, {c["ticker"]: c["weight_pct"] / 100 for c in changes}
+        )
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    label = ", ".join(f"{c['ticker']} {c['weight_pct']:g}%" for c in changes)
+    ctx.proposed = {"name": "What-if", "weights": new[new > 0].to_dict(), "source": label}
+    old = pd.Series(ctx.user_portfolio, dtype=float).reindex(new.index).fillna(0.0)
+    out: dict[str, Any] = {
+        "what_if": label,
+        "rule": "Named holdings set exactly; the others scaled pro-rata to keep 100%.",
+        "weights": {
+            t: {
+                "current": pct(old[t]),
+                "what_if": pct(new[t]),
+                "change": f"{(new[t] - old[t]) * 100:+.2f} pp",
+            }
+            for t in new.index
+        },
+        "now_proposed": "Charts compare Current with What-if until the next what-if.",
+    }
+    if ctx.benchmark is not None:
+        from gpl.agent.charts import chart_data, metrics_display
+
+        out["key_figures_after_costs"] = metrics_display(
+            chart_data(ctx, "metrics_table").frames["kpis"]
+        ).to_dict()
+    return out
+
+
+def stress_test(ctx: AnalystContext) -> dict:
+    """Current (and proposed) portfolio vs the benchmark in historical stress episodes."""
+    from gpl.agent.charts import chart_data, chart_summary
+
+    try:
+        data = chart_data(ctx, "stress_test")
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    return {"episodes": chart_summary(data), "notes": data.notes}
+
+
 def get_portfolio_diagnosis(ctx: AnalystContext) -> dict:
     if ctx.diagnosis is None:
         raise ToolError("no diagnosis yet: open the Optimise section of the Portfolio tab")
@@ -844,6 +943,44 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "show_chart",
+            "Show a chart under a section of your answer. You choose only the chart type and the "
+            "section heading (exactly as written after ###); the app computes and draws it from "
+            "the finance engine. Returns key figures you may quote. Types: "
+            + "; ".join(f"{k}: {v}" for k, v in CHART_TYPES.items()),
+            {
+                "chart": {"type": "string", "enum": list(CHART_TYPES)},
+                "section": {"type": "string"},
+            },
+        ),
+        tool(
+            "what_if_portfolio",
+            "Try the user's own what-if weights, e.g. 'cut NVDA to 10%'. Weights in percent, "
+            "copied exactly from the user's message (never work one out); the other holdings "
+            "are scaled pro-rata to keep 100%. Sets the proposed portfolio for later charts.",
+            {
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "ticker": {"type": "string", "enum": list(ctx.prices.columns)},
+                            "weight_pct": {"type": "number"},
+                        },
+                        "required": ["ticker", "weight_pct"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+        ),
+        tool(
+            "stress_test",
+            "How the current portfolio (and the proposed one, if any) did against the benchmark "
+            "in historical stress episodes (COVID crash, 2020 oil crash, 2022 rate shock), with "
+            "dates. Episodes before the portfolio's data starts are reported as not covered.",
+            {},
+        ),
+        tool(
             "get_regime_view",
             "Latest probability that next month is a stressed market, the model's out-of-sample "
             "track record vs a simple volatility rule, and caveats.",
@@ -860,6 +997,9 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "simulate_future": simulate_future,
     "get_my_portfolio": get_my_portfolio,
     "get_portfolio_diagnosis": get_portfolio_diagnosis,
+    "show_chart": show_chart,
+    "what_if_portfolio": what_if_portfolio,
+    "stress_test": stress_test,
     "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
 }

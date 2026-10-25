@@ -88,6 +88,19 @@ Never choose a different method, propose weights or calculate anything yourself.
 imply that a method will earn higher returns: describe results as risk-adjusted and \
 historical, not a guarantee.
 
+Charts: after writing each "###" section, you may call show_chart with a chart type and that \
+section's heading exactly as written, to place the chart under it. Choose charts that support \
+the text, at most about six per answer, in the order you want them. Never write numbers for a \
+chart: the app computes and draws every chart itself. You may quote the key figures \
+show_chart returns, citing [show_chart].
+
+What-if questions ("what if I cut NVDA to 10%?"): call what_if_portfolio with the weights \
+exactly as the user wrote them (it refuses numbers the user did not write; if they say \
+"halve" or "a bit less", ask them for the exact weight). Then compare current and what-if with \
+show_chart (e.g. weights_current_vs_proposed, metrics_table, growth_of_1) and describe the \
+trade-offs. For stress questions, or a stress section in a review, call stress_test and show \
+the stress_test chart, stating each episode's dates.
+
 For follow-up questions, answer briefly using tools as needed, with the same rules for numbers. \
 Do not give personalised financial advice beyond describing what the tools show.
 """
@@ -157,6 +170,7 @@ class AnalystReply:
     input_tokens: int
     output_tokens: int
     unverified: list[str] = field(default_factory=list)
+    charts: list[tuple[str, Any]] = field(default_factory=list)  # (section, ChartData), in order
 
 
 class Analyst:
@@ -193,6 +207,7 @@ class Analyst:
     def ask(self, question: str) -> AnalystReply:
         self.messages.append({"role": "user", "content": question})
         self._user_texts.append(question)
+        self.ctx.last_user_message = question  # what-if weights must come from this message
         calls: list[ToolCall] = []
         input_tokens = output_tokens = 0
 
@@ -259,7 +274,12 @@ class Analyst:
         unverified = unverified_numbers(text, sources)
         if "not investment advice" not in text.lower():
             text = f"{text}\n\n---\n{DISCLAIMER}"
-        return AnalystReply(text, calls, stop, tokens_in, tokens_out, unverified)
+        charts = [
+            (c.input.get("section", ""), self.ctx.charts[c.output["chart_id"]])
+            for c in calls
+            if c.name == "show_chart" and not c.is_error
+        ]
+        return AnalystReply(text, calls, stop, tokens_in, tokens_out, unverified, charts)
 
 
 def estimate_cost(reply: AnalystReply, prices_per_mtok: Mapping[str, float]) -> float:

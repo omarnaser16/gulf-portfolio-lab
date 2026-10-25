@@ -423,3 +423,186 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
         height=360,
     )
     return fig
+
+
+DIVERGING = ["#3987e5", "#383835", "#c98500"]  # -1 blue, 0 neutral grey, +1 amber
+
+
+def lines_chart(
+    frame: pd.DataFrame,
+    title: str,
+    y_title: str,
+    y_format: str = PCT,
+    reference: str | None = None,
+) -> go.Figure:
+    """Generic line chart, one column per series (``reference`` grey dashed)."""
+    _check_series_count(frame.shape[1] - (reference in frame.columns))
+    styles = series_styles(list(frame.columns), reference)
+    fig = go.Figure()
+    for name in frame.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=frame.index,
+                y=frame[name],
+                name=str(name),
+                mode="lines",
+                line=styles[name],
+                hovertemplate="%{y:" + y_format + "}",
+            )
+        )
+    return _base_layout(fig, title, y_title, y_format)
+
+
+def correlation_heatmap(
+    corr: pd.DataFrame, title: str = "Correlation of daily returns"
+) -> go.Figure:
+    """Correlation matrix on a diverging scale (blue negative, grey zero, amber positive)."""
+    labels = [str(c) for c in corr.columns]
+    fig = go.Figure(
+        go.Heatmap(
+            z=corr.to_numpy(),
+            x=labels,
+            y=labels,
+            zmin=-1,
+            zmax=1,
+            colorscale=[[0.0, DIVERGING[0]], [0.5, DIVERGING[1]], [1.0, DIVERGING[2]]],
+            text=[[f"{v:.2f}" for v in row] for row in corr.to_numpy()],
+            texttemplate="%{text}",
+            textfont={"family": MONO, "color": TEXT_PRIMARY},
+            hovertemplate="%{y} vs %{x}: %{z:.2f}<extra></extra>",
+            xgap=2,
+            ygap=2,
+        )
+    )
+    fig = _base_layout(fig, title, "", ".2f")
+    fig.update_layout(hovermode="closest", height=140 + 45 * len(labels))
+    fig.update_yaxes(autorange="reversed", showgrid=False)
+    fig.update_xaxes(showgrid=False)
+    return fig
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def fan_compare_chart(
+    bands: Mapping[str, pd.DataFrame], title: str = "Simulated wealth", y_title: str = "Wealth"
+) -> go.Figure:
+    """Median and 5-95% band per portfolio. ``bands[name]`` has columns p5, p50, p95 indexed
+    by years ahead."""
+    _check_series_count(len(bands))
+    fig = go.Figure()
+    for color, (name, b) in zip(SERIES_COLORS, bands.items(), strict=False):
+        x = list(b.index)
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=b["p5"], mode="lines", line={"width": 0}, showlegend=False, hoverinfo="skip"
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=b["p95"],
+                name=f"{name} 5-95%",
+                mode="lines",
+                fill="tonexty",
+                fillcolor=_rgba(color, 0.18),
+                line={"width": 0},
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=b["p50"],
+                name=f"{name} median",
+                mode="lines",
+                line={"color": color, "width": 2},
+                hovertemplate="%{y:.2f}",
+            )
+        )
+    fig = _base_layout(fig, title, y_title, ".2f")
+    fig.update_xaxes(title="Years ahead")
+    return fig
+
+
+def exposure_chart(
+    exposures_by_portfolio: Mapping[str, Mapping[str, pd.Series]], title: str = "Exposure"
+) -> go.Figure:
+    """Bars of weight by region, asset type and currency (one panel each), per portfolio."""
+    from plotly.subplots import make_subplots
+
+    panels = [("region", "Region"), ("asset_type", "Asset type"), ("currency", "Currency")]
+    fig = make_subplots(
+        rows=1, cols=3, subplot_titles=[p[1] for p in panels], horizontal_spacing=0.12
+    )
+    for color, (name, exp) in zip(SERIES_COLORS, exposures_by_portfolio.items(), strict=False):
+        for col, (key, _) in enumerate(panels, start=1):
+            s = exp[key]
+            fig.add_trace(
+                go.Bar(
+                    y=[str(i) for i in s.index],
+                    x=[float(v) for v in s],
+                    name=name,
+                    orientation="h",
+                    marker={"color": color, "line": {"color": SURFACE, "width": 2}},
+                    legendgroup=name,
+                    showlegend=col == 1,
+                    hovertemplate="%{y}: %{x:.2%}<extra>" + name + "</extra>",
+                ),
+                row=1,
+                col=col,
+            )
+    fig = _base_layout(fig, title, "", PCT)
+    fig.update_layout(barmode="group", hovermode="closest", height=380)
+    fig.update_xaxes(tickformat=PCT)
+    fig.update_yaxes(tickformat="", autorange="reversed")
+    fig.update_annotations(font={"color": TEXT_PRIMARY})
+    return fig
+
+
+def stress_chart(
+    table: pd.DataFrame, reference: str | None = None, title: str = "Historical stress tests"
+) -> go.Figure:
+    """Grouped bars: total return in each episode per series (``episode_performance`` rows).
+
+    Episodes the data doesn't cover are labelled "not covered" instead of a bar.
+    """
+    episodes = list(dict.fromkeys(table["episode"]))
+    series = list(dict.fromkeys(table["series"]))
+    styles = series_styles(series, reference)
+    labels = {
+        e: f"{e}<br>{table.loc[table.episode == e, 'start'].iloc[0]:%d %b %Y} – "
+        f"{table.loc[table.episode == e, 'end'].iloc[0]:%d %b %Y}"
+        for e in episodes
+    }
+    fig = go.Figure()
+    for name in series:
+        rows = table[table.series == name].set_index("episode").reindex(episodes)
+        fig.add_trace(
+            go.Bar(
+                x=[labels[e] for e in episodes],
+                y=[float(v) for v in rows["total_return"]],
+                name=name,
+                marker={
+                    "color": styles[name]["color"],
+                    "line": {"color": SURFACE, "width": 2},
+                    "pattern": {"shape": "/" if name == reference else ""},
+                },
+                hovertemplate="%{x}: %{y:.2%}<extra>" + name + "</extra>",
+            )
+        )
+    for e in episodes:
+        if not table.loc[table.episode == e, "covered"].all():
+            fig.add_annotation(
+                x=labels[e],
+                y=0,
+                text="not covered by your data",
+                showarrow=False,
+                yshift=12,
+                font={"color": TEXT_SECONDARY},
+            )
+    fig = _base_layout(fig, title, "Total return in the episode", PCT)
+    fig.update_layout(barmode="group", hovermode="closest")
+    return fig
