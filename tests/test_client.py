@@ -100,7 +100,7 @@ def test_unanswered_questions_are_reported_not_guessed() -> None:
 def test_ips_limits_from_band_and_overrides() -> None:
     ips = build_ips(profile(), CFG)  # band 3
     assert ips.limits["max_volatility"] == 0.12 and ips.limits["max_drawdown"] == 0.20
-    assert ips.limits["max_weight"] == 0.40 and ips.limits["source"]["max_volatility"] == "band 3"
+    assert ips.limits["max_weight"] == 0.30 and ips.limits["source"]["max_volatility"] == "band 3"
     over = build_ips(profile(overrides={"max_volatility_pct": 10, "max_weight_pct": 25}), CFG)
     assert over.limits["max_volatility"] == 0.10 and over.limits["max_weight"] == 0.25
     assert over.limits["source"]["max_volatility"] == "adviser override"
@@ -200,7 +200,7 @@ ATTRS = {
 def test_ips_constraints_exclusions_and_home_bias() -> None:
     p = profile(sharia_only=True, excluded_sectors=["Energy"], home_bias_gcc_pct=20)
     spec, notes = ips_constraints(build_ips(p, CFG), HOLDINGS, GROUPS, ATTRS)
-    assert spec.max_weight == 0.40 and spec.max_volatility == 0.12
+    assert spec.max_weight == 0.30 and spec.max_volatility == 0.12
     assert spec.group_bounds == {"GCC": (0.20, None)}
     # not Sharia-compliant: SPY, AGG; excluded sector: 2222.SR (Energy) -> max 0
     assert spec.asset_bounds == {"SPY": (None, 0.0), "AGG": (None, 0.0), "2222.SR": (None, 0.0)}
@@ -300,3 +300,37 @@ def test_region_minimum_becomes_an_optimiser_set() -> None:
 
     assert in_region("United States (listing)", "United States")
     assert not in_region("United Kingdom", "United States")
+
+
+def test_band_caps_follow_the_risk_score() -> None:
+    caps = {band: CFG["risk_bands"][band]["max_weight"] for band in range(1, 6)}
+    assert caps == {1: 0.20, 2: 0.25, 3: 0.30, 4: 0.35, 5: 0.40}  # cautious -> lower cap
+
+
+def test_required_return_hand_value() -> None:
+    from gpl.client import required_return
+
+    r = required_return(96_000, 3_000_000, 600_000, 0.025)
+    assert r.investable_usd == 2_400_000 and r.real == pytest.approx(0.04)
+    assert r.nominal == pytest.approx(1.04 * 1.025 - 1)  # 6.60%
+    assert f"{r.nominal:.2%}" == "6.60%" and "USD 2,400,000 investable" in r.text()
+    assert required_return(0, 1_000_000, 0, 0.02).nominal == pytest.approx(0.02)  # inflation only
+    with pytest.raises(ValueError, match="nothing is left to invest"):
+        required_return(50_000, 500_000, 500_000, 0.02)
+
+
+def test_ips_shows_the_required_return_and_flags_a_gap() -> None:
+    needs = [{"description": "Wedding", "amount_usd": 600_000, "date": "2028-10"}]
+    p = profile(
+        portfolio_value_usd=3_000_000,
+        liquidity_needs=needs,
+        annual_income_need_usd=96_000,
+        return_target_pct=5.0,
+    )
+    ips = build_ips(p, CFG, today=TODAY)  # inflation from config: 2.50%
+    assert ips.limits["required_return"] == pytest.approx(0.066)
+    text = ips.sections["Return"]
+    assert "Required return 6.60% a year" in text and "above the 5.00% target" in text
+    no_value = build_ips(profile(annual_income_need_usd=96_000), CFG, today=TODAY)
+    assert "enter the portfolio value" in no_value.sections["Return"]
+    assert build_ips(profile(), CFG).limits["required_return"] is None

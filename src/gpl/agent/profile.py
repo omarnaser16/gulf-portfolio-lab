@@ -37,6 +37,8 @@ Qatar).
 Dhabi)"; DIFC -> "DIFC (Dubai)"; elsewhere in the UAE without DIFC or ADGM (e.g. Dubai, \
 Sharjah) -> "UAE onshore"; Saudi Arabia -> "Saudi Arabia"; Qatar or QFC -> "QFC (Qatar)"; \
 null if the notes don't say.
+- annual_income_need_usd: yearly spending the client draws from the portfolio, if stated \
+("needs 8k a month" -> leave null and list it in unmapped_requests; never multiply).
 - tax_notes: anything about taxes, tax residence or citizenship, in the notes' words.
 - name, tax_notes, residency: "" when the notes don't say. residency is the country only \
 ("UAE"); anything more about taxes goes in tax_notes.
@@ -67,6 +69,7 @@ def profile_tool() -> dict:
         "horizon_years": _num(),
         "return_target_pct": _num(),
         "portfolio_value_usd": _num(),
+        "annual_income_need_usd": _num(),
         "name": {"type": "string"},
         "age": _num(),
         "jurisdiction": {
@@ -161,6 +164,7 @@ def _draft_numbers(draft: dict) -> list[float]:
         "horizon_years",
         "return_target_pct",
         "portfolio_value_usd",
+        "annual_income_need_usd",
         "age",
         "home_bias_gcc_pct",
         "max_volatility_pct",
@@ -254,6 +258,7 @@ def apply_proposal(profile: ClientProfile, draft: dict, today: date | None = Non
         "horizon_years",
         "return_target_pct",
         "portfolio_value_usd",
+        "annual_income_need_usd",
         "name",
         "tax_notes",
         "residency",

@@ -81,9 +81,9 @@ def test_volatility_and_drawdown_rules() -> None:
 def test_concentration_and_home_bias() -> None:
     w = {"EQ": 0.5, "BOND": 0.3, "GCC": 0.2}
     checks = run(w, ips(home_bias_gcc_pct=25))
-    assert checks["Concentration"].status == "fail"  # 50% > 40%
+    assert checks["Concentration"].status == "fail"  # 50% > 30% (band 3)
     assert (
-        "largest holding, EQ, is 50.00% of the portfolio, above the 40.00% limit"
+        "largest holding, EQ, is 50.00% of the portfolio, above the 30.00% limit"
         in checks["Concentration"].reason
     )
     assert checks["Home-market bias"].status == "fail"  # 20% < 25%
@@ -145,7 +145,7 @@ def test_breach_amounts_and_text() -> None:
         == f"Volatility: {vol:.2%}, {(vol - 0.12) * 100:.2f} pp beyond the 12.00% limit"
     )
     conc = checks["Concentration"]
-    assert conc.breach == pytest.approx(0.60) and "60.00 pp beyond the 40.00% limit" in breach_text(
+    assert conc.breach == pytest.approx(0.70) and "70.00 pp beyond the 30.00% limit" in breach_text(
         conc
     )
     client = ips(20_000, portfolio_value_usd=100_000)

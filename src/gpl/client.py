@@ -213,6 +213,8 @@ class ClientProfile:
     goals: list[dict] = field(default_factory=list)  # {description, amount_usd|multiple, years}
     return_target_pct: float | None = None
     portfolio_value_usd: float | None = None
+    annual_income_need_usd: float = 0.0  # spending drawn from the portfolio each year
+    inflation_pct: float | None = None  # None: the config's assumption
     # dated cash needs: {description, amount_usd, date "YYYY-MM"}
     liquidity_needs: list[dict] = field(default_factory=list)
     reserve_pct: float = 0.0
@@ -251,7 +253,12 @@ class ClientProfile:
                 }
             ]
         out = cls(**values)
-        for name in ("horizon_years", "reserve_pct", "max_non_pegged_currency_pct"):
+        for name in (
+            "horizon_years",
+            "reserve_pct",
+            "max_non_pegged_currency_pct",
+            "annual_income_need_usd",
+        ):
             try:
                 setattr(out, name, float(getattr(out, name)))
             except (TypeError, ValueError) as e:
@@ -334,6 +341,43 @@ def _pct(x: float | None) -> str:
     return "not set" if x is None else f"{x:.2%}"
 
 
+@dataclass
+class RequiredReturn:
+    income_usd: float
+    investable_usd: float
+    real: float
+    inflation: float
+    nominal: float
+
+    def text(self) -> str:
+        return (
+            f"Required return {self.nominal:.2%} a year: USD {self.income_usd:,.0f} income ÷ "
+            f"USD {self.investable_usd:,.0f} investable (after cash set aside) = {self.real:.2%} "
+            f"real, with {self.inflation:.2%} inflation: (1 + {self.real:.2%}) × "
+            f"(1 + {self.inflation:.2%}) - 1."
+        )
+
+
+def required_return(
+    income_usd: float, value_usd: float, reserved_usd: float, inflation: float
+) -> RequiredReturn:
+    """The return the portfolio must earn to pay the income and keep pace with inflation.
+
+    Investable assets are the value minus the cash set aside for near-term needs (that cash is
+    not expected to earn the return). Real required return = income ÷ investable; nominal =
+    (1 + real) × (1 + inflation) - 1. E.g. USD 96,000 a year from USD 3m with USD 600,000
+    reserved and 2.5% inflation: 4.00% real, 6.60% nominal.
+    """
+    investable = value_usd - reserved_usd
+    if investable <= 0:
+        raise ValueError(
+            f"the cash set aside (USD {reserved_usd:,.0f}) is at least the portfolio value "
+            f"(USD {value_usd:,.0f}): nothing is left to invest"
+        )
+    real = income_usd / investable
+    return RequiredReturn(income_usd, investable, real, inflation, (1 + real) * (1 + inflation) - 1)
+
+
 def _goal_text(goal: dict) -> str:
     """'University (USD 200,000 in 8 years)' from a goal entry."""
     details = []
@@ -385,6 +429,30 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
         if profile.return_target_pct is not None
         else ""
     )
+    limits["required_return"] = None
+    if profile.annual_income_need_usd > 0:
+        inflation = (
+            profile.inflation_pct / 100
+            if profile.inflation_pct is not None
+            else float(cfg.get("montecarlo", {}).get("inflation", 0.025))
+        )
+        if not value:
+            target += " Required return: enter the portfolio value to calculate it."
+        else:
+            try:
+                req = required_return(profile.annual_income_need_usd, value, reserve_usd, inflation)
+            except ValueError as e:
+                target += f" Required return can't be calculated: {e}."
+            else:
+                limits["required_return"] = req.nominal
+                target += " " + req.text()
+                if profile.return_target_pct is None:
+                    target += " No return target is set: discuss with the client."
+                elif req.nominal > profile.return_target_pct / 100 + 1e-12:
+                    target += (
+                        f" This is above the {profile.return_target_pct:.2f}% target: discuss "
+                        "the income, the target or the risk the client accepts."
+                    )
     risk_text = (
         risk.explanation
         + (

@@ -21,6 +21,7 @@ DRAFT = {
     "horizon_years": 15,
     "return_target_pct": None,
     "portfolio_value_usd": 500_000,
+    "annual_income_need_usd": None,
     "name": "",
     "age": 45,
     "jurisdiction": "UAE onshore",
@@ -99,9 +100,9 @@ def test_no_tool_call_is_an_error() -> None:
 # ------------------------------------------------------------------ the QA walkthrough client
 
 QA_NOTES = (
-    "Mr Khalid Al Mansoori, 58, booked in Abu Dhabi. USD 3m portfolio. Needs USD 600k in Oct "
-    "2028 for his daughter's wedding. Keep at least 10% in Saudi. UAE tax resident, no US ties; "
-    "holds a UK property."
+    "Mr Khalid Al Mansoori, 58, booked in Abu Dhabi. USD 3m portfolio, draws 96k a year. "
+    "Needs USD 600k in Oct 2028 for his daughter's wedding. Keep at least 10% in Saudi. "
+    "UAE tax resident, no US ties; holds a UK property."
 )
 QA_DRAFT = {
     **{k: None for k in DRAFT},
@@ -109,6 +110,7 @@ QA_DRAFT = {
     "age": 58,
     "jurisdiction": "ADGM (Abu Dhabi)",
     "portfolio_value_usd": 3_000_000,
+    "annual_income_need_usd": 96_000,
     "tax_notes": "UAE tax resident, no US ties; holds a UK property.",
     "liquidity_needs": [
         {
@@ -144,6 +146,7 @@ def test_intake_dates_regulator_name_tax_and_regions() -> None:
         {"description": "Daughter's wedding", "amount_usd": 600_000.0, "date": "2028-10"}
     ]
     assert profile.region_minimums == {"Saudi Arabia": 10.0}
+    assert profile.annual_income_need_usd == 96_000
     ips = build_ips(profile, CFG, today=date(2026, 10, 25))
     # Oct 2028 is 24 months away (about two years), not 12 months; it binds now (<= 36)
     assert [n["months"] for n in ips.limits["cash_needs_due"]] == [24]

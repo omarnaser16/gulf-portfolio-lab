@@ -139,6 +139,26 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         key="cl_ret" + k,
         placeholder="none",
     )
+    c1, c2 = st.columns(2)
+    income = c1.number_input(
+        "Yearly income drawn from the portfolio (USD)",
+        0.0,
+        1e9,
+        float(p.annual_income_need_usd),
+        1000.0,
+        key="cl_income" + k,
+        help="Sets the required return: income ÷ investable assets (after cash set aside), "
+        "plus inflation.",
+    )
+    inflation = c2.number_input(
+        "Inflation assumption (% a year)",
+        0.0,
+        20.0,
+        _opt(p.inflation_pct),
+        0.25,
+        key="cl_infl" + k,
+        placeholder="config default (2.5)",
+    )
     st.caption(
         "Cash needs: what the client must withdraw, and when (YYYY-MM). Needs due within the "
         "IPS window must be held in cash, short-term bonds or sukuk from now."
@@ -316,6 +336,8 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         goals=goal_rows,
         return_target_pct=target,
         portfolio_value_usd=ws.portfolio_value(),
+        annual_income_need_usd=income,
+        inflation_pct=inflation,
         liquidity_needs=need_rows,
         reserve_pct=reserve,
         tax_notes=tax_notes,

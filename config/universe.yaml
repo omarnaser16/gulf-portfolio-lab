@@ -169,12 +169,12 @@ exposure_meta:
   "ISF.L": { region: United Kingdom, asset_type: Equity }
 
 # Risk bands from the client risk score (gpl/client.py). Judgement defaults the adviser can
-# override per client; fractions.
+# override per client; fractions. A more cautious client gets a lower cap on any one holding.
 risk_bands:
-  1: { max_volatility: 0.06, max_drawdown: 0.10, max_weight: 0.40 }
-  2: { max_volatility: 0.09, max_drawdown: 0.15, max_weight: 0.40 }
-  3: { max_volatility: 0.12, max_drawdown: 0.20, max_weight: 0.40 }
-  4: { max_volatility: 0.16, max_drawdown: 0.30, max_weight: 0.40 }
+  1: { max_volatility: 0.06, max_drawdown: 0.10, max_weight: 0.20 }
+  2: { max_volatility: 0.09, max_drawdown: 0.15, max_weight: 0.25 }
+  3: { max_volatility: 0.12, max_drawdown: 0.20, max_weight: 0.30 }
+  4: { max_volatility: 0.16, max_drawdown: 0.30, max_weight: 0.35 }
   5: { max_volatility: 0.20, max_drawdown: 0.40, max_weight: 0.40 }
 
 # Sharia status (compliant | not_compliant; anything else is unknown) and sector for known
