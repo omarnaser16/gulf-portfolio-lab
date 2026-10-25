@@ -73,3 +73,22 @@ def test_load_benchmark_without_data_raises(monkeypatch, tmp_path) -> None:
             None,
             tmp_path,
         )
+
+
+def test_security_attributes_config_first_then_cached_yahoo_sector(monkeypatch, tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from gpl.data import security_attributes
+
+    calls = []
+
+    def fake_ticker(symbol):
+        calls.append(symbol)
+        return SimpleNamespace(info={"sector": "Technology"} if symbol == "NVDA" else {})
+
+    monkeypatch.setattr(yf, "Ticker", fake_ticker)
+    config = {"SPY": {"sharia": "not_compliant", "sector": "Broad US equity"}}
+    out = security_attributes(["SPY", "NVDA", "XYZ"], config, tmp_path)
+    assert out == {"SPY": config["SPY"], "NVDA": {"sector": "Technology"}, "XYZ": {}}
+    security_attributes(["NVDA"], config, tmp_path)
+    assert calls == ["NVDA", "XYZ"]  # NVDA cached; SPY never looked up

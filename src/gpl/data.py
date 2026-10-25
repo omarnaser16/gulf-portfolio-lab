@@ -352,6 +352,38 @@ def get_currency(ticker: str, cache_dir: Path | None = None) -> tuple[str, str]:
     return SUFFIX_CURRENCY.get(suffix, "USD"), "suffix"
 
 
+def get_sector(ticker: str, cache_dir: Path | None = None) -> str | None:
+    """Yahoo's sector for a stock (None for funds or if unavailable), cached in sectors.json."""
+    import json
+
+    path = (cache_dir or DEFAULT_CACHE_DIR) / "sectors.json"
+    known = json.loads(path.read_text()) if path.exists() else {}
+    if ticker in known:
+        return known[ticker]
+    try:
+        sector = yf.Ticker(ticker).info.get("sector")
+    except Exception:
+        return None  # not cached: try again next time
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**known, ticker: sector}, indent=1))
+    return sector
+
+
+def security_attributes(
+    tickers: Sequence[str], config_attributes: Mapping, cache_dir: Path | None = None
+) -> dict[str, dict]:
+    """Sharia status and sector per ticker: config first, then Yahoo's sector for stocks."""
+    out = {}
+    for t in tickers:
+        attrs = dict(config_attributes.get(t, {}))
+        if "sector" not in attrs:
+            sector = get_sector(t, cache_dir)
+            if sector:
+                attrs["sector"] = sector
+        out[t] = attrs
+    return out
+
+
 def to_usd(
     local: pd.DataFrame, currencies: dict[str, str], fx: dict[str, pd.Series]
 ) -> tuple[pd.DataFrame, dict[str, str]]:

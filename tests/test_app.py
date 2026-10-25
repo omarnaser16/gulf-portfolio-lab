@@ -975,3 +975,28 @@ def test_profile_json_round_trip_in_the_app(app: AppTest) -> None:
     app.run()
     assert app.text_input(key="cl_ref_5").value == "EX-DOH"
     assert client_ui.CLIENT == "client"
+
+
+def test_suitability_panels_need_a_client_then_show_reasons(app: AppTest) -> None:
+    assert any("Load or create a client on the Client tab" in i.value for i in app.info)
+    app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
+    app.button(key="client_load_example").click().run()
+    assert not app.exception, app.exception
+    table = next(t.value for t in app.table if "Exclusions" in t.value.index)
+    assert table.loc["Exclusions", "Current"].startswith("❌ Fail")  # SPY, AGG not compliant
+    assert table.loc["Concentration", "Current"].startswith("❌ Fail")  # SPY 50% > 40%
+    reasons = " ".join(m.value for m in app.markdown)
+    assert "SPY (50.00%): not Sharia-compliant" in reasons
+    assert "**Liquidity.**" in reasons and "USD 100,000" in reasons  # the client's need
+
+
+def test_optimise_results_include_suitability(optimise_app) -> None:
+    at, _ = optimise_app([])
+    at.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    at.button(key="client_load_example").click().run()
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    tables = [
+        t.value for t in at.table if "Volatility" in t.value.index and "Current" in t.value.columns
+    ]
+    assert tables and all(v.split(" ")[0] in ("✅", "❌", "⚠️") for v in tables[0]["Current"])

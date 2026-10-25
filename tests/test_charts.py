@@ -160,3 +160,55 @@ def test_what_if_refuses_weights_the_user_did_not_write(cctx) -> None:
     with pytest.raises(ToolError, match="not in the user's message: 25%"):
         execute_tool(cctx, "what_if_portfolio", {"changes": [{"ticker": "SPY", "weight_pct": 25}]})
     assert cctx.proposed is None
+
+
+# ---------------------------------------------------------------------------- suitability
+
+
+def test_suitability_tool_wraps_the_checker(cctx) -> None:
+    from gpl.client import ClientProfile, build_ips
+    from gpl.suitability import check_suitability
+
+    with pytest.raises(ToolError, match="no client profile"):
+        execute_tool(cctx, "check_suitability", {})
+    answers = {
+        "income_stability": 3,
+        "wealth_share": 2,
+        "dependence": 2,
+        "liquidity_need": 3,
+        "loss_reaction": 2,
+        "tradeoff": 1,
+        "experience": 3,
+    }  # band 2: vol 9%, DD 15%
+    cctx.ips = build_ips(ClientProfile(horizon_years=5, answers=answers, sharia_only=True), CFG)
+    cctx.attributes = CFG["security_attributes"]
+    cctx.last_user_message = "what if I cut SPY to 20%"
+    execute_tool(cctx, "what_if_portfolio", {"changes": [{"ticker": "SPY", "weight_pct": 20}]})
+    out = execute_tool(cctx, "check_suitability", {})
+    assert set(out["portfolios"]) == {"Current", "What-if"}
+    direct = check_suitability(
+        pd.Series(CURRENT),
+        cctx.all_returns,
+        cctx.ips,
+        cctx.attributes,
+        {},
+        cctx.holding_groups,
+        cctx.periods,
+        CFG["stress_episodes"],
+        None,
+    )
+    assert out["portfolios"]["Current"] == [
+        {
+            "rule": c.rule,
+            "status": c.status,
+            "measured": c.measured,
+            "limit": c.limit,
+            "reason": c.reason,
+        }
+        for c in direct
+    ]
+    exclusions = next(c for c in out["portfolios"]["Current"] if c["rule"] == "Exclusions")
+    assert (
+        exclusions["status"] == "fail"
+        and "SPY (50.00%): not Sharia-compliant" in exclusions["reason"]
+    )

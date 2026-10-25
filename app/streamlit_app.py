@@ -38,6 +38,7 @@ from gpl.data import (
     load_benchmark,
     load_universe,
     search_securities,
+    security_attributes,
     to_returns,
 )
 from gpl.metrics import drawdown_series, kpi_table, relative_drawdown, summary_table
@@ -69,6 +70,7 @@ from gpl.plots import (
     weights_chart,
 )
 from gpl.recommend import GOALS, KEEP
+from gpl.suitability import check_suitability, suitability_table
 
 CFG = load_universe()
 
@@ -474,6 +476,9 @@ def shared_context() -> AnalystContext:
     ctx = st.session_state.ctx
     ctx.benchmark = bench  # follows the top-bar choice without rebuilding the context
     ctx.holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
+    ctx.ips = client_ips()
+    ctx.attributes = get_attributes(tuple(data.prices.columns))
+    ctx.portfolio_value = portfolio_value()
     return ctx
 
 
@@ -772,7 +777,9 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
         help="Adds the IPS limits (volatility, max weight, GCC minimum, exclusions) to the ones "
         "above; where both set a limit, the stricter one applies.",
     ):
-        ips_spec, notes = ips_constraints(ips, list(my_weights), holding_groups, ATTRIBUTES)
+        ips_spec, notes = ips_constraints(
+            ips, list(my_weights), holding_groups, get_attributes(tuple(my_weights))
+        )
         limits = tighter(limits, ips_spec)
         for note in notes:
             st.caption("• " + note)
@@ -790,6 +797,62 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
 
 
 ATTRIBUTES = CFG.get("security_attributes", {})
+
+
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
+def get_attributes(tickers: tuple[str, ...]) -> dict[str, dict]:
+    """Sharia status and sector: config first, then Yahoo's sector for stocks (cached)."""
+    return security_attributes(list(tickers), ATTRIBUTES)
+
+
+def portfolio_value() -> float | None:
+    """USD total of the holdings if entered as amounts, else the client's stated value."""
+    if st.session_state.get(ws.MODE) == ws.USD:
+        return sum(r["value"] for r in st.session_state.get(ws.ROWS, []) if r["value"] > 0)
+    profile = client_ui.current_profile()
+    return None if profile is None else profile.portfolio_value_usd
+
+
+SUITABILITY_ICON = {"pass": "✅", "fail": "❌", "review": "⚠️"}
+
+
+def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
+    """Pass / fail / review per IPS rule for each portfolio, with the written reasons."""
+    st.markdown("**Suitability against the client's IPS**")
+    ips = client_ips()
+    if ips is None:
+        st.info("Load or create a client on the Client tab to check suitability.")
+        return
+    currencies = data.history["currency"].to_dict()
+    tickers = tuple(sorted(set().union(*[set(w.index) for w in portfolios.values()])))
+    results = {
+        name: check_suitability(
+            w,
+            all_returns,
+            ips,
+            get_attributes(tickers),
+            currencies,
+            ws.groups_of_holdings(),
+            periods,
+            CFG.get("stress_episodes", []),
+            portfolio_value(),
+        )
+        for name, w in portfolios.items()
+    }
+    table = suitability_table(results)
+    for col in table.columns:
+        statuses = {c.rule: c.status for c in results[col]}
+        table[col] = [f"{SUITABILITY_ICON[statuses[r]]} {v}" for r, v in table[col].items()]
+    st.table(table)
+    for name, checks in results.items():
+        with st.expander(f"Reasons: {name}"):
+            for c in checks:
+                st.markdown(f"{SUITABILITY_ICON[c.status]} **{c.rule}.** {c.reason}")
+    st.caption(
+        f"Client {ips.client.reference or '(no reference)'}. Historical figures at today's "
+        "weights; ⚠️ Review means the data can't decide and the adviser must check. Decision "
+        "support for a licensed adviser."
+    )
 
 
 def client_ips():
@@ -852,6 +915,10 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             )
     plot(equity_chart(run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"))
     st.info(report["caveats"])
+    candidates = {"Current": run.latest_weights.loc["Current"]}
+    if rec["choice"] != KEEP:
+        candidates[rec["choice"]] = run.latest_weights.loc[rec["choice"]]
+    render_suitability(candidates, "opt")
 
     if ai_ok and st.button("Explain the recommendation (AI memo)", key="ws_opt_memo"):
         memo_analyst = agent.Analyst(
@@ -986,7 +1053,7 @@ with tab_client:
         CFG,
         list(my_weights),
         ws.groups_of_holdings(),
-        ATTRIBUTES,
+        get_attributes(tuple(my_weights)),
         agent.has_credentials(),
         agent.make_client,
         A["model"],
@@ -1536,6 +1603,11 @@ def render_portfolio_overview() -> None:
     left.table(holdings)
     with right:
         plot(allocation_chart(w, "Allocation by holding"), key="analyst_allocation")
+    ports = {"Current": w}
+    proposed = st.session_state.get("ctx") and st.session_state.ctx.proposed
+    if proposed:
+        ports[proposed["name"]] = pd.Series(proposed["weights"], dtype=float)
+    render_suitability(ports, "analyst")
 
 
 with tab_agent:

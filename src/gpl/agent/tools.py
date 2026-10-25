@@ -93,6 +93,9 @@ class AnalystContext:
     holding_groups: Mapping[str, str] | None = None  # ticker -> group chosen on the Portfolio tab
     charts: list = field(default_factory=list)  # ChartData requested via show_chart, by chart id
     last_user_message: str = ""  # set by the Analyst; what-if numbers must come from it
+    ips: Any = None  # gpl.client.IPS of the client on the Client tab, if any
+    attributes: Mapping[str, Mapping[str, str]] | None = None  # Sharia status, sector
+    portfolio_value: float | None = None  # USD, for the liquidity rule
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -802,6 +805,56 @@ def stress_test(ctx: AnalystContext) -> dict:
     return {"episodes": chart_summary(data), "notes": data.notes}
 
 
+def suitability_checks(ctx: AnalystContext) -> dict[str, list]:
+    """``gpl.suitability.check_suitability`` for the current and (if any) proposed portfolio."""
+    from gpl.agent.charts import _portfolios
+    from gpl.suitability import check_suitability
+
+    if ctx.ips is None:
+        raise ToolError("no client profile: the adviser hasn't completed the Client tab")
+    if not ctx.user_portfolio:
+        raise ToolError("the user has not entered a portfolio on the Portfolio tab")
+    currencies = ctx.asset_notes["currency"].to_dict() if ctx.asset_notes is not None else {}
+    out = {}
+    for name, w in _portfolios(ctx).items():
+        out[name] = check_suitability(
+            w,
+            ctx.all_returns,
+            ctx.ips,
+            ctx.attributes or {},
+            currencies,
+            ctx.holding_groups or {},
+            ctx.periods,
+            ctx.settings.get("stress_episodes", []),
+            ctx.portfolio_value or ctx.ips.client.portfolio_value_usd,
+            ctx.settings.get("liquid_max_volatility", 0.06),
+        )
+    return out
+
+
+def check_suitability_tool(ctx: AnalystContext) -> dict:
+    """Pass/fail/review per IPS rule, with the reason written from the measured numbers."""
+    results = suitability_checks(ctx)
+    return {
+        "client": ctx.ips.client.reference or "(no reference)",
+        "portfolios": {
+            name: [
+                {
+                    "rule": c.rule,
+                    "status": c.status,
+                    "measured": c.measured,
+                    "limit": c.limit,
+                    "reason": c.reason,
+                }
+                for c in checks
+            ]
+            for name, checks in results.items()
+        },
+        "note": "Historical figures at today's weights. 'Review' means the data can't decide "
+        "and the adviser must check; it is not a pass. Decision support for a licensed adviser.",
+    }
+
+
 def get_portfolio_diagnosis(ctx: AnalystContext) -> dict:
     if ctx.diagnosis is None:
         raise ToolError("no diagnosis yet: open the Optimise section of the Portfolio tab")
@@ -983,6 +1036,15 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "check_suitability",
+            "Check the current portfolio (and the proposed one, if any) against the client's "
+            "Investment Policy Statement: volatility, max drawdown, worst stress episode, "
+            "concentration, home-market bias, liquidity, exclusions (Sharia, sectors) and "
+            "currency. Each rule returns pass, fail or review with a reason. Errors if no "
+            "client profile has been entered.",
+            {},
+        ),
+        tool(
             "get_regime_view",
             "Latest probability that next month is a stressed market, the model's out-of-sample "
             "track record vs a simple volatility rule, and caveats.",
@@ -1002,6 +1064,7 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "show_chart": show_chart,
     "what_if_portfolio": what_if_portfolio,
     "stress_test": stress_test,
+    "check_suitability": check_suitability_tool,
     "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
 }
