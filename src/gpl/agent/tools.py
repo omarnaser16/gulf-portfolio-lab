@@ -178,6 +178,7 @@ class AnalystContext:
                 rebalance=self.settings["rebalance"],
                 lookback=self.settings["lookback"],
                 cost_bps=self.settings["cost_bps"],
+                cost_by_suffix=self.settings.get("cost_by_suffix"),
             )
         return self._cache[key]
 
@@ -225,6 +226,7 @@ def build_context(
             "domicile": cfg.get("domicile", {}),
             "ucits_equivalents": cfg.get("ucits_equivalents", {}),
             "cash_like": cfg.get("cash_like", []),
+            "cost_by_suffix": cfg.get("trading_costs", {}).get("by_suffix", {}),
             "exposure_meta": cfg.get("exposure_meta", {}),
         },
         universe=[t for t in universe if t in data.prices.columns],
@@ -450,6 +452,7 @@ def _run_settings(ctx: AnalystContext) -> dict:
         rebalance=ctx.settings["rebalance"],
         lookback=ctx.settings["lookback"],
         cost_bps=ctx.settings["cost_bps"],
+        cost_by_suffix=ctx.settings.get("cost_by_suffix"),
     )
 
 

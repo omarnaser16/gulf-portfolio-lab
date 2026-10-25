@@ -658,6 +658,7 @@ def render_rebalance(
     price_usd: Callable[[str], float | None],
     cost_bps: float,
     cash_need: Mapping | None = None,
+    cost_by_suffix: Mapping[str, float] | None = None,
 ) -> dict | None:
     """Drift monitor and trade list (``gpl.scenarios``). Returns the formatted result.
 
@@ -729,7 +730,14 @@ def render_rebalance(
     result = {"band": pct(band), "outside_band": flagged, "drift": shown.to_dict(orient="index")}
     values = usd_values if usd_values is not None else current * value
     prices = pd.Series({t: price_usd(t) for t in tickers}, dtype=float)
-    trades = trade_list(values, target, prices, cost_bps, None if usd_values is not None else value)
+    trades = trade_list(
+        values,
+        target,
+        prices,
+        cost_bps,
+        None if usd_values is not None else value,
+        cost_by_suffix,
+    )
     if cash_need and cash_need["need_usd"] > 0:
         check = cash_need_check(trades["target_usd"], cash_need["cash_like"], cash_need["need_usd"])
         held_in = ", ".join(cash_need["cash_like"]) or "none held"
@@ -771,7 +779,8 @@ def render_rebalance(
     costs = trades["cost_usd"].sum()
     st.caption(
         f"Sells USD {sells:,.2f}, buys USD {buys:,.2f}, estimated costs USD {costs:,.2f} at "
-        f"{cost_bps:g} bps (buys + costs = sells). Units are estimates at the latest price "
+        f"{cost_bps:g} bps for US listings and local-market rates for the others (buys + "
+        "costs = sells). Units are estimates at the latest price "
         "(fractional; round to the broker's lot size). Decision support for a licensed adviser: "
         "check taxes and liquidity before trading."
     )

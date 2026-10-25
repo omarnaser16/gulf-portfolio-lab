@@ -92,6 +92,7 @@ from gpl.scenarios import (
 from gpl.suitability import check_suitability, suitability_table
 
 CFG = load_universe()
+COST_BY_SUFFIX = CFG.get("trading_costs", {}).get("by_suffix", {})  # market rates, bps
 
 # On Streamlit Community Cloud the API key comes from st.secrets; locally from .env.
 try:
@@ -258,7 +259,12 @@ def run_backtests(
             strategies[f"{name} + regime"] = bt.regime_switch_strategy(
                 strategies[name], defensive, p, regime_threshold
             )
-    run = dict(rebalance=D["rebalance"], lookback=lookback, cost_bps=cost_bps)
+    run = dict(
+        rebalance=D["rebalance"],
+        lookback=lookback,
+        cost_bps=cost_bps,
+        cost_by_suffix=COST_BY_SUFFIX,
+    )
     universe_prices = data.prices[list(universe)]
     return {
         name: bt.run_backtest(data.prices if name in BENCHMARK_NAMES else universe_prices, s, **run)
@@ -284,6 +290,7 @@ def run_my_portfolio(
         rebalance=D["rebalance"],
         lookback=lookback,
         cost_bps=cost_bps,
+        cost_by_suffix=COST_BY_SUFFIX,
     )
 
 
@@ -319,7 +326,15 @@ with head_settings.popover("⚙ Settings", width="stretch"):
             "To reproduce the README tables, load the **README universe** preset on Portfolio › "
             "Holdings (Import a list or start from a preset)."
         )
-    cost_bps = st.number_input("Costs (bps on turnover)", 0.0, 100.0, float(D["cost_bps"]), 5.0)
+    cost_bps = st.number_input(
+        "Costs for US listings (bps on turnover)",
+        0.0,
+        100.0,
+        float(D["cost_bps"]),
+        5.0,
+        help="Local exchanges cost more to trade; their rates are set in config "
+        "(trading_costs) and listed under Holdings.",
+    )
     lookback = st.select_slider(
         "Estimation window (observations)", [126, 252, 504], value=D["lookback"]
     )
@@ -481,6 +496,7 @@ def shared_context() -> AnalystContext:
             settings={
                 "max_weight": max_weight,
                 "cost_bps": cost_bps,
+                "cost_by_suffix": COST_BY_SUFFIX,
                 "lookback": lookback,
                 "periods_per_year": periods,
                 "rebalance": D["rebalance"],
@@ -1426,6 +1442,15 @@ with tab_mine:
 
     with sec_hold:
         ws.render_holdings(find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS)
+        rates = bt.cost_rates(list(my_weights), cost_bps, COST_BY_SUFFIX)
+        local = rates[rates != cost_bps]
+        if len(local):
+            st.caption(
+                "Trading costs used in backtests and trades: "
+                + ", ".join(f"{t} {r:g} bps" for t, r in local.items())
+                + f"; US listings {cost_bps:g} bps (⚙ Settings). Local-market rates are "
+                "judgement estimates (config trading_costs)."
+            )
         for problem in holding_problems:
             st.warning(problem)
         if holding_note:
@@ -1602,6 +1627,7 @@ with tab_mine:
                     cost_bps,
                     need["cash_like"],
                     need["need_usd"],
+                    cost_by_suffix=COST_BY_SUFFIX,
                 )
             rebalance = ws.render_rebalance(
                 pd.Series(my_weights),
@@ -1620,6 +1646,7 @@ with tab_mine:
                 lambda t: getattr(get_quote(t), "price_usd", None),
                 cost_bps,
                 cash_need_for_trades(),
+                COST_BY_SUFFIX,
             )
             if "ctx" in st.session_state:
                 st.session_state.ctx.rebalance = rebalance
@@ -1951,13 +1978,21 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
     need = cash_need_for_trades()
     if need:  # top up cash-like holdings so the need is covered after trading costs
         adjusted, trades = trades_covering_cash_need(
-            values, target, prices.astype(float), cost_bps, need["cash_like"], need["need_usd"]
+            values,
+            target,
+            prices.astype(float),
+            cost_bps,
+            need["cash_like"],
+            need["need_usd"],
+            cost_by_suffix=COST_BY_SUFFIX,
         )
         cash = cash_need_check(trades["target_usd"], need["cash_like"], need["need_usd"])
     else:
         adjusted, trades, cash = (
             target,
-            trade_list(values, target, prices.astype(float), cost_bps),
+            trade_list(
+                values, target, prices.astype(float), cost_bps, cost_by_suffix=COST_BY_SUFFIX
+            ),
             None,
         )
     section = trade_section(trades, cost_bps, cash)

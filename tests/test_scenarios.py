@@ -210,3 +210,18 @@ def test_trades_cover_the_cash_need_after_costs() -> None:
     buys = trades.loc[trades.trade_usd > 0, "trade_usd"].sum()
     sells = -trades.loc[trades.trade_usd < 0, "trade_usd"].sum()
     assert buys + trades["cost_usd"].sum() == pytest.approx(sells)  # still cash-neutral
+
+
+def test_trade_list_charges_each_market_its_own_rate() -> None:
+    from gpl.scenarios import trade_list
+
+    # sell 10% of 2222.SR (30 bps), buy 10% of SPY (10 bps), on USD 100,000
+    current = pd.Series({"SPY": 50_000.0, "2222.SR": 50_000.0})
+    target = pd.Series({"SPY": 0.6, "2222.SR": 0.4})
+    prices = pd.Series({"SPY": 500.0, "2222.SR": 10.0})
+    t = trade_list(current, target, prices, 10, cost_by_suffix={".SR": 30})
+    assert t.loc["2222.SR", "cost_usd"] == pytest.approx(abs(t.loc["2222.SR", "trade_usd"]) * 0.003)
+    assert t.loc["SPY", "cost_usd"] == pytest.approx(t.loc["SPY", "trade_usd"] * 0.001)
+    assert t["cost_usd"].sum() == pytest.approx(40.0, rel=1e-3)  # ~10,000 x (0.3% + 0.1%)
+    buys = t.loc[t.trade_usd > 0, "trade_usd"].sum()
+    assert buys + t["cost_usd"].sum() == pytest.approx(-t.loc[t.trade_usd < 0, "trade_usd"].sum())

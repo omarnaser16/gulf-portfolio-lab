@@ -274,3 +274,25 @@ def test_spec_strategy_with_ledoit_wolf_uses_only_the_window(random_returns: pd.
     pd.testing.assert_series_equal(
         sample, optimise(window.mean() * 252, window.cov() * 252, spec).weights
     )
+
+
+def test_cost_rates_by_exchange() -> None:
+    from gpl.backtest import cost_rates
+
+    rates = cost_rates(["SPY", "2222.SR", "EMAAR.AE", "ISF.L"], 10, {".SR": 30, ".AE": 35})
+    assert rates.to_dict() == {"SPY": 10.0, "2222.SR": 30.0, "EMAAR.AE": 35.0, "ISF.L": 10.0}
+
+
+def test_market_specific_costs_hand_value() -> None:
+    from gpl import backtest as bt
+
+    # two flat assets; the first rebalance buys 50/50 from cash: 50% x 10 bps + 50% x 30 bps
+    idx = pd.bdate_range("2024-01-01", periods=60)
+    prices = pd.DataFrame({"SPY": 100.0, "2222.SR": 50.0}, index=idx)
+    res = bt.run_backtest(
+        prices, bt.equal_weight, lookback=20, cost_bps=10, cost_by_suffix={".SR": 30}
+    )
+    first = res.costs.iloc[0]
+    assert first == pytest.approx((0.5 * 10 + 0.5 * 30) / 1e4)  # 0.20%
+    flat = bt.run_backtest(prices, bt.equal_weight, lookback=20, cost_bps=10)
+    assert flat.costs.iloc[0] == pytest.approx(10 / 1e4)  # one rate: unchanged behaviour

@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 
 import pandas as pd
 
+from gpl.backtest import cost_rates
 from gpl.metrics import drawdown_series
 
 UNKNOWN = "Other / unknown"
@@ -181,6 +182,7 @@ def trade_list(
     prices_usd: pd.Series,
     cost_bps: float,
     total_value: float | None = None,
+    cost_by_suffix: Mapping[str, float] | None = None,
 ) -> pd.DataFrame:
     """Trades that bring every holding back to its target weight, cash-neutral after costs.
 
@@ -196,6 +198,9 @@ def trade_list(
         Trading cost in basis points of the amount traded.
     total_value : float, optional
         Portfolio value in USD; defaults to the sum of ``current_values``.
+    cost_by_suffix : mapping, optional
+        Market-specific rates by exchange suffix (``gpl.backtest.cost_rates``); others pay
+        ``cost_bps``.
 
     Returns
     -------
@@ -212,11 +217,11 @@ def trade_list(
     if total_value is not None and held.sum() > 0:
         held = held / held.sum() * value
     w = target.reindex(tickers).fillna(0.0)
-    rate = cost_bps / 1e4
+    rate = cost_rates(tickers, cost_bps, cost_by_suffix) / 1e4
     costs = 0.0
     for _ in range(20):  # costs depend on the trades, which depend on costs: iterate
         trades = w * (value - costs) - held
-        new_costs = float(trades.abs().sum() * rate)
+        new_costs = float((trades.abs() * rate).sum())
         if abs(new_costs - costs) < 1e-9:
             break
         costs = new_costs
@@ -278,6 +283,7 @@ def trades_covering_cash_need(
     cash_like: Sequence[str],
     need_usd: float,
     total_value: float | None = None,
+    cost_by_suffix: Mapping[str, float] | None = None,
 ) -> tuple[pd.Series, pd.DataFrame]:
     """``trade_list`` whose cash-like holdings end at or above ``need_usd`` after costs.
 
@@ -286,12 +292,14 @@ def trades_covering_cash_need(
     after-cost amount covers the need. Returns the adjusted target and the trades.
     """
     adjusted = target
-    trades = trade_list(current_values, adjusted, prices_usd, cost_bps, total_value)
+    trades = trade_list(current_values, adjusted, prices_usd, cost_bps, total_value, cost_by_suffix)
     for _ in range(10):
         if cash_need_check(trades["target_usd"], cash_like, need_usd)["ok"]:
             break
         adjusted = cash_floor(
             adjusted, cash_like, need_usd + 1.0, float(trades["target_usd"].sum())
         )
-        trades = trade_list(current_values, adjusted, prices_usd, cost_bps, total_value)
+        trades = trade_list(
+            current_values, adjusted, prices_usd, cost_bps, total_value, cost_by_suffix
+        )
     return adjusted, trades

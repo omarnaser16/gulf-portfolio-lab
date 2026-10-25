@@ -6,7 +6,7 @@ No look-ahead bias: weights set at rebalance date *t* use returns up to and incl
 only, and apply from the next trading day. Between rebalances, weights drift with prices.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -55,12 +55,27 @@ class BacktestResult:
     costs: pd.Series
 
 
+def cost_rates(
+    tickers: Sequence[str], default_bps: float, by_suffix: Mapping[str, float] | None = None
+) -> pd.Series:
+    """Trading cost in bps for each ticker: the exchange's rate (by suffix, e.g. ``.SR``) or
+    ``default_bps`` (US listings and anything unknown)."""
+    by_suffix = by_suffix or {}
+
+    def rate(t: str) -> float:
+        suffix = "." + t.rsplit(".", 1)[-1] if "." in t else ""
+        return float(by_suffix.get(suffix, default_bps))
+
+    return pd.Series({t: rate(t) for t in tickers}, dtype=float)
+
+
 def run_backtest(
     prices: pd.DataFrame,
     strategy: Strategy,
     rebalance: str = "ME",
     lookback: int = 252,
     cost_bps: float = 10.0,
+    cost_by_suffix: Mapping[str, float] | None = None,
 ) -> BacktestResult:
     """Simulate a strategy rebalanced on a calendar schedule.
 
@@ -77,6 +92,9 @@ def run_backtest(
         of history are skipped, so the backtest starts after the first full window.
     cost_bps : float, default 10.0
         Transaction cost in basis points on turnover.
+    cost_by_suffix : mapping, optional
+        Market-specific rates by exchange suffix (e.g. ``{".SR": 30}``); each holding's trade
+        then costs its own rate (``cost_rates``). Without it every trade costs ``cost_bps``.
 
     Returns
     -------
@@ -87,6 +105,11 @@ def run_backtest(
         raise ValueError("prices contain NaN gaps; run clean_prices and handle long gaps first")
     tickers = returns.columns
     r = returns.to_numpy()
+    rates = (
+        None
+        if not cost_by_suffix
+        else cost_rates(list(tickers), cost_bps, cost_by_suffix).to_numpy()
+    )
 
     rebalance_dates = _rebalance_dates(returns.index, rebalance)
     is_rebalance = returns.index.isin(rebalance_dates)
@@ -112,7 +135,11 @@ def run_backtest(
             window = returns.iloc[i - lookback + 1 : i + 1]  # up to and including t
             target = _validate_weights(strategy(window), tickers)
             traded = float(np.abs(target - w).sum())
-            cost = traded * cost_bps / 1e4
+            cost = (
+                traded * cost_bps / 1e4
+                if rates is None
+                else float(np.abs(target - w) @ rates) / 1e4
+            )
             w = target  # earns returns from the next day (i + 1) onwards
             weight_rows[date] = target
             turnover[date] = traded

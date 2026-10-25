@@ -107,6 +107,21 @@ optimise_lab:
 
 # Historical stress episodes (Analyst stress test). Returns run from the close on `start` to the
 # close on `end`.
+# Trading costs by market (bps of the amount traded: commission + spread + impact). JUDGEMENT
+# ESTIMATES, not quotes: GCC and other local exchanges cost more to trade than US-listed ETFs.
+# Holdings without a listed suffix (US listings, incl. US-listed GCC ETFs) use the
+# ⚙ Settings cost (default 10 bps).
+trading_costs:
+  by_suffix:
+    ".SR": 30      # Tadawul (Saudi)
+    ".AE": 35      # DFM (Dubai)
+    ".AD": 35      # ADX (Abu Dhabi)
+    ".QA": 30      # Qatar Stock Exchange
+    ".KW": 35      # Boursa Kuwait
+    ".BH": 40      # Bahrain Bourse
+    ".OM": 40      # Muscat (MSX)
+    ".L": 15       # London
+
 # Cash needs due within this many months must already be held in cash-like holdings: cash,
 # short-term bonds or sukuk (a hard optimiser limit). Later needs are recorded, not enforced.
 cash_need_window_months: 36
