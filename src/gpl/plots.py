@@ -534,8 +534,9 @@ def exposure_chart(
     from plotly.subplots import make_subplots
 
     panels = [("region", "Region"), ("asset_type", "Asset type"), ("currency", "Currency")]
+    # stacked panels, so long category names get the full width instead of being clipped
     fig = make_subplots(
-        rows=1, cols=3, subplot_titles=[p[1] for p in panels], horizontal_spacing=0.12
+        rows=3, cols=1, subplot_titles=[p[1] for p in panels], vertical_spacing=0.12
     )
     for color, (name, exp) in zip(SERIES_COLORS, exposures_by_portfolio.items(), strict=False):
         for col, (key, _) in enumerate(panels, start=1):
@@ -551,11 +552,14 @@ def exposure_chart(
                     showlegend=col == 1,
                     hovertemplate="%{y}: %{x:.2%}<extra>" + name + "</extra>",
                 ),
-                row=1,
-                col=col,
+                row=col,
+                col=1,
             )
+    sizes = [max(len(e[k]) for e in exposures_by_portfolio.values()) for k, _ in panels]
     fig = _base_layout(fig, title, "", PCT)
-    fig.update_layout(barmode="group", hovermode="closest", height=380)
+    fig.update_layout(barmode="group", hovermode="closest", height=160 + 46 * sum(sizes))
+    labels = [str(i) for e in exposures_by_portfolio.values() for v in e.values() for i in v.index]
+    fig.update_layout(margin={"l": 30 + 7 * max(map(len, labels), default=10)})
     fig.update_xaxes(tickformat=PCT)
     fig.update_yaxes(tickformat="", autorange="reversed")
     fig.update_annotations(font={"color": TEXT_PRIMARY})
