@@ -535,3 +535,126 @@ def memo_sections(text: str, charts: Sequence[tuple[str, object]]) -> list[tuple
         else:
             out.append(("", unplaced))
     return out
+
+
+def render_rebalance(
+    current: pd.Series,
+    default_target: pd.Series,
+    target_source: str,
+    usd_values: pd.Series | None,
+    default_value: float,
+    price_usd: Callable[[str], float | None],
+    cost_bps: float,
+) -> dict | None:
+    """Drift monitor and trade list (``gpl.scenarios``). Returns the formatted result."""
+    from gpl.scenarios import drift, needs_rebalance, trade_list
+
+    st.caption(
+        f"Targets start from the {target_source}; edit any target. Drift = current minus "
+        "target weight. A rebalance brings every holding back to its target, with costs paid "
+        "from the sales."
+    )
+    tickers = list(dict.fromkeys([*current.index, *default_target.index]))
+    key = "rb_" + "_".join(tickers) + "_" + target_source.replace(" ", "")
+    edited = st.data_editor(
+        pd.DataFrame(
+            {
+                "Current %": current.reindex(tickers).fillna(0.0) * 100,
+                "✏️ Target %": default_target.reindex(tickers).fillna(0.0) * 100,
+            },
+            index=pd.Index(tickers, name="Ticker"),
+        ),
+        key=key,
+        disabled=["Current %"],
+        width="stretch",
+        column_config={
+            "Current %": st.column_config.NumberColumn(format="%.2f"),
+            "✏️ Target %": st.column_config.NumberColumn(
+                format="%.2f", min_value=0.0, max_value=100.0
+            ),
+        },
+    )
+    target = edited["✏️ Target %"].fillna(0.0) / 100
+    c1, c2 = st.columns(2)
+    band = (
+        c1.number_input("Drift band (± percentage points)", 0.5, 50.0, 5.0, 0.5, key="rb_band")
+        / 100
+    )
+    value = c2.number_input(
+        "Portfolio value (USD)",
+        0.0,
+        1e11,
+        float(default_value),
+        1000.0,
+        key="rb_value",
+        disabled=usd_values is not None,
+        help="Taken from the USD amounts on Holdings."
+        if usd_values is not None
+        else "Enter holdings as USD amounts to use their value.",
+    )
+    if abs(target.sum() - 1) > 1e-4:
+        st.warning(f"Targets add up to {target.sum():.2%}; they must add up to 100.00%.")
+        return None
+    d = drift(current, target, band)
+    shown = pd.DataFrame(
+        {
+            "Current": d["current"].map(pct),
+            "Target": d["target"].map(pct),
+            "Drift": d["drift"].map(lambda x: f"{x * 100:+.2f} pp"),
+            "Outside band": d["outside_band"].map({True: "⚠️ yes", False: "no"}),
+        },
+        index=d.index,
+    )
+    st.table(shown)
+    flagged = list(d.index[d["outside_band"]])
+    if needs_rebalance(d):
+        st.warning(
+            f"Outside the ±{band * 100:.2f} pp band: {', '.join(flagged)}. A rebalance is "
+            "suggested for the adviser's review."
+        )
+    else:
+        st.success(
+            f"Every holding is within ±{band * 100:.2f} pp of its target: no rebalance needed."
+        )
+    show = needs_rebalance(d) or st.toggle("Show the trades anyway", key="rb_show")
+    result = {"band": pct(band), "outside_band": flagged, "drift": shown.to_dict(orient="index")}
+    if not show:
+        return result
+    values = usd_values if usd_values is not None else current * value
+    prices = pd.Series({t: price_usd(t) for t in tickers}, dtype=float)
+    trades = trade_list(values, target, prices, cost_bps, None if usd_values is not None else value)
+    table = pd.DataFrame(
+        {
+            "Action": trades["action"],
+            "Amount (USD)": trades["trade_usd"].abs().map("{:,.2f}".format),
+            "Est. units": trades["units"].map(lambda u: "–" if pd.isna(u) else f"{abs(u):,.2f}"),
+            "Est. cost (USD)": trades["cost_usd"].map("{:,.2f}".format),
+            "After (USD)": trades["target_usd"].map("{:,.2f}".format),
+        },
+        index=trades.index,
+    )
+    st.markdown("**Trade list**")
+    st.table(table)
+    buys = trades.loc[trades.trade_usd > 0, "trade_usd"].sum()
+    sells = -trades.loc[trades.trade_usd < 0, "trade_usd"].sum()
+    costs = trades["cost_usd"].sum()
+    st.caption(
+        f"Sells USD {sells:,.2f}, buys USD {buys:,.2f}, estimated costs USD {costs:,.2f} at "
+        f"{cost_bps:g} bps (buys + costs = sells). Units are estimates at the latest price "
+        "(fractional; round to the broker's lot size). Decision support for a licensed adviser: "
+        "check taxes and liquidity before trading."
+    )
+    st.download_button(
+        "Download trade list (CSV)",
+        trades.to_csv(),
+        file_name="trade_list.csv",
+        mime="text/csv",
+        key="rb_csv",
+    )
+    result["trades"] = table.to_dict(orient="index")
+    result["totals"] = {
+        "sells_usd": f"{sells:,.2f}",
+        "buys_usd": f"{buys:,.2f}",
+        "costs_usd": f"{costs:,.2f}",
+    }
+    return result

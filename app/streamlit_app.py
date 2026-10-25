@@ -1198,8 +1198,8 @@ def render_portfolio_kpis() -> None:
 with tab_mine:
     st.subheader("My portfolio")
     render_portfolio_kpis()
-    sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt = st.tabs(
-        ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"]
+    sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt, sec_rebal = st.tabs(
+        ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise", "Rebalance"]
     )
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 
@@ -1352,6 +1352,32 @@ with tab_mine:
 
     with sec_opt:
         render_optimise()
+
+    with sec_rebal:
+        if not portfolio_ok:
+            st.info("Add holdings with price history on the Holdings tab.")
+        else:
+            proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
+            usd = st.session_state.get(ws.MODE) == ws.USD
+            rebalance = ws.render_rebalance(
+                pd.Series(my_weights),
+                pd.Series(proposed["weights"]) if proposed else pd.Series(my_weights),
+                f"{proposed['name']}" if proposed else "current weights",
+                pd.Series(
+                    {
+                        r["ticker"]: r["value"]
+                        for r in st.session_state[ws.ROWS]
+                        if r["ticker"] in my_weights
+                    }
+                )
+                if usd
+                else None,
+                portfolio_value() or ws.DEFAULT_TOTAL_USD,
+                lambda t: getattr(get_quote(t), "price_usd", None),
+                cost_bps,
+            )
+            if "ctx" in st.session_state:
+                st.session_state.ctx.rebalance = rebalance
 
 with tab_mc:
     st.subheader("Monte Carlo: where could today's weights go?")

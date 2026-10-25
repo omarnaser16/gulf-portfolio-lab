@@ -96,6 +96,7 @@ class AnalystContext:
     ips: Any = None  # gpl.client.IPS of the client on the Client tab, if any
     attributes: Mapping[str, Mapping[str, str]] | None = None  # Sharia status, sector
     portfolio_value: float | None = None  # USD, for the liquidity rule
+    rebalance: dict | None = None  # latest drift monitor and trade list (set by the app)
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -855,6 +856,17 @@ def check_suitability_tool(ctx: AnalystContext) -> dict:
     }
 
 
+def get_drift_and_trades(ctx: AnalystContext) -> dict:
+    """The drift monitor and trade list from the Rebalance section (computed by tested code)."""
+    if not ctx.rebalance:
+        raise ToolError("no rebalance check yet: open Portfolio › Rebalance")
+    return {
+        **ctx.rebalance,
+        "note": "Trades bring every holding back to its target, costs paid "
+        "from the sales. Decision support for a licensed adviser, not an order.",
+    }
+
+
 def get_portfolio_diagnosis(ctx: AnalystContext) -> dict:
     if ctx.diagnosis is None:
         raise ToolError("no diagnosis yet: open the Optimise section of the Portfolio tab")
@@ -1036,6 +1048,13 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "get_drift_and_trades",
+            "Current vs target weights, which holdings drifted outside the band, and the "
+            "rebalancing trade list (buy/sell, USD amounts, estimated units and costs) from "
+            "Portfolio › Rebalance.",
+            {},
+        ),
+        tool(
             "check_suitability",
             "Check the current portfolio (and the proposed one, if any) against the client's "
             "Investment Policy Statement: volatility, max drawdown, worst stress episode, "
@@ -1065,6 +1084,7 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "what_if_portfolio": what_if_portfolio,
     "stress_test": stress_test,
     "check_suitability": check_suitability_tool,
+    "get_drift_and_trades": get_drift_and_trades,
     "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
 }

@@ -86,7 +86,7 @@ def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
 
 def test_app_renders_every_tab(app: AppTest) -> None:
     assert not app.exception, app.exception
-    sections = {"Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"}  # Portfolio
+    sections = {"Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise", "Rebalance"}
     assert [t.label for t in app.tabs if t.label not in sections] == [
         "Client",
         "Portfolio",
@@ -98,11 +98,12 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Analyst",
     ]
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
-    # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings;
+    # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings,
+    # rebalance drift;
     # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
-    # limits editors and the frontier weights
-    assert len(app.table) == 10 and len(app.dataframe) == 5
+    # limits editors, the rebalance targets and the frontier weights
+    assert len(app.table) == 11 and len(app.dataframe) == 6
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -1010,3 +1011,37 @@ def test_client_report_button_builds_a_pdf(app: AppTest) -> None:
     pdf, name = app.session_state["client_report"]
     assert pdf.startswith(b"%PDF") and name.startswith("Client_report_EX-DXB_")
     assert any(d.label == "Download client report" for d in app.get("download_button"))
+
+
+# ------------------------------------------------------------------------------- Rebalance
+
+
+def test_rebalance_no_drift_by_default(app: AppTest) -> None:
+    drift = next(t.value for t in app.table if "Outside band" in t.value.columns)
+    assert set(drift["Outside band"]) == {"no"}
+    assert any("no rebalance needed" in s.value for s in app.success)
+
+
+def test_rebalance_trade_list_against_proposed_target(app: AppTest) -> None:
+    _set_holdings(
+        app,
+        [
+            {"ticker": "SPY", "group": "Global equity", "value": 66_000.0},
+            {"ticker": "AGG", "group": "Bonds", "value": 34_000.0},
+        ],
+        mode="USD amount",
+    )
+    app.session_state["ctx"].proposed = {
+        "name": "Target 60/40",
+        "weights": {"SPY": 0.6, "AGG": 0.4},
+        "source": "test",
+    }
+    app.run()
+    assert not app.exception, app.exception
+    drift = next(t.value for t in app.table if "Outside band" in t.value.columns)
+    assert drift.loc["SPY", "Drift"] == "+6.00 pp" and drift.loc["SPY", "Outside band"] == "⚠️ yes"
+    trades = next(t.value for t in app.table if "Est. cost (USD)" in t.value.columns)
+    assert trades.loc["SPY", "Action"] == "Sell" and trades.loc["AGG", "Action"] == "Buy"
+    assert trades.loc["SPY", "Amount (USD)"] == "6,007.20"  # cash-neutral after 10 bps costs
+    assert any(d.label == "Download trade list (CSV)" for d in app.get("download_button"))
+    assert app.session_state["ctx"].rebalance["totals"]["costs_usd"] == "12.00"

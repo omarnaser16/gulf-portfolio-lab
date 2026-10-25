@@ -150,3 +150,84 @@ def exposures(weights: pd.Series, meta: Mapping[str, Mapping[str, str]]) -> dict
         labels = weights.index.map(lambda t, k=key: meta.get(t, {}).get(k, UNKNOWN))
         out[key] = weights.groupby(labels).sum().sort_values(ascending=False)
     return out
+
+
+def drift(current: pd.Series, target: pd.Series, band: float = 0.05) -> pd.DataFrame:
+    """Current vs target weights, drift (current minus target) and whether it's outside the band.
+
+    Holdings in either list are included (missing weights count as 0). Exactly at the band is
+    inside it.
+    """
+    tickers = list(dict.fromkeys([*target.index, *current.index]))
+    out = pd.DataFrame(
+        {
+            "current": current.reindex(tickers).fillna(0.0),
+            "target": target.reindex(tickers).fillna(0.0),
+        }
+    )
+    out["drift"] = out["current"] - out["target"]
+    out["outside_band"] = out["drift"].abs() > band + 1e-9
+    return out
+
+
+def needs_rebalance(drift_table: pd.DataFrame) -> bool:
+    """True if any holding has drifted outside the band."""
+    return bool(drift_table["outside_band"].any())
+
+
+def trade_list(
+    current_values: pd.Series,
+    target: pd.Series,
+    prices_usd: pd.Series,
+    cost_bps: float,
+    total_value: float | None = None,
+) -> pd.DataFrame:
+    """Trades that bring every holding back to its target weight, cash-neutral after costs.
+
+    Parameters
+    ----------
+    current_values : pd.Series
+        Current holdings in USD (or proportions, if ``total_value`` is given).
+    target : pd.Series
+        Target weights; must add up to 100%.
+    prices_usd : pd.Series
+        Latest price per unit in USD, for the estimated number of units.
+    cost_bps : float
+        Trading cost in basis points of the amount traded.
+    total_value : float, optional
+        Portfolio value in USD; defaults to the sum of ``current_values``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Per holding: ``current_usd``, ``target_usd``, ``trade_usd`` (positive = buy),
+        ``action``, ``units`` (estimated, fractional) and ``cost_usd``. Costs are paid from
+        the sales: targets are applied to the value after costs, so buys + costs = sells.
+    """
+    if abs(float(target.sum()) - 1) > 1e-6:
+        raise ValueError(f"Target weights add up to {target.sum():.2%}; they must add up to 100%.")
+    tickers = list(dict.fromkeys([*target.index, *current_values.index]))
+    held = current_values.reindex(tickers).fillna(0.0).astype(float)
+    value = float(held.sum()) if total_value is None else float(total_value)
+    if total_value is not None and held.sum() > 0:
+        held = held / held.sum() * value
+    w = target.reindex(tickers).fillna(0.0)
+    rate = cost_bps / 1e4
+    costs = 0.0
+    for _ in range(20):  # costs depend on the trades, which depend on costs: iterate
+        trades = w * (value - costs) - held
+        new_costs = float(trades.abs().sum() * rate)
+        if abs(new_costs - costs) < 1e-9:
+            break
+        costs = new_costs
+    out = pd.DataFrame(
+        {
+            "current_usd": held,
+            "target_usd": w * (value - costs),
+            "trade_usd": trades,
+        }
+    )
+    out["action"] = ["Buy" if x > 0.005 else "Sell" if x < -0.005 else "Hold" for x in trades]
+    out["units"] = trades / prices_usd.reindex(tickers)
+    out["cost_usd"] = trades.abs() * rate
+    return out

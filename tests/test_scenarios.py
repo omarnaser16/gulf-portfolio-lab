@@ -121,3 +121,54 @@ def test_kpi_table_deltas() -> None:
         k.loc["cagr", "portfolio"] - k.loc["cagr", "benchmark"]
     )
     assert k.loc["volatility", "delta"] > 0  # more volatile than the benchmark
+
+
+# ----------------------------------------------------------------- drift and trade list
+
+from gpl.scenarios import drift, needs_rebalance, trade_list  # noqa: E402
+
+
+def test_drift_flags_holdings_outside_the_band() -> None:
+    d = drift(pd.Series({"SPY": 0.66, "AGG": 0.34}), pd.Series({"SPY": 0.60, "AGG": 0.40}))
+    assert d.loc["SPY", "drift"] == pytest.approx(0.06) and d.loc["AGG", "drift"] == pytest.approx(
+        -0.06
+    )
+    assert d["outside_band"].tolist() == [True, True] and needs_rebalance(d)
+    calm = drift(pd.Series({"SPY": 0.63, "AGG": 0.37}), pd.Series({"SPY": 0.60, "AGG": 0.40}))
+    assert not needs_rebalance(calm)
+    edge = drift(pd.Series({"SPY": 0.65, "AGG": 0.35}), pd.Series({"SPY": 0.60, "AGG": 0.40}))
+    assert not needs_rebalance(edge)  # exactly 5 pp is inside a 5 pp band
+    new = drift(pd.Series({"SPY": 1.0}), pd.Series({"SPY": 0.9, "GLD": 0.1}))
+    assert new.loc["GLD", "current"] == 0.0  # a target holding not yet owned
+
+
+def test_trade_list_is_cash_neutral_after_costs() -> None:
+    values = pd.Series({"SPY": 66_000.0, "AGG": 34_000.0})
+    target = pd.Series({"SPY": 0.60, "AGG": 0.40})
+    prices = pd.Series({"SPY": 600.0, "AGG": 100.0})
+    t = trade_list(values, target, prices, cost_bps=10)
+    # targets on 100,000 minus costs (about 12): SPY 59,992.80, AGG 39,995.20
+    assert t.loc["SPY", "trade_usd"] == pytest.approx(-6_007.2, abs=0.05)
+    assert t.loc["AGG", "trade_usd"] == pytest.approx(5_995.2, abs=0.05)
+    assert t.loc["SPY", "action"] == "Sell" and t.loc["AGG", "action"] == "Buy"
+    assert t["cost_usd"].sum() == pytest.approx(12.0, abs=0.01)
+    buys, sells = (
+        t.loc[t.trade_usd > 0, "trade_usd"].sum(),
+        -t.loc[t.trade_usd < 0, "trade_usd"].sum(),
+    )
+    assert buys + t["cost_usd"].sum() == pytest.approx(sells, abs=0.01)  # funded by the sales
+    assert t.loc["SPY", "units"] == pytest.approx(-6_007.2 / 600, abs=1e-3)
+
+
+def test_trade_list_with_a_total_value_and_new_holding() -> None:
+    values = pd.Series({"SPY": 1.0})  # only proportions matter when a total is given
+    t = trade_list(
+        values,
+        pd.Series({"SPY": 0.5, "GLD": 0.5}),
+        pd.Series({"SPY": 1.0, "GLD": 1.0}),
+        cost_bps=0,
+        total_value=10_000,
+    )
+    assert t.loc["GLD", "trade_usd"] == pytest.approx(5_000) and t.loc["GLD", "action"] == "Buy"
+    with pytest.raises(ValueError, match="add up to 100%"):
+        trade_list(values, pd.Series({"SPY": 0.5}), pd.Series({"SPY": 1.0}), cost_bps=0)
