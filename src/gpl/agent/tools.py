@@ -643,6 +643,7 @@ def run_candidates(
         target,
         tolerance=lab.get("volatility_tolerance", 0.005),
         held_up_ratio=lab.get("held_up_ratio", 0.5),
+        min_sharpe_gain=lab.get("min_sharpe_gain", 0.05),
     )
 
     months = len(results[CURRENT].weights)

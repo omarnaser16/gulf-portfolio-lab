@@ -46,7 +46,8 @@ def test_max_risk_adjusted_picks_highest_walk_forward_sharpe() -> None:
     assert "Highest walk-forward Sharpe" in rec.rule
     assert (
         rec.reasons[0]
-        == "Max Sharpe ranks first under the rule: highest walk-forward Sharpe ratio after costs."
+        == "Max Sharpe ranks first under the rule: highest walk-forward Sharpe ratio after costs, "
+        "and at least 0.05 above your current portfolio's."
     )
 
 
@@ -136,3 +137,60 @@ def test_volatility_target_and_candidate_specs() -> None:
         s.max_weight == 0.4 and s.group_bounds == {"GCC": (0.2, None)} for s in specs.values()
     )
     assert specs["Risk parity"].objective == "risk_parity"
+
+
+# ------------------------------------------------------------- minimum Sharpe improvement
+
+
+def _one_candidate(current_sharpe: float, pick_sharpe: float) -> pd.DataFrame:
+    return table(
+        {
+            "Current": (0.08, 0.10, current_sharpe, current_sharpe),
+            "Benchmark": (0.07, 0.12, 0.40, 0.40),
+            "Max Sharpe": (0.09, 0.10, pick_sharpe, pick_sharpe),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("pick", "expected"),
+    [(0.80, "Max Sharpe"), (0.799, KEEP), (0.76, KEEP), (0.74, KEEP)],
+)
+def test_minimum_sharpe_gain_boundary(pick, expected) -> None:
+    # current 0.75: a gain of exactly 0.05 counts; 0.049 and 0.01 are within noise
+    assert recommend("max_risk_adjusted", _one_candidate(0.75, pick)).choice == expected
+
+
+def test_small_sharpe_gain_is_explained() -> None:
+    rec = recommend("max_risk_adjusted", _one_candidate(0.7512, 0.7575))  # the README case
+    assert rec.choice == KEEP and rec.ranking == ["Max Sharpe"]
+    assert any("by less than the 0.05 minimum" in r for r in rec.reasons)
+    assert "at least 0.05 above" in rec.rule
+
+
+def test_minimum_gain_in_the_benchmark_goal() -> None:
+    # current already beats the benchmark (8% > 7% with 10% < 12% volatility): change needs +0.05
+    assert recommend("beat_benchmark_less_risk", _one_candidate(0.75, 0.77)).choice == KEEP
+    assert recommend("beat_benchmark_less_risk", _one_candidate(0.75, 0.81)).choice == "Max Sharpe"
+    # a current portfolio that does NOT qualify is replaced by one that does, whatever the Sharpe
+    frame = _one_candidate(0.75, 0.70)
+    frame.loc["Current", "volatility"] = 0.15  # riskier than the benchmark
+    assert recommend("beat_benchmark_less_risk", frame).choice == "Max Sharpe"
+
+
+def test_threshold_is_configurable_and_off_at_zero() -> None:
+    frame = _one_candidate(0.75, 0.76)
+    assert recommend("max_risk_adjusted", frame, min_sharpe_gain=0.0).choice == "Max Sharpe"
+    assert recommend("max_risk_adjusted", frame, min_sharpe_gain=0.2).choice == KEEP
+
+
+def test_volatility_goals_are_not_affected() -> None:
+    # reduce risk is judged on volatility: a lower Sharpe is fine if risk falls
+    frame = _one_candidate(0.75, 0.60)
+    frame.loc["Max Sharpe", "volatility"] = 0.07
+    assert recommend("reduce_risk", frame).choice == "Max Sharpe"
+
+
+def test_boundary_is_not_broken_by_rounding() -> None:
+    # 0.1 + 0.2 != 0.3 in floating point; a gain of exactly 0.05 must still count
+    assert recommend("max_risk_adjusted", _one_candidate(0.1 + 0.2, 0.35)).choice == "Max Sharpe"

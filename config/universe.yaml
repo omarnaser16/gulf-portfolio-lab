@@ -100,6 +100,7 @@ optimise_lab:
   cluster_threshold: 0.70          # holdings with average correlation >= this form a cluster
   volatility_tolerance: 0.005      # 0.50 pp: "about the same" / "on target" volatility
   held_up_ratio: 0.50              # keeps >= 50% of its in-sample Sharpe out of sample
+  min_sharpe_gain: 0.05            # a change must beat the current Sharpe by this much
 
 # Historical stress episodes (Analyst stress test). Returns run from the close on `start` to the
 # close on `end`.

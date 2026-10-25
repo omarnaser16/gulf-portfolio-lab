@@ -192,20 +192,26 @@ written rule applied to the walk-forward results after costs (e.g. *reduce risk*
 below the current portfolio's, with the higher Sharpe ratio winning when two are within 0.50
 percentage points). A method "held up" if it kept at least half of its in-sample Sharpe ratio out of
 sample; one that ranked first but didn't hold up is skipped, and if nothing improves on the current
-portfolio for the goal, the rule says to keep it. Every branch is unit-tested.
+portfolio for the goal, the rule says to keep it. Where the rule compares Sharpe ratios
+(*maximise risk-adjusted return*, and the Sharpe test in *beat the benchmark with less risk*), a
+change must beat the current portfolio's Sharpe ratio by at least 0.05 (`min_sharpe_gain` in
+config): smaller gains are within estimation noise and not worth the trading. Every branch is
+unit-tested.
 
 Example on the README sample (holdings SPY 50%, AGG 30%, GLD 10%, KSA 10%; at least 10% GCC;
 walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
 - *Reduce risk* (at most 45% per asset): the rule chose risk parity, with volatility 7.69% vs
   10.73% and max drawdown −14.47% vs −21.18%, but CAGR 7.34% vs 10.29% and Sharpe 0.65 vs 0.75. It is
   a lower-risk choice, not a better risk-adjusted one.
-- *Beat the benchmark with less risk* (at most 40% per asset): the rule chose max Sharpe (CAGR
-  9.95% vs the benchmark's 9.83%, volatility 10.16% vs 11.28%). Its Sharpe ratio beat the current
-  portfolio's by under 0.01 (0.7575 vs 0.7512) while trading 1.70× a year vs 0.24×; with data to 23
-  Oct 2026 the same request recommended keeping the current portfolio. The rule has no minimum
-  improvement, so a near-tie can flip with a few weeks of data (see Limitations).
+- *Beat the benchmark with less risk* (at most 40% per asset): max Sharpe ranked first (CAGR
+  9.95% vs the benchmark's 9.83%, volatility 10.16% vs 11.28%), but its Sharpe ratio beat the
+  current portfolio's by under 0.01 (0.7575 vs 0.7512) while trading 1.70× a year vs 0.24×, so the
+  rule says to keep the current portfolio. Before the 0.05 minimum was added it recommended max
+  Sharpe here, while three more weeks of data said "keep": the minimum removed that flip. Across
+  20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
+  Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 516 tests (`pytest`), most with expected values small enough to check by hand. They
+**Testing.** 526 tests (`pytest`), most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -237,9 +243,10 @@ a scripted fake model, so the suite never touches the network.
   set from the whole period. Tight limits can leave little room: with four holdings and a 25% cap,
   25% each is the only allowed portfolio. The spec check catches invented numbers, not a misread
   goal, so read the confirmation before running.
-- **The recommendation rule has no materiality threshold:** any improvement on the goal metric
-  counts, so a method can be recommended for a tiny gain (e.g. 0.006 of Sharpe) despite much higher
-  turnover, and near-ties can flip as data is added.
+- **The minimum improvement covers Sharpe comparisons only:** goals judged on volatility or
+  return (reduce risk, target return, target volatility) accept any improvement on their own
+  metric, so a near-tie there can still flip as data is added. The 0.05 level is a judgement,
+  not estimated from the data.
 - **Analyst charts:** "proposed" growth, drawdown and metrics apply today's proposed weights to the
   past (hindsight). Stress tests hold today's weights through each episode, rebalanced daily
   without costs, and need the holdings' common history to cover it; with Sunday–Thursday
@@ -280,7 +287,7 @@ git clone <your-repo-url> && cd gulf-portfolio-lab
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 516 tests, no network needed
+pytest -q                       # 526 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 

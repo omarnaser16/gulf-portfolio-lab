@@ -241,3 +241,12 @@ def test_candidates_with_impossible_limits(ctx_opt) -> None:
 def test_diagnosis_tool_needs_a_diagnosis(ctx_opt) -> None:
     with pytest.raises(ToolError, match="no diagnosis"):
         execute_tool(ctx_opt, "get_portfolio_diagnosis", {})
+
+
+def test_candidates_use_the_configured_minimum_sharpe_gain(ctx_opt) -> None:
+    limits = OptimisationSpec(max_weight=0.45, groups=HELD)
+    ctx_opt.settings = {**ctx_opt.settings, "optimise_lab": {"min_sharpe_gain": 5.0}}
+    report, _ = run_candidates(ctx_opt, "max_risk_adjusted", limits, CURRENT)
+    assert report["recommendation"]["choice"] == KEEP  # no method gains 5.0 of Sharpe
+    assert "at least 5.00 above" in report["recommendation"]["rule"]
+    ctx_opt.settings = {k: v for k, v in ctx_opt.settings.items() if k != "optimise_lab"}

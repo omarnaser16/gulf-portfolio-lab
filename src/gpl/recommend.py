@@ -31,6 +31,8 @@ CANDIDATES: dict[str, str] = {  # display name -> optimiser objective
     "Target volatility": "target_volatility",
 }
 CURRENT, BENCHMARK, KEEP = "Current", "Benchmark", "Keep your current portfolio"
+SHARPE_GOALS = ("max_risk_adjusted", "beat_benchmark_less_risk")  # decided on Sharpe ratios
+_EPS = 1e-9  # so a gain of exactly the minimum counts despite floating-point rounding
 
 
 def volatility_target(
@@ -76,7 +78,10 @@ class Recommendation:
 
 
 RULES = {
-    "max_risk_adjusted": "Highest walk-forward Sharpe ratio after costs.",
+    "max_risk_adjusted": (
+        "Highest walk-forward Sharpe ratio after costs, and at least {gain} above your current "
+        "portfolio's."
+    ),
     "reduce_risk": (
         "Lowest walk-forward volatility, below your current portfolio's; when two are within "
         "{tol} of each other, the higher Sharpe ratio wins."
@@ -92,7 +97,8 @@ RULES = {
     "beat_benchmark_less_risk": (
         "Among methods with lower walk-forward volatility than the benchmark that also beat its "
         "CAGR, the highest Sharpe ratio; if none beat its CAGR, the highest Sharpe ratio among "
-        "those with lower volatility."
+        "those with lower volatility. If your portfolio already beats the benchmark with less "
+        "risk, a change must raise the Sharpe ratio by at least {gain}."
     ),
 }
 
@@ -155,11 +161,15 @@ def _ranked(goal, cands, current, benchmark, target, tol) -> tuple[list[str], li
     raise ValueError(f"unknown goal {goal!r}; choose one of {list(GOALS)}")
 
 
-def _improves(goal, pick, current, benchmark, target, tol) -> bool:
-    """Does the pick do better than the current portfolio on the goal's own terms?"""
+def _improves(goal, pick, current, benchmark, target, tol, min_gain) -> bool:
+    """Does the pick do better than the current portfolio on the goal's own terms?
+
+    Where the comparison is on the Sharpe ratio, the pick must beat the current portfolio by at
+    least ``min_gain``: a smaller gain is within estimation noise and not worth the trading.
+    """
     match goal:
         case "max_risk_adjusted":
-            return pick["sharpe"] > current["sharpe"]
+            return pick["sharpe"] >= current["sharpe"] + min_gain - _EPS
         case "reduce_risk":
             return pick["volatility"] < current["volatility"]
         case "target_return":
@@ -180,7 +190,8 @@ def _improves(goal, pick, current, benchmark, target, tol) -> bool:
             )
             if pick_ok and not current_ok:
                 return True
-            return pick["sharpe"] > current["sharpe"] and (pick_ok or not current_ok)
+            better = pick["sharpe"] >= current["sharpe"] + min_gain - _EPS
+            return better and (pick_ok or not current_ok)
     return False
 
 
@@ -190,6 +201,7 @@ def recommend(
     target: float | None = None,
     tolerance: float = 0.005,
     held_up_ratio: float = 0.5,
+    min_sharpe_gain: float = 0.05,
 ) -> Recommendation:
     """Apply the goal's rule to walk-forward results.
 
@@ -205,6 +217,10 @@ def recommend(
         Target return (``target_return``) or volatility (``target_volatility``), annual.
     tolerance : float, default 0.005
         Volatility tolerance (0.50 percentage points) for "about the same" and "on target".
+    min_sharpe_gain : float, default 0.05
+        Where the rule compares Sharpe ratios (maximise risk-adjusted return; the Sharpe test in
+        "beat the benchmark with less risk"), the minimum gain over the current portfolio for a
+        change to be recommended. Smaller gains are within estimation noise.
     held_up_ratio : float, default 0.5
         Share of its in-sample Sharpe a method must keep out of sample to count as holding up.
 
@@ -215,7 +231,7 @@ def recommend(
     if goal in ("target_return", "target_volatility") and target is None:
         raise ValueError(f"{goal} needs a target")
     tol_text = f"{tolerance * 100:.2f} percentage points"
-    rule = RULES[goal].format(tol=tol_text)
+    rule = RULES[goal].format(tol=tol_text, gain=f"{min_sharpe_gain:.2f}")
     current = table.loc[CURRENT]
     benchmark = table.loc[BENCHMARK] if BENCHMARK in table.index else None
     if goal == "beat_benchmark_less_risk" and benchmark is None:
@@ -244,7 +260,15 @@ def recommend(
             f"{held_up_ratio:.0%} of its in-sample Sharpe ratio), so the next method that did "
             f"is recommended."
         )
-    if not _improves(goal, cands.loc[pick], current, benchmark, target, tolerance):
+    if not _improves(goal, cands.loc[pick], current, benchmark, target, tolerance, min_sharpe_gain):
+        gain = cands.loc[pick, "sharpe"] - current["sharpe"]
+        if goal in SHARPE_GOALS and 0 < gain < min_sharpe_gain - _EPS:
+            reasons.append(
+                f"{pick} had a higher Sharpe ratio than your current portfolio, but by less than "
+                f"the {min_sharpe_gain:.2f} minimum, which is within estimation noise and not "
+                "worth the extra trading."
+            )
+            return Recommendation(KEEP, rule, reasons, ranking, survived)
         reasons.append(
             f"{pick} was the best method for this goal but did not improve on your current "
             "portfolio over the same period."

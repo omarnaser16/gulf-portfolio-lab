@@ -87,7 +87,8 @@ streamlit run app/streamlit_app.py
   goals into a spec (one of five goals, a target, limits; percentages as written) through a strict
   tool with no weights or method field; the user confirms the spec before anything runs.
 - **Recommendations are chosen by code.** `gpl/recommend.py` applies a fixed, tested rule per goal
-  to walk-forward, after-cost results; the AI only explains the rule's choice and trade-offs, and
+  to walk-forward, after-cost results (where it compares Sharpe ratios, a change must gain at
+  least 0.05, `min_sharpe_gain`); the AI only explains the rule's choice and trade-offs, and
   never presents results as guaranteed or higher future returns.
 - **Charts come only from tool data.** The AI chooses chart type, order and section via
   `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the

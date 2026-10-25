@@ -243,3 +243,15 @@ days; the work itself was done in a series of sessions.
   Sunday–Thursday holdings an episode starts at the nearest earlier common date.
 - **Status:** 516 tests passing.
 - **Next:** decide on a minimum-improvement threshold for recommendations; deploy; quizzes.
+
+## Minimum Sharpe improvement — 2026-10-25
+- **Decided:** a recommended change must beat my current Sharpe ratio by at least 0.05 wherever the
+  rule compares Sharpe ratios (configurable as `min_sharpe_gain`).
+- **Built by Claude Code:** the threshold in `recommend.py`, a reason that says when a gain was too
+  small, and tests at the boundary (0.05 counts, 0.049 doesn't, rounding can't break it).
+- **Effect:** of 20 goal-and-portfolio checks, only the two near-ties changed (0.7575 vs 0.7512 on
+  the README sample) and now say "keep", which matches the latest data; a +0.20 gain is still
+  recommended.
+- **Learned:** a rule with no materiality threshold turns estimation noise into trades. Goals
+  judged on volatility or return still have no minimum.
+- **Status:** 526 tests passing.
