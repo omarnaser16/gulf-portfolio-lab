@@ -730,7 +730,8 @@ def test_target_goal_needs_its_number(optimise_app) -> None:
     at, _ = optimise_app([])
     at.radio(key="ws_goal_0").set_value("target_return").run()
     assert any("Enter the target return" in w.value for w in at.warning)
-    at.number_input(key="ws_target_ret_0").set_value(6.0).run()
+    v = at.session_state["ws_draft_v"]  # a new goal redraws the form
+    at.number_input(key=f"ws_target_ret_{v}").set_value(6.0).run()
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
     assert _candidates(at) is not None
@@ -745,7 +746,7 @@ def test_ai_fills_goal_and_limits_for_the_user_to_confirm(optimise_app) -> None:
     assert any("not in your text" in w.value and "7%" in w.value for w in at.warning)
     assert at.slider(key="max_weight").value == pytest.approx(0.45)  # the AI's per-asset cap
     plan = next(m.value for m in at.markdown if m.value.startswith("**Goal:**"))
-    assert "Reduce risk" in plan and "Group GCC: at least 15.00%" in plan
+    assert "Reduce risk" in plan and _limits(at)["Group GCC"] == ("at least 15.00%", "Form")
     assert _candidates(at) is None  # nothing runs until the user presses Run
     at.button(key="ws_run_opt").click().run()
     weights = _latest_weights(at).drop("Current")
@@ -981,12 +982,13 @@ def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
     app.button(key="client_load_example").click().run()
     plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
     # band 2: volatility at most 9%; home bias 30% GCC; SPY and AGG not Sharia-compliant
-    assert "Volatility at most 9.00% a year" in plan and "Group GCC: at least 30.00%" in plan
-    assert "SPY: at most 0.00%" in plan and "Client IPS applied" in plan
+    limits = _limits(app)
+    assert limits["Volatility cap (a year)"] == ("9.00%", "Client IPS")
+    assert limits["Group GCC"] == ("at least 30.00%", "Client IPS")
+    assert limits["Holding SPY"] == ("at most 0.00%", "Client IPS") and "Client IPS applied" in plan
     assert any("GLD" in c.value and "unknown" in c.value for c in app.caption)
     app.toggle(key="ws_use_ips").set_value(False).run()
-    plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
-    assert "9.00%" not in plan
+    assert "Volatility cap (a year)" not in _limits(app)
 
 
 def test_profile_json_round_trip_in_the_app(app: AppTest) -> None:
@@ -1062,8 +1064,7 @@ def test_cash_need_is_a_hard_optimiser_limit(app: AppTest) -> None:
     assert not app.exception, app.exception
     rows = {r["ticker"]: r["group"] for r in app.session_state[ws.ROWS]}
     assert rows["BIL"] == "Cash & short-term"
-    plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
-    assert "Cash need (BIL): at least 10.00%" in plan
+    assert _limits(app)["Cash need (BIL)"] == ("at least 10.00%", "Client IPS")
 
 
 def test_client_report_button_builds_a_pdf(app: AppTest) -> None:
@@ -1275,9 +1276,9 @@ def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) ->
     assert "USD 600,000 by Oct 2028" in ips and "At least 10% in Saudi Arabia." in ips
     # the client's value (USD 3m) is the portfolio value; the IPS limits reach Optimise
     assert at.session_state["ctx"].portfolio_value == 3_000_000.0
-    plan = next(m.value for m in at.markdown if m.value.startswith("**Goal:**"))
-    assert "Region Saudi Arabia (KSA): at least 10.00%" in plan
-    assert "Cash need (no holding): at least 20.00%" in plan
+    limits = _limits(at)
+    assert limits["Region Saudi Arabia (KSA)"][0] == "at least 10.00%"
+    assert limits["Cash need (no holding)"][0] == "at least 20.00%"
 
 
 def test_report_uses_the_optimiser_recommendation_not_a_chat_what_if(
@@ -1331,3 +1332,47 @@ def test_headline_figures_and_suitability_name_their_periods(app: AppTest) -> No
         m.value.startswith("**Your portfolio vs") and "backtest period" in m.value
         for m in app.markdown
     )
+
+
+def _limits(at: AppTest) -> dict[str, tuple[str, str]]:
+    """The Optimise 'Active limits' table: limit -> (value, source)."""
+    table = next((t.value for t in at.table if list(t.value.columns) == ["Value", "From"]), None)
+    if table is None:
+        return {}
+    return {name: (row["Value"], row["From"]) for name, row in table.iterrows()}
+
+
+def test_changing_the_goal_resets_the_limits(app: AppTest) -> None:
+    # a draft (as the AI writes it): target volatility 8% and a 30% GCC cap
+    app.session_state["ws_draft"] = {
+        **{"asset_limits": [], "min_return_pct": None, "unmapped_requests": [], "summary": ""},
+        "goal": "target_volatility",
+        "max_weight_pct": None,
+        "max_volatility_pct": 8,
+        "group_limits": [{"group": "GCC", "min_pct": None, "max_pct": 30}],
+    }
+    app.session_state["ws_draft_v"] = 7
+    app.run()
+    goal_text = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
+    assert "8.00%" in goal_text and _limits(app)["Group GCC"] == ("at most 30.00%", "Form")
+    app.radio(key="ws_goal_7").set_value("max_risk_adjusted").run()
+    assert not app.exception, app.exception
+    limits = _limits(app)
+    # the old target doesn't become an 8% volatility cap, and the old group cap is gone
+    assert "Volatility cap (a year)" not in limits and "Group GCC" not in limits
+    v = app.session_state["ws_draft_v"]
+    assert app.number_input(key=f"ws_maxvol_{v}").value is None
+
+
+def test_limit_boxes_clear_and_clear_all(app: AppTest) -> None:
+    v = app.session_state["ws_draft_v"]
+    app.number_input(key=f"ws_maxvol_{v}").set_value(12.0).run()
+    assert _limits(app)["Volatility cap (a year)"] == ("12.00%", "Form")
+    app.number_input(key=f"ws_maxvol_{v}").set_value(None).run()  # emptied: no cap
+    assert "Volatility cap (a year)" not in _limits(app)
+    app.number_input(key=f"ws_maxvol_{v}").set_value(12.0).run()
+    app.button(key="ws_clear_limits").click().run()
+    assert not app.exception, app.exception
+    assert _limits(app) == {}  # the per-holding cap too
+    assert app.slider(key="max_weight").value == 1.0
+    assert any(c.value.startswith("No limits:") for c in app.caption)

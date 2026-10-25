@@ -299,3 +299,31 @@ def test_identical_candidates_are_shown_once() -> None:
     same_as, same_weights = duplicate_candidates(latest, table)
     assert same_as == {"Risk parity": "Min variance"}
     assert same_weights == {"Max diversification": "same current weights as Min variance"}
+
+
+def test_active_limits_name_their_source() -> None:
+    from gpl.agent.spec import active_limits
+    from gpl.client import tighter
+
+    form = OptimisationSpec(max_weight=0.35, max_volatility=0.15)
+    ips = OptimisationSpec(
+        max_weight=0.30,
+        groups={"KSA": "GCC"},
+        group_bounds={"GCC": (0.10, None)},
+        sets={"Cash need": (frozenset({"BIL"}), 0.20, None)},
+    )
+    rows = active_limits(form, ips, tighter(form, ips))
+    by = {r["limit"]: r for r in rows}
+    assert by["Max weight per holding"] == {
+        "limit": "Max weight per holding",
+        "value": "30.00%",
+        "source": "Form and IPS (stricter applies)",
+    }
+    assert by["Volatility cap (a year)"]["source"] == "Form"
+    assert by["Group GCC"] == {
+        "limit": "Group GCC",
+        "value": "at least 10.00%",
+        "source": "Client IPS",
+    }
+    assert by["Cash need (BIL)"]["value"] == "at least 20.00%"
+    assert active_limits(OptimisationSpec(), None, OptimisationSpec()) == []

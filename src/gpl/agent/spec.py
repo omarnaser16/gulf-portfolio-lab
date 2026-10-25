@@ -293,3 +293,57 @@ def describe_spec(spec: OptimisationSpec) -> list[str]:
         lines.append(f"Expected return at least {spec.min_return:.2%} a year (historical)")
     lines.append("Long-only, fully invested")
     return lines
+
+
+def _bounds_text(lo: float | None, hi: float | None) -> str:
+    parts = [
+        f"at least {lo:.2%}" if lo is not None else "",
+        f"at most {hi:.2%}" if hi is not None else "",
+    ]
+    return " and ".join(p for p in parts if p)
+
+
+def _limit_items(spec: OptimisationSpec | None) -> dict[str, str]:
+    """Each limit in ``spec`` as name -> value text (no entry for 'no limit')."""
+    if spec is None:
+        return {}
+    items: dict[str, str] = {}
+    if spec.max_weight < 1:
+        items["Max weight per holding"] = f"{spec.max_weight:.2%}"
+    if spec.max_volatility is not None:
+        items["Volatility cap (a year)"] = f"{spec.max_volatility:.2%}"
+    if spec.min_return is not None:
+        items["Return floor (a year, historical)"] = f"{spec.min_return:.2%}"
+    for g, (lo, hi) in spec.group_bounds.items():
+        if lo is not None or hi is not None:
+            items[f"Group {g}"] = _bounds_text(lo, hi)
+    for t, (lo, hi) in spec.asset_bounds.items():
+        if lo is not None or hi is not None:
+            items[f"Holding {t}"] = _bounds_text(lo, hi)
+    for name, (members, lo, hi) in spec.sets.items():
+        held = ", ".join(sorted(members)) or "no holding"
+        items[f"{name} ({held})"] = _bounds_text(lo, hi)
+    return items
+
+
+def active_limits(
+    form: OptimisationSpec, ips: OptimisationSpec | None, combined: OptimisationSpec
+) -> list[dict[str, str]]:
+    """The limits every method runs under, and where each comes from.
+
+    Rows: ``limit``, ``value`` (as applied, i.e. from ``combined``) and ``source``: "Form",
+    "Client IPS" or "Form and IPS (stricter applies)". Empty when nothing is limited.
+    """
+    form_items, ips_items = _limit_items(form), _limit_items(ips)
+    rows = []
+    for name, value in _limit_items(combined).items():
+        in_form, in_ips = name in form_items, name in ips_items
+        source = (
+            "Form and IPS (stricter applies)"
+            if in_form and in_ips
+            else "Client IPS"
+            if in_ips
+            else "Form"
+        )
+        rows.append({"limit": name, "value": value, "source": source})
+    return rows

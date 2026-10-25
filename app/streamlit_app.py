@@ -23,7 +23,12 @@ from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
 from gpl.agent.charts import build_chart, chart_data
-from gpl.agent.spec import describe_goal, describe_limits, propose_spec, spec_from_draft
+from gpl.agent.spec import (
+    active_limits,
+    describe_goal,
+    propose_spec,
+    spec_from_draft,
+)
 from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
 from gpl.client import build_ips, cash_like_holdings, ips_constraints, month_text, tighter
 from gpl.data import (
@@ -623,6 +628,36 @@ def _interpret(holding_groups: dict[str, str]) -> None:
     st.session_state.pop("ws_opt", None)
 
 
+def _goal_changed(v: int) -> None:
+    """Callback: a new goal starts from blank limits, so an old target (e.g. 8% target
+    volatility) never carries over as a cap. The client's IPS limits stay (separate toggle)."""
+    goal = st.session_state.get(f"ws_goal_{v}")
+    st.session_state.ws_draft = {**BLANK_DRAFT, "goal": goal}
+    st.session_state.ws_draft_v = time_key()
+    st.session_state.pop("ws_proposal", None)
+
+
+def _clear_limits() -> None:
+    """Callback: clear every limit on the form, including the per-holding cap."""
+    goal = st.session_state.get("ws_draft", {}).get("goal") or "max_risk_adjusted"
+    st.session_state.ws_draft = {**BLANK_DRAFT, "goal": goal}
+    st.session_state.ws_draft_v = time_key()
+    st.session_state["max_weight"] = 1.0
+    st.session_state.pop("ws_proposal", None)
+
+
+def _limit_box(
+    container, label: str, lo: float, hi: float, step: float, key: str, value, placeholder: str
+):
+    """A number box that can always be emptied (``value=None``; the draft value is seeded
+    into session state once, when the form is drawn for this version)."""
+    if key not in st.session_state:
+        st.session_state[key] = None if value is None else float(value)
+    return container.number_input(
+        label, lo, hi, value=None, step=step, key=key, placeholder=placeholder
+    )
+
+
 def _diagnosis_section(ctx: AnalystContext) -> None:
     key = (settings_key, bench_name)
     if st.session_state.get("ws_diag_key") != key:
@@ -727,49 +762,56 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
         format_func=GOALS.get,
         index=list(GOALS).index(draft.get("goal") or "max_risk_adjusted"),
         key=f"ws_goal_{v}",
+        on_change=_goal_changed,
+        args=(v,),
+        help="Changing the goal clears the limits below (not the client's IPS limits).",
     )
     edited = {**draft, "goal": goal, "max_weight_pct": max_weight * 100}
     if goal == "target_return":
-        edited["min_return_pct"] = st.number_input(
+        edited["min_return_pct"] = _limit_box(
+            st,
             "Target return (% a year)",
             -50.0,
             100.0,
-            as_float(draft.get("min_return_pct")),
             0.5,
-            key=f"ws_target_ret_{v}",
-            placeholder="e.g. 8",
+            f"ws_target_ret_{v}",
+            as_float(draft.get("min_return_pct")),
+            "e.g. 8",
         )
     elif goal == "target_volatility":
-        edited["max_volatility_pct"] = st.number_input(
+        edited["max_volatility_pct"] = _limit_box(
+            st,
             "Target volatility (% a year)",
             0.5,
             100.0,
-            as_float(draft.get("max_volatility_pct")),
             0.5,
-            key=f"ws_target_vol_{v}",
-            placeholder="e.g. 10",
+            f"ws_target_vol_{v}",
+            as_float(draft.get("max_volatility_pct")),
+            "e.g. 10",
         )
     with st.expander("More limits (optional)"):
         n1, n2 = st.columns(2)
         if goal != "target_volatility":
-            edited["max_volatility_pct"] = n1.number_input(
+            edited["max_volatility_pct"] = _limit_box(
+                n1,
                 "Volatility cap (% a year)",
                 0.5,
                 100.0,
-                as_float(draft.get("max_volatility_pct")),
                 0.5,
-                key=f"ws_maxvol_{v}",
-                placeholder="no cap",
+                f"ws_maxvol_{v}",
+                as_float(draft.get("max_volatility_pct")),
+                "no cap",
             )
         if goal != "target_return":
-            edited["min_return_pct"] = n2.number_input(
+            edited["min_return_pct"] = _limit_box(
+                n2,
                 "Return floor (% a year, historical)",
                 -50.0,
                 100.0,
-                as_float(draft.get("min_return_pct")),
                 0.5,
-                key=f"ws_minret_{v}",
-                placeholder="no floor",
+                f"ws_minret_{v}",
+                as_float(draft.get("min_return_pct")),
+                "no floor",
             )
         g1, g2 = st.columns(2)
         g1.caption("Group limits (blank = none)")
@@ -786,6 +828,13 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
             key=f"ws_assets_{v}",
             width="stretch",
         )
+        st.button(
+            "Clear all limits",
+            key="ws_clear_limits",
+            on_click=_clear_limits,
+            help="Empties every box and table here and removes the per-holding cap. The "
+            "client's IPS limits are controlled by the toggle below.",
+        )
     edited["group_limits"] = _limits_rows(group_table, "group")
     edited["asset_limits"] = _limits_rows(asset_table, "ticker")
     try:
@@ -793,6 +842,7 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
     except ValueError as e:
         st.warning(str(e))
         return None
+    form_limits, ips_spec = limits, None
     ips = client_ips()
     if ips is not None and st.toggle(
         "Use the client's IPS limits",
@@ -822,14 +872,24 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
                 "hold the cash need. Its weight is then set by the optimiser.",
             )
     st.markdown(
-        f"**Goal:** {describe_goal(goal, target)}  \n**Limits for every method:** "
-        + "; ".join(describe_limits(limits))
-        + f"  \n**Benchmark:** {bench_name}"
+        f"**Goal:** {describe_goal(goal, target)}  \n**Benchmark:** {bench_name}"
         + (
             "  \n**Client IPS applied**"
             if ips is not None and st.session_state.get("ws_use_ips")
             else ""
         )
+    )
+    rows = active_limits(form_limits, ips_spec, limits)
+    st.markdown("**Active limits for every method**")
+    if rows:
+        st.table(
+            pd.DataFrame(rows)
+            .rename(columns={"limit": "Limit", "value": "Value", "source": "From"})
+            .set_index("Limit")
+        )
+    st.caption(
+        ("No other limits. " if rows else "No limits: ")
+        + "Every method is long-only and fully invested."
     )
     return goal, limits, target
 
@@ -1102,8 +1162,9 @@ def render_optimise() -> None:
         1.00,
         step=0.01,
         key="max_weight",
-        help="The most any one holding may weigh in an optimised portfolio. It also applies to "
-        "the strategies on the Frontier, Backtest and Monte Carlo tabs.",
+        help="The most any one holding may weigh in an optimised portfolio; 1.00 means no cap "
+        "('Clear all limits' sets it). It also applies to the strategies on the Frontier, "
+        "Backtest and Monte Carlo tabs.",
     )
     if not portfolio_ok or len(my_weights) < 2:
         st.info("Add at least two holdings with price history on the Holdings tab.")
