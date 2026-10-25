@@ -58,6 +58,11 @@ it switched to build + explain mode, which has been used since:
 - **Calendars:** assets on different weekly calendars (Sun–Thu vs Mon–Fri) are aligned on the dates
   all of them traded, and annualised with the observed periods per year instead of 252.
 - **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
+- **Portfolio value:** one value (USD) everywhere: the total of USD holdings, or entered once on
+  Holdings/Client/Rebalance (`workstation.portfolio_value`). No default amount.
+- **Cash needs:** dated (YYYY-MM); those due within `cash_need_window_months` (36) must be held
+  in cash-like holdings (`client.cash_like_holdings`: the "Cash & short-term" group, config
+  `cash_like`, or volatility <= 3%). They are a hard optimiser set and checked on the trade list.
 - **UI:** dark theme (`.streamlit/config.toml`) and one plotly template (`gpl_dark`); show figures
   with `formatting.plot` (theme=None). Benchmarks are grey dashed reference series. No sidebar:
   settings live in the top-bar popover.
@@ -89,7 +94,9 @@ streamlit run app/streamlit_app.py
 - **Recommendations are chosen by code.** `gpl/recommend.py` applies a fixed, tested rule per goal
   to walk-forward, after-cost results (where it compares Sharpe ratios, a change must gain at
   least 0.05, `min_sharpe_gain`); the AI only explains the rule's choice and trade-offs, and
-  never presents results as guaranteed or higher future returns.
+  never presents results as guaranteed or higher future returns. With a client IPS, only
+  portfolios that pass every suitability rule can be recommended; otherwise the closest is shown
+  with its breaches (`closest_fails`), never as suitable.
 - **Charts come only from tool data.** The AI chooses chart type, order and section via
   `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the
   engine. What-if weights must appear in the user's own message; the other holdings are scaled

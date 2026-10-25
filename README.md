@@ -53,13 +53,13 @@ and explains results.
 
 | Step | In the tool |
 |---|---|
-| Discovery and risk profiling | *Client* tab: profile, classification and regulator (DFSA, FSRA, CMA…), a seven-question risk questionnaire scored by a tested rule (risk score = the lower of capacity and willingness; a gap of two or more is flagged), "describe the client in plain English" for the AI to fill the facts (never the questionnaire). Profiles save and load as JSON. |
+| Discovery and risk profiling | *Client* tab: profile, classification and regulator (DFSA, FSRA, CMA…), a seven-question risk questionnaire scored by a tested rule (risk score = the lower of capacity and willingness; a gap of two or more is flagged), "describe the client in plain English" for the AI to fill the facts (never the questionnaire): name, age, dated cash needs (the AI copies "Oct 2028" or "in 18 months"; code dates it, so Oct 2028 is 24 months away), tax notes, region minimums, and the regulator from the booking jurisdiction by a fixed rule (Abu Dhabi/ADGM → FSRA, DIFC → DFSA, onshore UAE → SCA, Saudi → CMA, QFC → QFCRA). Profiles save and load as JSON. One portfolio value is used everywhere: the total of USD holdings, or entered once (no default). |
 | Investment Policy Statement | RRTTLLU (Return, Risk, Time horizon, Taxes, Liquidity, Legal, Unique) generated from the profile, with limits from the risk band (e.g. band 3: volatility 12%, drawdown 20%) or adviser overrides; exported as a signable PDF. |
-| Strategic allocation | *Optimise* uses the IPS limits automatically (volatility cap, max weight, GCC minimum, excluded holdings at 0%), stricter of IPS and form. |
-| Suitability | Eight rules for the current and proposed portfolios: volatility, max drawdown, worst stress episode, concentration, home-market bias, liquidity, exclusions (Sharia, sectors), currency. Each is pass, fail or review, with a reason written from the numbers; in Optimise, Analyst, the memo and the report. |
+| Strategic allocation | *Optimise* uses the IPS limits automatically (volatility cap, max weight, GCC minimum, region minimums such as Saudi ≥ 10%, excluded holdings at 0%), stricter of IPS and form. Cash needs due within 36 months are a hard minimum on cash-like holdings (cash, short-term bonds, sukuk); with none held the app offers to add BIL. |
+| Suitability | Nine rules for the current and proposed portfolios: volatility, max drawdown, worst stress episode, concentration, home-market bias, region minimums, liquidity, exclusions (Sharia, sectors), currency. Each is pass, fail or review, with a reason written from the numbers; in Optimise, Analyst, the memo and the report. **Optimise only recommends portfolios that pass every rule**; if none does, it shows the closest with each breach (e.g. "Volatility: 13.10%, 1.10 pp beyond the 12.00% limit") and says so if the current portfolio fails too. Identical methods are shown once. |
 | Implementation | *Fund domicile check* for non-US clients: US-situs holdings (US-listed funds and stocks, including KSA), the illustrative US estate tax (18%–40% schedule minus the 13,000 USD non-resident credit, i.e. a 60,000 exemption), 30% vs 15% dividend withholding, and verified Irish-domiciled alternatives (SPY → CSPX.L, AGG → IUAA.L, GLD → IGLN.L…). Information, not tax advice. |
-| Monitoring and rebalancing | *Portfolio › Rebalance*: current vs editable target weights (default: the Optimise recommendation), a ±5 pp drift band, and a cash-neutral trade list (buy/sell in USD, estimated units and costs; buys + costs = sells), downloadable as CSV. |
-| Reporting | One-click, date-stamped *client report* PDF: client summary and IPS, holdings, performance vs benchmark, charts, suitability, domicile, the AI memo and disclaimers. |
+| Monitoring and rebalancing | *Portfolio › Rebalance*: current vs editable target weights (default: the Optimise recommendation), a ±5 pp drift band, and a cash-neutral trade list (buy/sell in USD, estimated units and costs; buys + costs = sells), downloadable as CSV. The trades are checked against the cash need, and default targets are topped up so the need is still covered after costs. |
+| Reporting | One-click, date-stamped *client report* PDF in plain language: in brief, goals and limits, holdings in USD, past performance, **the optimiser's recommendation** (never a chat what-if), proposed trades, the policy checks, the adviser's commentary (AI memo without tool tags), an adviser sign-off block (name, licence, regulator, date, client acknowledgement), disclaimers and the IPS as an appendix. |
 
 ## Using it as an investor
 
@@ -238,8 +238,9 @@ a scripted fake model, so the suite never touches the network.
 - **Adviser tools are decision support, not advice.** The risk bands (e.g. band 3: 12%
   volatility, 20% drawdown) are judgement defaults, not calibrated to client outcomes. Sharia
   status and sectors come from a partial config list plus Yahoo sectors; anything unknown is
-  "review", never a pass. Liquidity is a proxy (bond holdings or volatility at most 6%), not
-  market depth. The estate-tax figure is an illustration under 2026 statutory rates with no
+  "review", never a pass. Cash-like means the "Cash & short-term" group, a short config list
+  (T-bill, short Treasury and sukuk funds) or volatility at most 3%; it is a proxy, not market
+  depth, and a broad bond fund such as AGG does not count. The estate-tax figure is an illustration under 2026 statutory rates with no
   treaty, deductions or other US assets; the UCITS list is small, curated and only verified to
   exist on Yahoo (costs and tracking not compared). Suitability risk figures use the full common
   history, while performance uses the backtest period, so their drawdowns can differ.

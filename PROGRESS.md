@@ -278,3 +278,35 @@ days; the work itself was done in a series of sessions.
   KSA fund, are US-situs for a Gulf investor; a trade list must pay its own costs.
 - **Status:** 582 tests passing.
 - **Next:** deploy; answer the outstanding quizzes; review the risk bands with a practitioner.
+
+## QA fixes from a full client walkthrough — 2026-10-25
+- **Directed:** after walking a client through the whole workflow, I asked for six fixes, most
+  severe first: a suitability gate on Optimise, cash needs as hard limits, one portfolio value,
+  a stable holdings grid, a better AI intake, and a client-ready report.
+- **Built by Claude Code:**
+  - *Gate:* candidates and the current portfolio are checked against the IPS; only passing ones
+    can be recommended. If none passes, the closest is shown with each breach; identical
+    methods are merged.
+  - *Cash needs:* dated needs; those due within 36 months bind as an optimiser set over
+    cash-like holdings. The trade list is checked, and topped up so costs don't leave it short.
+  - *One value:* from USD holdings or entered once; the $10,000 default is gone; importing USD
+    amounts keeps them.
+  - *Grid:* edits applied in a callback, blank cells stored as None, the searchbox pick handled
+    once, tabs tracked.
+  - *Intake:* name, age, jurisdiction → regulator by rule, tax notes, dated needs (code does the
+    date maths), region minimums.
+  - *Report:* plain language, the optimiser's recommendation, trades, sign-off, clean memo.
+- **Finance behaviour change:** AGG (5.26% volatility) no longer counts as cash. On the default
+  portfolio, the Dubai and Riyadh examples' liquidity checks change from pass to fail; with 15%
+  in BIL they pass.
+- **Caught:** a blank cell looped because NaN never equals itself; a removed stock came back
+  from the searchbox's stale pick; the live API rejected the intake schema (20 union fields,
+  limit 16); a real trade list was USD 360 short of the cash need after costs; suitability
+  crashed with no stress episodes configured.
+- **Checked:** the real grid in Chrome (two quick edits kept, blank cell, remove, tab kept); a
+  live intake of an Abu Dhabi client (FSRA, Oct 2028 = 24 months, Saudi ≥ 10%); a real 7-page
+  report rendered page by page (bullets, no tool tags).
+- **Learned:** constraints must hold after costs, not just in the optimiser; a client report needs
+  the optimiser's result, not the last chat answer.
+- **Status:** 625 tests passing.
+- **Next:** a practitioner review of the cash-like list and region names; deploy.
