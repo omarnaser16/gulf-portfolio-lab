@@ -22,7 +22,7 @@ from formatting import NUMBERS_CSS, pct, plot, show_metrics_table, style_columns
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
-from gpl.agent.charts import build_chart
+from gpl.agent.charts import build_chart, chart_data
 from gpl.agent.spec import describe_goal, describe_limits, propose_spec, spec_from_draft
 from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
 from gpl.client import build_ips, ips_constraints, tighter
@@ -70,6 +70,7 @@ from gpl.plots import (
     weights_chart,
 )
 from gpl.recommend import GOALS, KEEP
+from gpl.report import ReportInputs, client_report
 from gpl.suitability import check_suitability, suitability_table
 
 CFG = load_universe()
@@ -816,16 +817,14 @@ def portfolio_value() -> float | None:
 SUITABILITY_ICON = {"pass": "✅", "fail": "❌", "review": "⚠️"}
 
 
-def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
-    """Pass / fail / review per IPS rule for each portfolio, with the written reasons."""
-    st.markdown("**Suitability against the client's IPS**")
+def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
+    """``check_suitability`` for each portfolio against the client's IPS (None: no client)."""
     ips = client_ips()
     if ips is None:
-        st.info("Load or create a client on the Client tab to check suitability.")
-        return
+        return None
     currencies = data.history["currency"].to_dict()
     tickers = tuple(sorted(set().union(*[set(w.index) for w in portfolios.values()])))
-    results = {
+    return {
         name: check_suitability(
             w,
             all_returns,
@@ -839,6 +838,16 @@ def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
         )
         for name, w in portfolios.items()
     }
+
+
+def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
+    """Pass / fail / review per IPS rule for each portfolio, with the written reasons."""
+    st.markdown("**Suitability against the client's IPS**")
+    results = suitability_results(portfolios)
+    if results is None:
+        st.info("Load or create a client on the Client tab to check suitability.")
+        return
+    ips = client_ips()
     table = suitability_table(results)
     for col in table.columns:
         statuses = {c.rule: c.status for c in results[col]}
@@ -1608,6 +1617,64 @@ def render_portfolio_overview() -> None:
     if proposed:
         ports[proposed["name"]] = pd.Series(proposed["weights"], dtype=float)
     render_suitability(ports, "analyst")
+    render_report_button(holdings, ports)
+
+
+def latest_memo() -> tuple[str | None, list[str]]:
+    """Text and flagged figures of the latest analyst reply in the conversation, if any."""
+    for turn in reversed(st.session_state.get("chat", [])):
+        if turn.get("role") == "assistant":
+            return turn["reply"].text, turn["reply"].unverified
+    return None, []
+
+
+def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) -> None:
+    """Build the client report on request (charts take a moment), then offer the PDF."""
+    st.markdown("**Client report**")
+    if st.button("Prepare client report (PDF)", key="prepare_report"):
+        with st.spinner("Building the report…"):
+            ctx = shared_context()
+            charts = []
+            for chart in ("growth_of_1", "drawdown_comparison", "stress_test"):
+                try:
+                    charts.append(chart_data(ctx, chart))
+                except ValueError:
+                    pass  # e.g. no benchmark: the report says what is missing
+            memo, unverified = latest_memo()
+            profile = client_ui.current_profile()
+            inputs = ReportInputs(
+                report_date=date.today(),
+                data_as_of=f"{data.price_as_of:%d %b %Y}",
+                benchmark=bench_name,
+                holdings=holdings,
+                allocation=pd.Series(my_weights),
+                client=profile,
+                ips=client_ips(),
+                kpis=portfolio_kpis(),
+                charts=charts,
+                suitability=suitability_results(ports),
+                memo=memo,
+                memo_unverified=unverified,
+            )
+            ref = profile.reference if profile and profile.reference else "portfolio"
+            st.session_state.client_report = (
+                client_report(inputs),
+                f"Client_report_{ref}_{date.today().isoformat()}.pdf",
+            )
+    if st.session_state.get("client_report"):
+        pdf, name = st.session_state.client_report
+        st.download_button(
+            "Download client report",
+            pdf,
+            file_name=name,
+            mime="application/pdf",
+            key="download_report",
+            type="primary",
+        )
+        st.caption(
+            "Includes the latest analyst memo, if one was written above. Prepare it "
+            "again after a new memo."
+        )
 
 
 with tab_agent:

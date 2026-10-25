@@ -1000,3 +1000,13 @@ def test_optimise_results_include_suitability(optimise_app) -> None:
         t.value for t in at.table if "Volatility" in t.value.index and "Current" in t.value.columns
     ]
     assert tables and all(v.split(" ")[0] in ("✅", "❌", "⚠️") for v in tables[0]["Current"])
+
+
+def test_client_report_button_builds_a_pdf(app: AppTest) -> None:
+    app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    app.button(key="client_load_example").click().run()
+    app.button(key="prepare_report").click().run()
+    assert not app.exception, app.exception
+    pdf, name = app.session_state["client_report"]
+    assert pdf.startswith(b"%PDF") and name.startswith("Client_report_EX-DXB_")
+    assert any(d.label == "Download client report" for d in app.get("download_button"))
