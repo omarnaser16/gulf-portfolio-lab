@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from gpl.client import ClientProfile, build_ips
 from gpl.data import load_universe
@@ -121,3 +122,41 @@ def test_table_compares_portfolios() -> None:
     assert list(table.columns) == ["Current", "Proposed"]
     assert table.loc["Volatility", "Current"].startswith("Fail")
     assert table.loc["Volatility", "Proposed"].startswith("Pass")
+
+
+def test_breach_amounts_and_text() -> None:
+    from gpl.suitability import breach_text, closeness, failures
+
+    checks = run({"EQ": 1.0})
+    vol = float(RETURNS["EQ"].std() * np.sqrt(252))
+    v = checks["Volatility"]
+    assert v.breach == pytest.approx(vol - 0.12) and v.scale == 0.12
+    assert (
+        breach_text(v)
+        == f"Volatility: {vol:.2%}, {(vol - 0.12) * 100:.2f} pp beyond the 12.00% limit"
+    )
+    conc = checks["Concentration"]
+    assert conc.breach == pytest.approx(0.60) and "60.00 pp beyond the 40.00% limit" in breach_text(
+        conc
+    )
+    client = ips(portfolio_value_usd=100_000, liquidity_need_usd=20_000)
+    liq = run({"EQ": 0.4, "BOND": 0.1, "GCC": 0.4, "UK": 0.1}, client, 100_000)["Liquidity"]
+    assert liq.breach == pytest.approx(
+        10_000
+    ) and "USD 10,000 short of the USD 20,000" in breach_text(liq)
+    home = run({"EQ": 0.5, "BOND": 0.3, "GCC": 0.2}, ips(home_bias_gcc_pct=25))["Home-market bias"]
+    assert home.breach == pytest.approx(0.05) and breach_text(home).endswith(
+        "5.00 pp below the 25.00% minimum"
+    )
+    passing = run({"BOND": 0.4, "EQ": 0.3, "GCC": 0.3})
+    assert all(c.breach is None for c in passing.values() if c.status != "fail")
+    n, total = closeness(list(checks.values()))
+    assert n == len(failures(list(checks.values()))) and total > 0
+
+
+def test_no_stress_episodes_configured_needs_review() -> None:
+    checks = check_suitability(
+        pd.Series({"BOND": 1.0}), RETURNS, ips(), ATTRS, CURRENCIES, GROUPS, 252, []
+    )
+    stress = next(c for c in checks if c.rule == "Worst stress episode")
+    assert stress.status == "review"

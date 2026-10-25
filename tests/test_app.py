@@ -673,7 +673,9 @@ def test_manual_goal_runs_candidates_and_recommends_by_rule(optimise_app) -> Non
     assert not at.exception, at.exception
     table = _candidates(at)
     names = {n.lstrip("★ ") for n in table.index}
-    assert names >= {
+    # identical methods are shown once, with a caption naming the one they match
+    merged = {c.value.split(":")[0] for c in at.caption if "same weights and results as" in c.value}
+    assert names | merged >= {
         "Current",
         "Benchmark",
         "Max Sharpe",
@@ -1001,6 +1003,26 @@ def test_optimise_results_include_suitability(optimise_app) -> None:
         t.value for t in at.table if "Volatility" in t.value.index and "Current" in t.value.columns
     ]
     assert tables and all(v.split(" ")[0] in ("✅", "❌", "⚠️") for v in tables[0]["Current"])
+
+
+def test_optimise_never_recommends_a_portfolio_that_fails_the_ips(optimise_app) -> None:
+    at, _ = optimise_app([])
+    # Riyadh: Sharia-only excludes SPY and AGG, GCC at least 30%, band 2 (9% volatility)
+    at.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
+    at.button(key="client_load_example").click().run()
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    table = _candidates(at)
+    assert "Passes IPS?" in table.columns
+    assert table.loc["Current", "Passes IPS?"].startswith("no: ")  # current fails too
+    starred = [n for n in table.index if n.startswith("★ ")]
+    for name in starred:  # anything starred passed every rule
+        assert table.loc[name, "Passes IPS?"] == "yes"
+    if not any(s.value.startswith("**Recommended method") for s in at.success):
+        warning = next(w.value for w in at.warning if "No method meets the client's IPS" in w.value)
+        assert "pp beyond" in warning or "pp below" in warning or "held (" in warning
+        assert "current portfolio fails the IPS too" in warning
+        assert not any(i.value.startswith("**Keep your current") for i in at.info)
 
 
 def test_client_report_button_builds_a_pdf(app: AppTest) -> None:

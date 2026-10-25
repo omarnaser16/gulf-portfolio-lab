@@ -75,6 +75,15 @@ class Recommendation:
     reasons: list[str]
     ranking: list[str] = field(default_factory=list)  # qualifying candidates, best first
     held_up: dict[str, bool] = field(default_factory=dict)
+    # "recommended", "keep", or "closest_fails" (no portfolio passes the IPS; ``choice`` is the
+    # closest one, or KEEP when the current portfolio is closest)
+    status: str = "recommended"
+    current_passes_ips: bool | None = None  # None: no IPS to check against
+
+
+def _closest(pool: pd.DataFrame) -> str:
+    """Fewest failed IPS rules, then the smallest summed relative breach."""
+    return str(pool.sort_values(["ips_fails", "ips_breach"], kind="stable").index[0])
 
 
 RULES = {
@@ -224,6 +233,19 @@ def recommend(
     held_up_ratio : float, default 0.5
         Share of its in-sample Sharpe a method must keep out of sample to count as holding up.
 
+    Suitability gate
+    ----------------
+    If ``table`` has the columns ``passes_ips`` (bool), ``ips_fails`` (number of failed IPS
+    rules) and ``ips_breach`` (summed relative breach), only candidates that pass every IPS
+    rule can be recommended:
+
+    - if none passes, the closest portfolio (candidates and current) is returned with status
+      ``closest_fails``; it must not be presented as suitable;
+    - if the current portfolio fails and a candidate passes, the best passing candidate under
+      the goal's ranking is recommended even without an improvement on the goal, because the
+      current portfolio is outside the client's limits;
+    - the current portfolio is kept only when it passes.
+
     Returns
     -------
     Recommendation
@@ -241,19 +263,53 @@ def recommend(
     survived = {
         n: held_up(r["in_sample_sharpe"], r["sharpe"], held_up_ratio) for n, r in cands.iterrows()
     }
+    gate = "passes_ips" in table.columns
+    current_ok = bool(current["passes_ips"]) if gate else None
+
+    def keep(reasons: list[str], ranking: list[str]) -> Recommendation:
+        if gate:
+            reasons = [*reasons, "Your current portfolio passes every IPS rule."]
+        return Recommendation(KEEP, rule, reasons, ranking, survived, "keep", current_ok)
+
+    if gate:
+        passing = cands[cands["passes_ips"].astype(bool)]
+        if passing.empty:
+            pool = pd.concat([cands, table.loc[[CURRENT]]])
+            closest = _closest(pool)
+            reasons = [
+                "No method meets every rule of the client's IPS"
+                + ("" if not cands.empty else " (no method could meet the limits at all)")
+                + "."
+            ]
+            if current_ok:
+                return keep(reasons, [])
+            reasons.append("Your current portfolio fails the IPS too.")
+            reasons.append(
+                "Your current portfolio is the closest to passing."
+                if closest == CURRENT
+                else f"{closest} is the closest to passing (fewest rules failed, smallest "
+                "breaches). It is shown for discussion, not as a suitable portfolio."
+            )
+            choice = KEEP if closest == CURRENT else closest
+            return Recommendation(choice, rule, reasons, [], survived, "closest_fails", current_ok)
+        if not current_ok:
+            return _move_off_failing(
+                goal, passing, current, benchmark, target, tolerance, rule, survived, held_up_ratio
+            )
+        cands = passing
     if cands.empty:
-        return Recommendation(KEEP, rule, ["No method could meet your limits."], [], survived)
+        return keep(["No method could meet your limits."], [])
 
     ranking, reasons = _ranked(goal, cands, current, benchmark, target, tolerance)
     if not ranking:
-        return Recommendation(KEEP, rule, reasons, ranking, survived)
+        return keep(reasons, ranking)
     pick = next((n for n in ranking if survived[n]), None)
     if pick is None:
         reasons.append(
             "None of the qualifying methods held up out of sample (each kept less than "
             f"{held_up_ratio:.0%} of its in-sample Sharpe ratio), so none is recommended."
         )
-        return Recommendation(KEEP, rule, reasons, ranking, survived)
+        return keep(reasons, ranking)
     if pick != ranking[0]:
         reasons.append(
             f"{ranking[0]} ranked first but did not hold up out of sample (it kept less than "
@@ -268,11 +324,45 @@ def recommend(
                 f"the {min_sharpe_gain:.2f} minimum, which is within estimation noise and not "
                 "worth the extra trading."
             )
-            return Recommendation(KEEP, rule, reasons, ranking, survived)
+            return keep(reasons, ranking)
         reasons.append(
             f"{pick} was the best method for this goal but did not improve on your current "
             "portfolio over the same period."
         )
-        return Recommendation(KEEP, rule, reasons, ranking, survived)
+        return keep(reasons, ranking)
     reasons.insert(0, f"{pick} ranks first under the rule: {rule[0].lower()}{rule[1:]}")
-    return Recommendation(pick, rule, reasons, ranking, survived)
+    if gate:
+        reasons.append(f"{pick} passes every IPS rule.")
+    return Recommendation(pick, rule, reasons, ranking, survived, "recommended", current_ok)
+
+
+def _move_off_failing(
+    goal, passing, current, benchmark, target, tol, rule, survived, held_up_ratio
+) -> Recommendation:
+    """The current portfolio fails the IPS: recommend the best candidate that passes.
+
+    The goal's ranking still orders the candidates (falling back to Sharpe when none qualifies
+    for the goal), and one that held up out of sample is preferred, but no improvement on the
+    goal is required: staying outside the client's limits is not an option.
+    """
+    ranking, notes = _ranked(goal, passing, current, benchmark, target, tol)
+    rest = [n for n in passing.sort_values("sharpe", ascending=False).index if n not in ranking]
+    order = ranking + rest
+    pick = next((n for n in order if survived[n]), order[0])
+    reasons = [
+        "Your current portfolio fails the client's IPS, so a change is needed even if it does "
+        "not improve on the goal.",
+        f"{pick} is the best of the methods that pass every IPS rule "
+        + (
+            "under the goal's rule."
+            if pick in ranking
+            else "by Sharpe ratio (none of the passing methods qualified under the goal's rule)."
+        ),
+        *notes,
+    ]
+    if not survived[pick]:
+        reasons.append(
+            f"Caution: {pick} kept less than {held_up_ratio:.0%} of its in-sample Sharpe ratio "
+            "out of sample; no passing method held up."
+        )
+    return Recommendation(pick, rule, reasons, order, survived, "recommended", False)

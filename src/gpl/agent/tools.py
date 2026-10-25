@@ -559,6 +559,7 @@ class CandidateRun:
     equity: pd.DataFrame
     latest_weights: pd.DataFrame  # rows = Current + candidates, columns = holdings
     recommendation: Any  # gpl.recommend.Recommendation
+    ips_checks: dict = field(default_factory=dict)  # name -> list[Check]; empty without an IPS
 
 
 def run_candidates(
@@ -584,6 +585,7 @@ def run_candidates(
         recommend,
         volatility_target,
     )
+    from gpl.suitability import breach_text, closeness, failures
 
     lab = ctx.settings.get("optimise_lab", {})
     holdings = list(current)
@@ -643,6 +645,30 @@ def run_candidates(
         1
     ]
     table["feasible"] = [n in feasible and feasible[n] for n in table.index]
+
+    latest = pd.DataFrame(
+        {n: r.weights.iloc[-1] for n, r in results.items() if n != CURRENT}
+    ).T.reindex(columns=holdings)
+    latest.loc[CURRENT] = w_now.reindex(holdings)
+    latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
+
+    # identical methods are shown once (e.g. min variance and risk parity at the same cap)
+    same_as, same_weights = duplicate_candidates(latest, table)
+    table = table.drop(index=list(same_as))
+    latest = latest.drop(index=list(same_as))
+
+    # suitability gate: every portfolio is checked against the client's IPS at its latest weights
+    ips_checks = {}
+    if ctx.ips is not None:
+        for name in latest.index:
+            ips_checks[name] = _ips_checks(ctx, latest.loc[name].fillna(0.0))
+        table["ips_fails"] = [
+            closeness(ips_checks[n])[0] if n in ips_checks else 0 for n in table.index
+        ]
+        table["ips_breach"] = [
+            closeness(ips_checks[n])[1] if n in ips_checks else 0.0 for n in table.index
+        ]
+        table["passes_ips"] = [n in ips_checks and not failures(ips_checks[n]) for n in table.index]
     rec = recommend(
         goal,
         table,
@@ -669,12 +695,10 @@ def run_candidates(
             row["months_limits_unmet_previous_weights_kept"] = (
                 f"{infeasible_months[name]} of {months}"
             )
+        if name in ips_checks:
+            failed = failures(ips_checks[name])
+            row["passes_ips"] = "yes" if not failed else "no: " + ", ".join(c.rule for c in failed)
         rows[name] = row
-    latest = pd.DataFrame(
-        {n: r.weights.iloc[-1] for n, r in results.items() if n != CURRENT}
-    ).T.reindex(columns=holdings)
-    latest.loc[CURRENT] = w_now.reindex(holdings)
-    latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
 
     report: dict[str, Any] = {
         "goal": describe_goal(goal, target),
@@ -686,8 +710,13 @@ def run_candidates(
         "walk_forward_after_costs": rows,
         "backtest_period": f"{frame.index[0].date()} to {frame.index[-1].date()}",
         "infeasible_candidates": {n: reasons[n] for n in specs if not feasible[n]},
+        "identical_methods_shown_once": {
+            n: f"same weights and results as {first}" for n, first in same_as.items()
+        },
+        "same_latest_weights_different_history": same_weights,
         "recommendation": {
             "choice": rec.choice,
+            "status": rec.status,
             "rule": rec.rule,
             "reasons": rec.reasons,
             "ranking_under_the_rule": rec.ranking,
@@ -703,6 +732,17 @@ def run_candidates(
     }
     if bench is not None:
         report["benchmark"] = {"name": bench.name, "represents": bench.represents}
+    if ips_checks:
+        report["suitability_gate"] = {
+            "client": ctx.ips.client.reference or "(no reference)",
+            "current_passes_ips": rec.current_passes_ips,
+            "failed_rules": {
+                n: [breach_text(c) for c in failures(ips_checks[n])] for n in latest.index
+            },
+            "note": "Only methods that pass every IPS rule can be recommended. 'closest_fails' "
+            "means no portfolio passed: the closest one is shown for discussion and is NOT "
+            "suitable as it stands.",
+        }
     if rec.choice != KEEP:
         report["recommended_latest_weights"] = {
             t: {
@@ -712,8 +752,58 @@ def run_candidates(
             }
             for t in holdings
         }
-    equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns})
-    return report, CandidateRun(equity, latest, rec)
+    equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns if n not in same_as})
+    return report, CandidateRun(equity, latest, rec, ips_checks)
+
+
+def duplicate_candidates(
+    latest: pd.DataFrame, table: pd.DataFrame, weight_tol: float = 0.0005, digits: int = 4
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Candidates identical to an earlier one, and those with only the same latest weights.
+
+    Identical = latest weights within ``weight_tol`` (0.05 pp) of each other *and* the same
+    walk-forward CAGR, volatility and Sharpe to ``digits`` decimals: one row says it all.
+    Same weights but a different history are kept apart (their past results differ) and noted.
+    Returns ``({duplicate: first}, {later: "same current weights as first"})``.
+    """
+    same_as: dict[str, str] = {}
+    same_weights: dict[str, str] = {}
+    names = [n for n in latest.index if n in table.index and n != "Current"]
+    for i, name in enumerate(names):
+        for first in names[:i]:
+            if first in same_as:
+                continue
+            if (
+                not (latest.loc[name].fillna(0) - latest.loc[first].fillna(0)).abs().max()
+                <= weight_tol
+            ):
+                continue
+            cols = ["cagr", "volatility", "sharpe"]
+            if (table.loc[name, cols].round(digits) == table.loc[first, cols].round(digits)).all():
+                same_as[name] = first
+            else:
+                same_weights[name] = f"same current weights as {first}"
+            break
+    return same_as, same_weights
+
+
+def _ips_checks(ctx: AnalystContext, weights: pd.Series) -> list:
+    """``check_suitability`` of ``weights`` against the client's IPS (ctx.ips must be set)."""
+    from gpl.suitability import check_suitability
+
+    currencies = ctx.asset_notes["currency"].to_dict() if ctx.asset_notes is not None else {}
+    return check_suitability(
+        weights,
+        ctx.all_returns,
+        ctx.ips,
+        ctx.attributes or {},
+        currencies,
+        ctx.holding_groups or {},
+        ctx.periods,
+        ctx.settings.get("stress_episodes", []),
+        ctx.portfolio_value or ctx.ips.client.portfolio_value_usd,
+        ctx.settings.get("liquid_max_volatility", 0.06),
+    )
 
 
 def show_chart(ctx: AnalystContext, chart: str, section: str) -> dict:
@@ -811,28 +901,12 @@ def stress_test(ctx: AnalystContext) -> dict:
 def suitability_checks(ctx: AnalystContext) -> dict[str, list]:
     """``gpl.suitability.check_suitability`` for the current and (if any) proposed portfolio."""
     from gpl.agent.charts import _portfolios
-    from gpl.suitability import check_suitability
 
     if ctx.ips is None:
         raise ToolError("no client profile: the adviser hasn't completed the Client tab")
     if not ctx.user_portfolio:
         raise ToolError("the user has not entered a portfolio on the Portfolio tab")
-    currencies = ctx.asset_notes["currency"].to_dict() if ctx.asset_notes is not None else {}
-    out = {}
-    for name, w in _portfolios(ctx).items():
-        out[name] = check_suitability(
-            w,
-            ctx.all_returns,
-            ctx.ips,
-            ctx.attributes or {},
-            currencies,
-            ctx.holding_groups or {},
-            ctx.periods,
-            ctx.settings.get("stress_episodes", []),
-            ctx.portfolio_value or ctx.ips.client.portfolio_value_usd,
-            ctx.settings.get("liquid_max_volatility", 0.06),
-        )
-    return out
+    return {name: _ips_checks(ctx, w) for name, w in _portfolios(ctx).items()}
 
 
 def check_suitability_tool(ctx: AnalystContext) -> dict:

@@ -194,3 +194,58 @@ def test_volatility_goals_are_not_affected() -> None:
 def test_boundary_is_not_broken_by_rounding() -> None:
     # 0.1 + 0.2 != 0.3 in floating point; a gain of exactly 0.05 must still count
     assert recommend("max_risk_adjusted", _one_candidate(0.1 + 0.2, 0.35)).choice == "Max Sharpe"
+
+
+# ------------------------------------------------------------------- suitability gate
+
+
+def gated(passes: dict[str, tuple[int, float]]) -> pd.DataFrame:
+    """BASE with IPS columns; passes: name -> (rules failed, summed relative breach)."""
+    t = table(BASE)
+    t["ips_fails"] = [passes.get(n, (0, 0.0))[0] for n in t.index]
+    t["ips_breach"] = [passes.get(n, (0, 0.0))[1] for n in t.index]
+    t["passes_ips"] = t["ips_fails"] == 0
+    return t
+
+
+def test_gate_skips_a_candidate_that_fails_the_ips() -> None:
+    # Max Sharpe ranks first but fails (e.g. volatility); Max diversification is next by Sharpe
+    rec = recommend("max_risk_adjusted", gated({"Max Sharpe": (1, 0.1)}))
+    assert rec.choice == "Max diversification" and rec.status == "recommended"
+    assert "Max Sharpe" not in rec.ranking
+    assert any("passes every IPS rule" in r for r in rec.reasons)
+    assert rec.current_passes_ips is True
+
+
+def test_nothing_passes_shows_the_closest() -> None:
+    fails = {n: (2, 0.5) for n in CANDIDATES} | {"Risk parity": (1, 0.3), "Current": (2, 0.1)}
+    rec = recommend("max_risk_adjusted", gated(fails))
+    assert rec.status == "closest_fails" and rec.choice == "Risk parity"
+    assert rec.current_passes_ips is False
+    assert any("current portfolio fails the IPS too" in r for r in rec.reasons)
+    assert any("not as a suitable portfolio" in r for r in rec.reasons)
+    # ties on rules failed are broken by the smaller breach; here the current portfolio
+    fails["Current"] = (1, 0.05)
+    rec = recommend("max_risk_adjusted", gated(fails))
+    assert rec.choice == KEEP and rec.status == "closest_fails"
+    assert any("current portfolio is the closest" in r for r in rec.reasons)
+
+
+def test_current_fails_so_a_passing_candidate_is_recommended_without_a_gain() -> None:
+    # Sharpe gains below the 0.05 minimum would normally mean "keep"; the current portfolio
+    # fails the IPS, so the best passing method is recommended anyway
+    t = gated({"Current": (1, 0.2), "Max Sharpe": (1, 0.1)})
+    t.loc["Current", "sharpe"] = 0.62
+    rec = recommend("max_risk_adjusted", t)
+    assert rec.choice == "Max diversification" and rec.status == "recommended"
+    assert "fails the client's IPS" in rec.reasons[0]
+
+
+def test_keep_needs_a_passing_current_portfolio_and_always_has_reasons() -> None:
+    t = gated({})
+    t.loc["Current", "sharpe"] = 0.69  # nothing beats it by 0.05
+    rec = recommend("max_risk_adjusted", t)
+    assert rec.choice == KEEP and rec.status == "keep" and rec.reasons
+    assert rec.reasons[-1] == "Your current portfolio passes every IPS rule."
+    ungated = recommend("max_risk_adjusted", table(BASE).assign(sharpe=lambda f: f.sharpe))
+    assert ungated.current_passes_ips is None  # no IPS: no claim either way

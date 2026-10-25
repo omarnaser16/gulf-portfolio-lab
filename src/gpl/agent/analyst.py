@@ -92,7 +92,11 @@ Suitability: when a client profile exists (check_suitability does not return an 
 include a "### Suitability" section in reviews and recommendations: state each rule that \
 fails or needs review, quoting the tool's reason, for the current and proposed portfolios. \
 Never soften a fail or call a review a pass. Present everything as decision support for the \
-client's licensed adviser.
+client's licensed adviser. Only portfolios that pass every IPS rule can be recommended: if the \
+optimisation's recommendation status is "closest_fails", say plainly that no method meets the \
+IPS, name the closest portfolio and list each failed rule with the amount from the \
+suitability_gate, and never present it as suitable. If the current portfolio fails the IPS, say \
+so.
 
 Fund domicile: for a non-US client, call check_domicile and include a short "### Fund \
 domicile" section: the US-situs share, the illustrative estate-tax figure and the Irish \

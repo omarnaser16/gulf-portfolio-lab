@@ -29,6 +29,8 @@ class Check:
     measured: str
     limit: str
     reason: str
+    breach: float | None = None  # how far past the limit (limit's units: fraction or USD)
+    scale: float | None = None  # the limit's size, to compare breaches across rules
 
 
 def _pct(x: float | None) -> str:
@@ -98,6 +100,8 @@ def check_suitability(
                 _pct(lim["max_volatility"]),
                 f"Historical volatility {vol:.2%} is {'within' if ok else 'above'} the "
                 f"{lim['max_volatility']:.2%} IPS limit ({source('max_volatility')}).",
+                None if ok else vol - lim["max_volatility"],
+                lim["max_volatility"],
             )
         )
 
@@ -126,10 +130,12 @@ def check_suitability(
                 f"({returns.index[0]:%b %Y} - {returns.index[-1]:%b %Y}), "
                 f"{'within' if ok else 'beyond'} the {limit_dd:.2%} the client can accept "
                 f"({source('max_drawdown')}).",
+                None if ok else -mdd - limit_dd,
+                limit_dd,
             )
         )
     stress = episode_performance(port.to_frame("Portfolio"), episodes)
-    covered = stress[stress["covered"]]
+    covered = stress[stress["covered"]] if "covered" in stress else stress  # none configured
     if covered.empty:
         checks.append(
             Check(
@@ -157,6 +163,8 @@ def check_suitability(
                     else f", {'within' if ok else 'beyond'} the {limit_dd:.2%} drawdown limit"
                 )
                 + ".",
+                None if ok else -worst["total_return"] - limit_dd,
+                limit_dd,
             )
         )
 
@@ -177,6 +185,8 @@ def check_suitability(
                 _pct(cap),
                 f"The largest holding, {top}, is {top_w:.2%} of the portfolio, "
                 f"{'within' if ok else 'above'} the {cap:.2%} limit ({source('max_weight')}).",
+                None if ok else top_w - cap,
+                cap,
             )
         )
 
@@ -203,6 +213,8 @@ def check_suitability(
                 f"at least {home:.2%}",
                 f"GCC holdings are {gcc:.2%} of the portfolio; the client asked for at least "
                 f"{home:.2%}.",
+                None if ok else home - gcc,
+                home,
             )
         )
 
@@ -244,6 +256,8 @@ def check_suitability(
                 f"Low-volatility holdings ({names}) are worth USD {held:,.0f}; the client needs "
                 f"USD {need:,.0f} within {ips.client.liquidity_months} months (including any "
                 "reserve).",
+                None if ok else need - held,
+                need,
             )
         )
 
@@ -261,6 +275,8 @@ def check_suitability(
                 "Held but excluded by the IPS: "
                 + "; ".join(f"{t} ({w[t]:.2%}): {why}" for t, why in excluded.items())
                 + ".",
+                float(w[list(excluded)].sum()),
+                1.0,
             )
         )
     elif review:
@@ -299,9 +315,52 @@ def check_suitability(
             _pct(cap_fx),
             f"Holdings in currencies not pegged to the US dollar ({detail}) are {share:.2%} of the "
             f"portfolio; the IPS allows {cap_fx:.2%}. Pegged: USD, SAR, AED, QAR, BHD, OMR.",
+            None if ok else share - cap_fx,
+            cap_fx or 1.0,
         )
     )
     return checks
+
+
+def failures(checks: Sequence[Check]) -> list[Check]:
+    """The rules a portfolio fails ("review" is not a fail, but never a pass either)."""
+    return [c for c in checks if c.status == "fail"]
+
+
+def closeness(checks: Sequence[Check]) -> tuple[int, float]:
+    """How far a portfolio is from passing: (number of failed rules, summed relative breach).
+
+    Each breach is divided by its limit, so 2 pp over a 12% volatility limit (0.17) and USD
+    100,000 short of a USD 600,000 cash need (0.17) weigh about the same. Smaller is closer.
+    """
+    failed = failures(checks)
+    return len(failed), float(sum((c.breach or 0) / (c.scale or 1) for c in failed))
+
+
+def breach_text(check: Check) -> str:
+    """'Volatility: 14.20%, 2.20 pp above the 12.00% limit' for a failed check."""
+    if check.breach is None:
+        return f"{check.rule}: {check.measured} (limit {check.limit})"
+    if check.rule == "Liquidity":
+        return (
+            f"{check.rule}: {check.measured} in cash-like holdings, USD {check.breach:,.0f} "
+            f"short of the {check.limit} needed"
+        )
+    if check.rule == "Exclusions":
+        return f"{check.rule}: {check.measured} held ({check.breach:.2%} of the portfolio)"
+    if check.rule in MINIMUM_RULES:
+        minimum = check.limit.removeprefix("at least ")
+        return (
+            f"{check.rule}: {check.measured}, {check.breach * 100:.2f} pp below the {minimum} "
+            "minimum"
+        )
+    return (
+        f"{check.rule}: {check.measured}, {check.breach * 100:.2f} pp beyond the "
+        f"{check.limit} limit"
+    )
+
+
+MINIMUM_RULES = {"Home-market bias"}
 
 
 def suitability_table(results: Mapping[str, Sequence[Check] | Mapping[str, Check]]) -> pd.DataFrame:

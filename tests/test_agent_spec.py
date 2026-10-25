@@ -194,7 +194,9 @@ def test_candidates_are_walk_forward_within_limits_and_recommended_by_the_rule(c
     limits = OptimisationSpec(max_weight=0.45, groups=HELD, group_bounds={"GCC": (0.10, None)})
     report, run = run_candidates(ctx_opt, "max_risk_adjusted", limits, CURRENT)
     wf = report["walk_forward_after_costs"]
-    assert {"Current", "Benchmark", *CANDIDATES} <= set(wf)
+    assert {"Current", "Benchmark", *CANDIDATES} <= set(wf) | set(
+        report["identical_methods_shown_once"]
+    )
     # every candidate's latest weights respect the limits
     latest = run.latest_weights.drop("Current")
     assert (latest.max(axis=1) <= 0.45 + 1e-6).all() and (latest["KSA"] >= 0.10 - 1e-6).all()
@@ -250,3 +252,50 @@ def test_candidates_use_the_configured_minimum_sharpe_gain(ctx_opt) -> None:
     assert report["recommendation"]["choice"] == KEEP  # no method gains 5.0 of Sharpe
     assert "at least 5.00 above" in report["recommendation"]["rule"]
     ctx_opt.settings = {k: v for k, v in ctx_opt.settings.items() if k != "optimise_lab"}
+
+
+# ----------------------------------------------------------------- suitability gate in tools
+
+
+def test_candidates_are_checked_against_the_ips(ctx_opt) -> None:
+    from datetime import date
+
+    from gpl.client import EXAMPLE_CLIENTS, ClientProfile, build_ips
+    from gpl.suitability import failures
+
+    profile = ClientProfile.from_dict(EXAMPLE_CLIENTS["Dubai, moderate, 10 years"])
+    ctx_opt.ips = build_ips(profile, CFG, today=date(2026, 10, 25))
+    ctx_opt.holding_groups = HELD
+    ctx_opt.portfolio_value = 500_000
+    limits = OptimisationSpec(max_weight=0.45, groups=HELD)
+    report, run = run_candidates(ctx_opt, "max_risk_adjusted", limits, CURRENT)
+    gate = report["suitability_gate"]
+    rec = run.recommendation
+    assert set(run.ips_checks) == set(run.latest_weights.index)
+    # the table's IPS column and the gate agree with the checks themselves
+    for name, checks in run.ips_checks.items():
+        failed = [c.rule for c in failures(checks)]
+        assert len(gate["failed_rules"][name]) == len(failed)
+        row = report["walk_forward_after_costs"][name]["passes_ips"]
+        assert row == ("yes" if not failed else "no: " + ", ".join(failed))
+    if rec.status == "recommended" and rec.choice != KEEP:
+        assert not failures(run.ips_checks[rec.choice])
+    if rec.status == "keep":
+        assert not failures(run.ips_checks["Current"])
+    assert gate["current_passes_ips"] == (not failures(run.ips_checks["Current"]))
+
+
+def test_identical_candidates_are_shown_once() -> None:
+    from gpl.agent.tools import duplicate_candidates
+
+    latest = pd.DataFrame(
+        {"A": [0.5, 0.4, 0.4, 0.4], "B": [0.5, 0.6, 0.6, 0.6]},
+        index=["Current", "Min variance", "Risk parity", "Max diversification"],
+    )
+    table = pd.DataFrame(
+        {"cagr": [0.05, 0.06, 0.06, 0.07], "volatility": [0.1] * 4, "sharpe": [0.3, 0.4, 0.4, 0.5]},
+        index=latest.index,
+    )
+    same_as, same_weights = duplicate_candidates(latest, table)
+    assert same_as == {"Risk parity": "Min variance"}
+    assert same_weights == {"Max diversification": "same current weights as Min variance"}

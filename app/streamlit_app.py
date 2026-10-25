@@ -912,16 +912,34 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     rec = report["recommendation"]
     st.markdown("**4. Recommendation**")
     reasons = "\n".join(f"- {r}" for r in rec["reasons"])
-    if rec["choice"] == KEEP:
+    gate = report.get("suitability_gate")
+    if rec["status"] == "closest_fails":
+        closest = "your current portfolio" if rec["choice"] == KEEP else rec["choice"]
+        failed = gate["failed_rules"]["Current" if rec["choice"] == KEEP else rec["choice"]]
+        st.warning(
+            f"**No method meets the client's IPS. The closest is {closest}**, which still "
+            "fails:\n\n"
+            + "\n".join(f"- {line}" for line in failed)
+            + f"\n\n{reasons}\n\nNot suitable as it stands: change the holdings (e.g. add a "
+            "lower-risk or cash-like holding) or review the IPS with the client."
+        )
+    elif rec["choice"] == KEEP:
         st.info(f"**Keep your current portfolio.**\n\n{reasons}")
     else:
         st.success(f"**Recommended method: {rec['choice']}**\n\n{reasons}")
+    if gate and not gate["current_passes_ips"] and rec["status"] != "closest_fails":
+        st.caption(
+            "Your current portfolio fails the IPS: "
+            + "; ".join(gate["failed_rules"]["Current"])
+            + "."
+        )
     st.caption(f"The rule for this goal: {rec['rule']}")
 
     rows = pd.DataFrame(report["walk_forward_after_costs"]).T
-    rows = rows.reindex(columns=list(CANDIDATE_TABLE_COLUMNS)).rename(
-        columns=CANDIDATE_TABLE_COLUMNS
-    )
+    columns = dict(CANDIDATE_TABLE_COLUMNS)
+    if gate:
+        columns["passes_ips"] = "Passes IPS?"
+    rows = rows.reindex(columns=list(columns)).rename(columns=columns)
     rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
     rows.index = [("★ " if n == rec["choice"] else "") + n for n in rows.index]
     st.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
@@ -937,6 +955,11 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     )
     for name, why in report["infeasible_candidates"].items():
         st.warning(f"**{name}** can't meet your limits, so it wasn't run: " + " ".join(why))
+    for name, why in {
+        **report["identical_methods_shown_once"],
+        **report["same_latest_weights_different_history"],
+    }.items():
+        st.caption(f"{name}: {why}.")
     if len(run.latest_weights) > 1:
         st.markdown("**Latest weights of each method** (what it would hold now)")
         st.table(run.latest_weights.map(pct))
@@ -1017,7 +1040,9 @@ def render_optimise() -> None:
         "Max Sharpe, min variance, risk parity, max diversification and target volatility, each "
         "within your limits, judged on how they did out of sample after costs."
     )
-    run_key = (settings_key, bench_name, goal, target, repr(limits))
+    profile = client_ui.current_profile()
+    client_key = None if profile is None else json.dumps(profile.to_dict(), sort_keys=True)
+    run_key = (settings_key, bench_name, goal, target, repr(limits), client_key, portfolio_value())
     if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
         with st.spinner("Re-optimising each method month by month and backtesting…"):
             report, run = run_candidates(ctx, goal, limits, my_weights, target)
@@ -1025,10 +1050,13 @@ def render_optimise() -> None:
         choice = run.recommendation.choice
         if choice != KEEP:  # charts on the Analyst page compare current with this
             w = run.latest_weights.loc[choice]
+            fails = run.recommendation.status == "closest_fails"
             ctx.proposed = {
-                "name": f"{choice} (recommended)",
+                "name": f"{choice} ({'closest, fails the IPS' if fails else 'recommended'})",
                 "weights": w[w > 0].to_dict(),
-                "source": "Optimise recommendation",
+                "source": "Optimise (closest; fails the IPS)"
+                if fails
+                else "Optimise recommendation",
             }
         st.session_state.ws_opt = {"report": report, "run": run, "memo": None, "key": run_key}
     result = st.session_state.get("ws_opt")
