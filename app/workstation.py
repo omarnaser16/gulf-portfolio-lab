@@ -32,7 +32,8 @@ from gpl.metrics import (
 from gpl.optimise import risk_contributions
 from gpl.plots import allocation_chart
 
-ROWS, MODE, VERSION, LAST_PICK, META = "ws_rows", "ws_mode", "ws_version", "ws_last_pick", "ws_meta"
+ROWS, MODE, VERSION, META = "ws_rows", "ws_mode", "ws_version", "ws_meta"
+SEARCH = "ws_search"
 CASH_LIKE = "ws_cash_like"  # configured cash-like funds (grouped as "Cash & short-term")
 USD, PCT = "USD amount", "Weight (%)"
 PF_VALUE, PF_VERSION = "pf_value", "pf_v"  # the one portfolio value (USD), entered once
@@ -161,6 +162,47 @@ def _set_normalised() -> None:
     _bump()
 
 
+def _cell_value(x) -> float | None:
+    """A typed cell: a number, or None when blank (never NaN, which compares unequal to itself
+    and used to make every run look like a new edit)."""
+    if x is None:
+        return None
+    try:
+        value = float(x)
+    except TypeError, ValueError:
+        return None
+    return None if value != value else value  # NaN -> None
+
+
+def _apply_edits(key: str, tickers: list[str], mode_col: str) -> None:
+    """Editor callback: apply the edited cells and removals to the holdings.
+
+    Runs before the next script run, so every committed edit is kept. The editor's state holds
+    every edit since it was drawn, as absolute values, so applying it again is harmless; its key
+    therefore stays the same for value and group edits (a new key would drop an edit typed while
+    the app reruns). Only a removal, which shifts the rows, redraws the editor.
+    """
+    state = st.session_state.get(key) or {}
+    by_ticker = {r["ticker"]: dict(r) for r in st.session_state[ROWS]}
+    removed = set()
+    for index, changes in (state.get("edited_rows") or {}).items():
+        ticker = tickers[int(index)]
+        row = by_ticker.get(ticker)
+        if row is None:
+            continue
+        if changes.get("Remove"):
+            removed.add(ticker)
+        if mode_col in changes:
+            row["value"] = _cell_value(changes[mode_col])
+        if changes.get("Group"):
+            row["group"] = changes["Group"]
+    st.session_state[ROWS] = [
+        by_ticker[r["ticker"]] for r in st.session_state[ROWS] if r["ticker"] not in removed
+    ]
+    if removed:
+        _bump()
+
+
 def add_holding(symbol: str, meta: Mapping[str, str], config_groups) -> None:
     rows = st.session_state[ROWS]
     if any(r["ticker"] == symbol for r in rows):
@@ -196,18 +238,22 @@ def render_holdings(
             for r in results
         ]
 
-    picked = st_searchbox(
+    def picked(symbol: str) -> None:
+        """Add the pick once, then forget it: the searchbox would otherwise keep returning it
+        (re-adding a holding just removed) and ignore the same ticker picked again later."""
+        if symbol:
+            add_holding(symbol, st.session_state.get(META, {}).get(symbol, {}), config_groups)
+        st.session_state[SEARCH]["result"] = None
+
+    st_searchbox(
         suggestions,
         placeholder="Search by name or ticker, e.g. Aramco, Emaar, Apple, SPY",
         label="Add a security",
-        key="ws_search",
+        key=SEARCH,
         debounce=300,
         clear_on_submit=True,
+        submit_function=picked,
     )
-    if picked and picked != st.session_state.get(LAST_PICK):
-        st.session_state[LAST_PICK] = picked
-        add_holding(picked, st.session_state.get(META, {}).get(picked, {}), config_groups)
-        st.rerun()
 
     rows = st.session_state[ROWS]
     m1, m2 = st.columns([1, 1])
@@ -234,7 +280,9 @@ def render_holdings(
                     for r in rows
                 ],
                 "Group": [r["group"] for r in rows],
-                st.session_state[MODE]: [r["value"] for r in rows],
+                st.session_state[MODE]: [
+                    float("nan") if r["value"] is None else r["value"] for r in rows
+                ],
                 "Weight": [
                     pct(weights[r["ticker"]]) if r["ticker"] in weights else "–" for r in rows
                 ],
@@ -251,10 +299,13 @@ def render_holdings(
         )
         # Streamlit only styles read-only columns, so the editable ones stand out by contrast
         styled = table.style.set_properties(subset=READ_ONLY_COLUMNS, **READ_ONLY)
-        edited = st.data_editor(
+        key = f"ws_table_{st.session_state[VERSION]}"
+        st.data_editor(
             styled,
-            key=f"ws_table_{st.session_state[VERSION]}",
+            key=key,
             width="stretch",
+            on_change=_apply_edits,
+            args=(key, [r["ticker"] for r in rows], mode_col),
             column_config={
                 "_index": st.column_config.TextColumn("Ticker", width=95),
                 "Name": st.column_config.TextColumn(width=180),
@@ -274,6 +325,12 @@ def render_holdings(
             },
             disabled=READ_ONLY_COLUMNS,
         )
+        blanks = [r["ticker"] for r in rows if not (r["value"] or 0) > 0]
+        if blanks:
+            st.warning(
+                f"Enter a positive {'amount' if mode_col == USD else 'weight'} for "
+                f"{', '.join(blanks)}, or tick Remove; until then it is left out."
+            )
         left, right, _ = st.columns([1, 1, 2])
         left.button(
             "Equal weight",
@@ -300,23 +357,6 @@ def render_holdings(
         st.caption(
             "Prices as of: " + "; ".join(f"{when} ({', '.join(ts)})" for when, ts in times.items())
         )
-        changed = False
-        kept = []
-        for r in rows:
-            e = edited.loc[r["ticker"]]
-            if bool(e["Remove"]):
-                changed = True
-                if st.session_state.get(LAST_PICK) == r["ticker"]:
-                    st.session_state[LAST_PICK] = None
-                continue
-            value = float(e[st.session_state[MODE]] or 0.0)
-            if e["Group"] != r["group"] or value != r["value"]:
-                changed = True
-            kept.append({"ticker": r["ticker"], "group": e["Group"], "value": value})
-        if changed:
-            st.session_state[ROWS] = kept
-            _bump()
-            st.rerun()
 
     with st.expander("Import a list or start from a preset"):
         if presets:

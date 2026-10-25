@@ -1147,7 +1147,9 @@ tab_client, tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime
             "Monte Carlo",
             "Regime",
             "Analyst",
-        ]
+        ],
+        key="main_tab",  # tracked, so a rerun (e.g. a holdings edit) keeps the selected tab
+        on_change="rerun",
     )
 )
 
@@ -1297,7 +1299,9 @@ with tab_mine:
     st.subheader("My portfolio")
     render_portfolio_kpis()
     sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt, sec_rebal = st.tabs(
-        ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise", "Rebalance"]
+        ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise", "Rebalance"],
+        key="portfolio_tab",
+        on_change="rerun",
     )
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 

@@ -541,7 +541,7 @@ def test_picking_a_search_result_adds_it(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(yf, "Ticker", FakeTicker)
     monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(agent, "has_credentials", lambda: False)
-    monkeypatch.setattr(workstation, "st_searchbox", lambda *a, **k: "2222.SR")
+    monkeypatch.setattr(workstation, "st_searchbox", fake_searchbox("2222.SR"))
     st.cache_data.clear()
     at = AppTest.from_file(APP, default_timeout=180)
     at.run()
@@ -549,6 +549,24 @@ def test_picking_a_search_result_adds_it(monkeypatch, tmp_path) -> None:
     rows = {r["ticker"]: r for r in at.session_state["ws_rows"]}
     assert rows["2222.SR"]["group"] == "GCC" and rows["2222.SR"]["value"] == 10.0
     assert len(rows) == 5  # added once, not again on the rerun
+    # removing the stock just added keeps it removed (the searchbox still holds the pick)
+    _set_holdings(at, [r for r in at.session_state["ws_rows"] if r["ticker"] != "2222.SR"])
+    at.run()
+    assert "2222.SR" not in {r["ticker"] for r in at.session_state["ws_rows"]}
+
+
+def fake_searchbox(pick: str):
+    """Like streamlit_searchbox: one submit calls ``submit_function`` once, then the component
+    keeps returning its last result on every later run."""
+
+    def searchbox(*args, key="searchbox", submit_function=None, **kwargs):
+        state = st.session_state.setdefault(key, {"result": None, "submitted": False})
+        if not state["submitted"]:
+            state["submitted"], state["result"] = True, pick
+            submit_function(pick)
+        return state["result"]
+
+    return searchbox
 
 
 def _screen(app: AppTest) -> pd.DataFrame:
@@ -1152,3 +1170,81 @@ def test_no_hidden_default_portfolio_value() -> None:
 
     assert not hasattr(workstation, "DEFAULT_TOTAL_USD")
     assert "10_000" not in inspect.getsource(workstation)
+
+
+# ------------------------------------------------------------------- holdings grid stability
+
+
+@pytest.fixture
+def grid_state(monkeypatch):
+    """workstation's callbacks against a plain dict standing in for st.session_state."""
+    import types
+
+    state = {
+        ws.ROWS: [
+            {"ticker": "SPY", "group": "Global equity", "value": 6000.0},
+            {"ticker": "AGG", "group": "Bonds", "value": 3000.0},
+            {"ticker": "GLD", "group": "Gold", "value": 1000.0},
+        ],
+        ws.MODE: ws.USD,
+        ws.VERSION: 0,
+    }
+    monkeypatch.setattr(ws, "st", types.SimpleNamespace(session_state=state))
+    return state
+
+
+def _edit(state, edited_rows: dict) -> None:
+    key = f"ws_table_{state[ws.VERSION]}"
+    state[key] = {"edited_rows": edited_rows, "added_rows": [], "deleted_rows": []}
+    ws._apply_edits(key, [r["ticker"] for r in state[ws.ROWS]], ws.USD)
+
+
+def test_blank_cell_is_stored_once_and_does_not_loop(grid_state) -> None:
+    _edit(grid_state, {1: {ws.USD: None}})
+    # stored as None; the editor keeps its key (a redraw would drop an edit typed meanwhile)
+    assert grid_state[ws.ROWS][1]["value"] is None and grid_state[ws.VERSION] == 0
+    _edit(grid_state, {1: {ws.USD: float("nan")}})  # NaN is stored as None too, not NaN
+    assert grid_state[ws.ROWS][1]["value"] is None
+    assert ws.portfolio_value() == 7000.0  # the blank holding is left out
+
+
+def test_several_edits_are_all_kept(grid_state) -> None:
+    _edit(grid_state, {0: {ws.USD: 5000.0}, 2: {ws.USD: 2500.0, "Group": "Other"}})
+    rows = {r["ticker"]: r for r in grid_state[ws.ROWS]}
+    assert rows["SPY"]["value"] == 5000.0 and rows["GLD"]["value"] == 2500.0
+    assert rows["GLD"]["group"] == "Other" and rows["AGG"]["value"] == 3000.0
+
+
+def test_remove_works_after_adding_a_stock(grid_state) -> None:
+    grid_state[ws.CASH_LIKE] = []
+    ws.add_holding("2222.SR", {"exchange": "Saudi", "type": "Stock"}, {})
+    assert [r["ticker"] for r in grid_state[ws.ROWS]][-1] == "2222.SR"
+    version = grid_state[ws.VERSION]
+    _edit(grid_state, {3: {"Remove": True}})  # the new stock
+    assert grid_state[ws.VERSION] == version + 1  # rows shifted: the editor is redrawn
+    _edit(grid_state, {0: {"Remove": True}})  # then another one
+    assert [r["ticker"] for r in grid_state[ws.ROWS]] == ["AGG", "GLD"]
+
+
+def test_blank_cell_in_the_app_warns_without_a_rerun_loop(app: AppTest) -> None:
+    rows = [
+        {"ticker": "SPY", "group": "Global equity", "value": 6000.0},
+        {"ticker": "AGG", "group": "Bonds", "value": None},
+    ]
+    _set_holdings(app, rows, mode="USD amount")
+    assert not app.exception, app.exception
+    version = app.session_state[ws.VERSION]
+    app.run()
+    assert app.session_state[ws.VERSION] == version  # nothing changes by itself
+    assert any("Enter a positive amount for AGG" in w.value for w in app.warning)
+
+
+def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
+    assert app.session_state["main_tab"] == "Client"
+    app.session_state["main_tab"] = "Portfolio"
+    app.session_state["portfolio_tab"] = "Rebalance"
+    app.run()
+    _set_holdings(app, [{"ticker": "SPY", "group": "Global equity", "value": 100.0}])
+    assert not app.exception, app.exception
+    assert app.session_state["main_tab"] == "Portfolio"
+    assert app.session_state["portfolio_tab"] == "Rebalance"
