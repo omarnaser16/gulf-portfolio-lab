@@ -42,8 +42,15 @@ def synthetic_download(tickers, start=None, end=None, **kwargs) -> pd.DataFrame:
         if t.startswith("NEW"):  # a recent listing: only ~100 trading days of history
             idx = pd.bdate_range(last - pd.Timedelta(days=140), last)
         elif t.endswith(SUN_THU):
+            # Dubai and Abu Dhabi moved to Mon-Fri on 1 Jan 2022; the other GCC markets didn't
+            switch = pd.Timestamp("2022-01-01") if t.endswith((".AE", ".AD")) else None
             idx = pd.DatetimeIndex(
-                [d for d in pd.date_range(start, last) if d.day_of_week in (6, 0, 1, 2, 3)]
+                [
+                    d
+                    for d in pd.date_range(start, last)
+                    if d.day_of_week
+                    in ((0, 1, 2, 3, 4) if switch is not None and d >= switch else (6, 0, 1, 2, 3))
+                ]
             )
         else:
             idx = pd.bdate_range(start, last)
@@ -396,7 +403,7 @@ def test_gcc_preset_converts_and_aligns_calendars(app: AppTest) -> None:
     app.button(key="ws_preset_go").click().run()
     assert not app.exception, app.exception
     info = " ".join(i.value for i in app.info)
-    assert "Sunday to Thursday" in info and "periods a year instead of 252" in info
+    assert "2222.SR trades Sun–Thu" in info and "periods a year instead of 252" in info
     notes = next(t.value for t in app.table if "Converted to USD with" in t.value.columns)
     assert notes.loc["2222.SR", "Converted to USD with"] == "SAR peg 3.75 per USD"
     assert notes.loc["NBK.KW", "Converted to USD with"].startswith("KWD market rate")
@@ -467,7 +474,7 @@ def test_holdings_in_usd_outside_universe_and_mixed_calendar(app: AppTest) -> No
     holdings = next(t.value for t in app.table if "Share of risk" in t.value.columns)
     assert holdings.loc["SPY", "Weight"] == "60.00%"
     assert holdings.loc["2222.SR", "Converted to USD with"] == "SAR peg 3.75 per USD"
-    assert any("Sunday to Thursday" in i.value for i in app.info)  # holdings joined the dates
+    assert any("2222.SR trades Sun–Thu" in i.value for i in app.info)  # joined the dates
     assert "My portfolio" in _my_comparison(app).index
 
 

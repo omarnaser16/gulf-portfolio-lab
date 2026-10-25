@@ -431,6 +431,74 @@ def to_usd(
     return usd, notes
 
 
+# Exchanges that changed their trading week: suffix -> first date of the new calendar.
+# Dubai (DFM) and Abu Dhabi (ADX) moved from Sunday-Thursday to Monday-Friday on 1 Jan 2022
+# (Friday a half day). Yahoo has almost no Friday prices for them since, so each era's weekdays
+# are read from the data rather than assumed: Sun-Thu until 2021, Mon-Thu from 2022 on Yahoo.
+CALENDAR_CHANGES: dict[str, str] = {".AE": "2022-01-01", ".AD": "2022-01-01"}
+DAY_NAMES = "Mon Tue Wed Thu Fri Sat Sun".split()
+
+
+def calendar_eras(
+    ticker: str, series: pd.Series, changes: Mapping[str, str] | None = None
+) -> list[tuple[pd.Timestamp, pd.Timestamp, frozenset[int]]]:
+    """The asset's trading weekdays in each calendar era: ``[(first, last, weekdays), ...]``.
+
+    The history is split at the exchange's calendar change (``CALENDAR_CHANGES``), and each
+    era's weekdays come from the data itself (``trading_weekdays``).
+    """
+    changes = CALENDAR_CHANGES if changes is None else changes
+    days = series.dropna()
+    if days.empty:
+        return []
+    suffix = "." + ticker.rsplit(".", 1)[-1] if "." in ticker else ""
+    cuts = [pd.Timestamp(changes[suffix])] if suffix in changes else []
+    eras, rest = [], days
+    for cut in cuts:
+        before, rest = rest[rest.index < cut], rest[rest.index >= cut]
+        if not before.empty:
+            eras.append(before)
+    if not rest.empty:
+        eras.append(rest)
+    return [(e.index[0], e.index[-1], trading_weekdays(e)) for e in eras]
+
+
+def weekdays_text(days: frozenset[int]) -> str:
+    """{6, 0, 1, 2, 3} -> 'Sun–Thu'; non-contiguous sets are listed ('Mon Wed')."""
+    order = [6, 0, 1, 2, 3, 4, 5]  # a week starting on Sunday, so Sun–Thu reads as a range
+    picked = [d for d in order if d in days]
+    if not picked:
+        return "–"
+    positions = [order.index(d) for d in picked]
+    if positions == list(range(positions[0], positions[0] + len(positions))) and len(picked) > 2:
+        return f"{DAY_NAMES[picked[0]]}–{DAY_NAMES[picked[-1]]}"
+    return " ".join(DAY_NAMES[d] for d in picked)
+
+
+def calendar_text(eras: Sequence[tuple[pd.Timestamp, pd.Timestamp, frozenset[int]]]) -> str:
+    """'Sun–Thu until 30 Dec 2021; Mon–Fri from 03 Jan 2022' (one era: just the days)."""
+    if len(eras) <= 1:
+        return weekdays_text(eras[0][2]) if eras else "–"
+    parts = []
+    for i, (first, last, days) in enumerate(eras):
+        when = f"until {last:%d %b %Y}" if i < len(eras) - 1 else f"from {first:%d %b %Y}"
+        parts.append(f"{weekdays_text(days)} {when}")
+    return "; ".join(parts)
+
+
+def calendars_differ(
+    eras: Mapping[str, Sequence[tuple[pd.Timestamp, pd.Timestamp, frozenset[int]]]],
+    sample_start: pd.Timestamp,
+) -> bool:
+    """Do the assets trade on different weekdays at any time from ``sample_start`` on?
+
+    Only eras that overlap the common sample count: US ETFs with a UAE stock differ before
+    2022 (Sun–Thu vs Mon–Fri) but not from 2022, when both trade Monday to Friday.
+    """
+    used = {days for asset in eras.values() for _, last, days in asset if last >= sample_start}
+    return len(used) > 1
+
+
 def trading_weekdays(series: pd.Series) -> frozenset[int]:
     """Weekdays (Mon=0 ... Sun=6) on which an asset trades on at least 10% of weeks."""
     days = series.dropna().index
@@ -492,10 +560,11 @@ def load_assets(
 
     Tickers with no data are reported in ``invalid`` rather than raising. Raises
     ``DataUnavailable`` if Yahoo blocks the requests. If every asset trades on the same
-    weekdays, prices are cleaned exactly as ``clean_prices`` does (so results for the default
-    US ETFs are unchanged); if calendars differ (e.g. Saudi Sun-Thu vs US Mon-Fri), only the
-    dates on which every asset traded are kept and annualisation uses the observed number of
-    dates per year.
+    weekdays over the common sample, prices are cleaned exactly as ``clean_prices`` does (so
+    results for the default US ETFs are unchanged); if calendars differ there (e.g. Saudi
+    Sun-Thu vs US Mon-Fri, or a UAE stock before 2022), only the dates on which every asset
+    traded are kept and annualisation uses the observed number of dates per year. Calendars
+    are date-aware (``CALENDAR_CHANGES``).
     """
     from datetime import UTC, datetime
 
@@ -533,15 +602,15 @@ def load_assets(
 
     local = pd.DataFrame(raw)
     usd, conversions = to_usd(local, {t: currencies[t] for t in raw}, fx)
-    calendars = {t: trading_weekdays(usd[t]) for t in usd.columns}
-    mixed = len(set(calendars.values())) > 1
+    eras = {t: calendar_eras(t, usd[t]) for t in usd.columns}
+    sample_start = usd.apply(lambda c: c.first_valid_index()).max()
+    mixed = calendars_differ(eras, sample_start)
     if mixed:
         prices, alignment = align_common_dates(usd)
         periods = observations_per_year(prices.index)
     else:
         prices, alignment, periods = clean_prices(usd, max_ffill=max_ffill), {}, PERIODS_PER_YEAR
 
-    day_names = "Mon Tue Wed Thu Fri Sat Sun".split()
     history = pd.DataFrame(
         {
             "first_date": [raw[t].index[0] for t in raw],
@@ -550,7 +619,7 @@ def load_assets(
             "currency": [currencies[t] for t in raw],
             "currency_source": [sources[t] for t in raw],
             "conversion": [conversions[t] for t in raw],
-            "trading_days": [" ".join(day_names[d] for d in sorted(calendars[t])) for t in raw],
+            "trading_days": [calendar_text(eras[t]) for t in raw],
         },
         index=list(raw),
     )

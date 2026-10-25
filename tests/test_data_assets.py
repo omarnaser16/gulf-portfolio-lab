@@ -180,7 +180,7 @@ def test_load_assets_converts_aligns_and_reports(yahoo) -> None:
     np.testing.assert_allclose(out.prices["2222.SR"], sar / 3.75)
     h = out.history
     assert h.loc["NBK.KW", "conversion"].startswith("KWD market rate")
-    assert h.loc["2222.SR", "trading_days"] == "Mon Tue Wed Thu Sun"
+    assert h.loc["2222.SR", "trading_days"] == "Sun–Thu"
     assert out.price_as_of == out.prices.index[-1]
 
 
@@ -215,3 +215,53 @@ def test_blocked_download_raises_after_retries(yahoo, monkeypatch) -> None:
 def test_nothing_valid_returns_empty(yahoo) -> None:
     out = load_assets(["NOPE"], "2023-01-01", "2024-12-31")
     assert out.prices.empty and out.invalid == {"NOPE": "No data on Yahoo Finance"}
+
+
+# ------------------------------------------------------------------ date-aware calendars
+
+
+def _week_days(start: str, end: str, weekdays: set[int]) -> pd.DatetimeIndex:
+    return pd.DatetimeIndex([d for d in pd.date_range(start, end) if d.day_of_week in weekdays])
+
+
+def _uae_series() -> pd.Series:
+    """A Dubai stock: Sun-Thu until 2021, Mon-Fri from 2022."""
+    idx = _week_days("2019-01-01", "2021-12-31", {6, 0, 1, 2, 3}).append(
+        _week_days("2022-01-01", "2023-12-31", {0, 1, 2, 3, 4})
+    )
+    return pd.Series(1.0, index=idx)
+
+
+def test_calendar_eras_split_at_the_uae_weekend_change() -> None:
+    from gpl.data import calendar_eras, calendar_text
+
+    eras = calendar_eras("EMAAR.AE", _uae_series())
+    assert [days for _, _, days in eras] == [frozenset({6, 0, 1, 2, 3}), frozenset({0, 1, 2, 3, 4})]
+    assert calendar_text(eras) == "Sun–Thu until 30 Dec 2021; Mon–Fri from 03 Jan 2022"
+    # Saudi did not change: one era
+    saudi = pd.Series(1.0, index=_week_days("2019-01-01", "2023-12-31", {6, 0, 1, 2, 3}))
+    assert calendar_text(calendar_eras("2222.SR", saudi)) == "Sun–Thu"
+
+
+def test_calendars_differ_only_within_the_sample() -> None:
+    from gpl.data import calendar_eras, calendars_differ
+
+    us = pd.Series(1.0, index=_week_days("2019-01-01", "2023-12-31", {0, 1, 2, 3, 4}))
+    eras = {"SPY": calendar_eras("SPY", us), "EMAAR.AE": calendar_eras("EMAAR.AE", _uae_series())}
+    assert calendars_differ(eras, pd.Timestamp("2019-01-02"))  # Sun-Thu vs Mon-Fri before 2022
+    assert not calendars_differ(eras, pd.Timestamp("2022-01-03"))  # both Mon-Fri from 2022
+
+
+def test_weekdays_text() -> None:
+    from gpl.data import weekdays_text
+
+    assert weekdays_text(frozenset({0, 1, 2, 3, 4})) == "Mon–Fri"
+    assert weekdays_text(frozenset({0, 2})) == "Mon Wed" and weekdays_text(frozenset()) == "–"
+
+
+def test_uae_stock_after_2022_is_not_a_mixed_calendar(yahoo) -> None:
+    yahoo.series["EMAAR.AE"] = walk(MON_FRI, 7, 10.0)  # 2023-24: Dubai trades Mon-Fri
+    yahoo.currencies["EMAAR.AE"] = "AED"
+    out = load_assets(["SPY", "EMAAR.AE"], "2023-01-01", "2024-12-31")
+    assert not out.mixed_calendars and out.periods_per_year == 252
+    assert out.history.loc["EMAAR.AE", "trading_days"] == "Mon–Fri"

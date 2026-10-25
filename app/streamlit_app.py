@@ -423,10 +423,17 @@ with st.expander(
 ):
     render_data_notes(data.history)
     if data.mixed_calendars:
-        sun_thu = [t for t in data.history.index if "Sun" in data.history.loc[t, "trading_days"]]
+        sun_thu = {
+            t: data.history.loc[t, "trading_days"]
+            for t in data.history.index
+            if "Sun" in data.history.loc[t, "trading_days"]
+        }
         st.info(
-            f"**Different trading calendars.** {', '.join(sun_thu)} trade Sunday to Thursday, "
-            "while US-listed assets trade Monday to Friday. The analysis uses only the "
+            "**Different trading calendars.** "
+            + "; ".join(f"{t} trades {days}" for t, days in sun_thu.items())
+            + ", while US-listed assets trade Mon–Fri. (Dubai and Abu Dhabi moved from a "
+            "Sunday to a Monday week on 1 Jan 2022, but Yahoo has no Friday prices for them, so "
+            "they still differ from US markets.) The analysis uses only the "
             f"{data.alignment['kept']:,} dates on which every selected market traded (about "
             f"{periods} a year), so some returns span more than one day; figures are annualised "
             f"with {periods} periods a year instead of 252."
