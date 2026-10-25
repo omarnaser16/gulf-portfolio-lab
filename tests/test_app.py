@@ -1271,3 +1271,43 @@ def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) ->
     plan = next(m.value for m in at.markdown if m.value.startswith("**Goal:**"))
     assert "Region Saudi Arabia (KSA): at least 10.00%" in plan
     assert "Cash need (no holding): at least 20.00%" in plan
+
+
+def test_report_uses_the_optimiser_recommendation_not_a_chat_what_if(
+    optimise_app, monkeypatch
+) -> None:
+    import gpl.report
+
+    captured = {}
+    real = gpl.report.client_report
+
+    def capture(inputs, compress=True):
+        captured["inputs"] = inputs
+        return real(inputs, compress)
+
+    monkeypatch.setattr(gpl.report, "client_report", capture)  # the app imports it per run
+    at, _ = optimise_app([])
+    at.selectbox(key="client_example").set_value("Doha, aggressive, 20 years")
+    at.button(key="client_load_example").click().run()
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    rec = at.session_state["ws_opt"]["report"]["recommendation"]
+    # a later what-if in the chat replaces the Analyst's proposed portfolio...
+    at.session_state["ctx"].proposed = {
+        "name": "What-if: SPY 90%",
+        "weights": {"SPY": 0.9, "AGG": 0.1},
+        "source": "what-if",
+    }
+    at.text_input(key="rep_adviser").set_value("A. Adviser")
+    at.text_input(key="rep_licence").set_value("QFCRA-42")
+    at.button(key="prepare_report").click().run()
+    assert not at.exception, at.exception
+    inputs = captured["inputs"]
+    # ...but the report shows the optimiser's own result, checked against the IPS
+    keep = rec["choice"] == "Keep your current portfolio"
+    assert inputs.recommendation["choice"] == (None if keep else rec["choice"])
+    assert "What-if: SPY 90%" not in inputs.suitability
+    assert inputs.adviser == "A. Adviser" and inputs.adviser_licence == "QFCRA-42"
+    assert inputs.value == 250_000.0 and "Value (USD)" in inputs.holdings.columns
+    if not keep and rec["status"] == "recommended":
+        assert inputs.trades is not None and inputs.trades["rows"][0][0] == "Holding"

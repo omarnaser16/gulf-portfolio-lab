@@ -182,3 +182,31 @@ def test_cash_need_check_after_trades() -> None:
     assert short == {"held": 410_000.0, "need": 600_000.0, "shortfall": 190_000.0, "ok": False}
     assert cash_need_check(after, ["BIL"], 400_000)["ok"]
     assert cash_need_check(after, [], 1)["shortfall"] == 1
+
+
+def test_cash_floor_scales_cash_up_and_the_rest_pro_rata() -> None:
+    from gpl.scenarios import cash_floor
+
+    target = pd.Series({"SPY": 0.6, "AGG": 0.2, "BIL": 0.2})
+    out = cash_floor(target, ["BIL"], 300_000, 1_000_000)  # needs 30%
+    assert out["BIL"] == pytest.approx(0.30)
+    assert out["SPY"] == pytest.approx(0.6 / 0.8 * 0.7) and out.sum() == pytest.approx(1.0)
+    assert cash_floor(target, ["BIL"], 100_000, 1_000_000).equals(target)  # already covered
+    two = cash_floor(pd.Series({"SPY": 1.0, "BIL": 0.0, "SHV": 0.0}), ["BIL", "SHV"], 1, 10)
+    assert two["BIL"] == pytest.approx(0.05) and two["SHV"] == pytest.approx(0.05)
+
+
+def test_trades_cover_the_cash_need_after_costs() -> None:
+    from gpl.scenarios import cash_need_check, trade_list, trades_covering_cash_need
+
+    current = pd.Series({"SPY": 2_000_000.0, "BIL": 1_000_000.0})
+    target = pd.Series({"SPY": 0.8, "BIL": 0.2})  # 20% = USD 600,000 before costs
+    prices = pd.Series({"SPY": 500.0, "BIL": 100.0})
+    plain = trade_list(current, target, prices, 10)
+    assert not cash_need_check(plain["target_usd"], ["BIL"], 600_000)["ok"]  # costs eat into it
+    adjusted, trades = trades_covering_cash_need(current, target, prices, 10, ["BIL"], 600_000)
+    assert cash_need_check(trades["target_usd"], ["BIL"], 600_000)["ok"]
+    assert adjusted["BIL"] > 0.2 and adjusted.sum() == pytest.approx(1.0)
+    buys = trades.loc[trades.trade_usd > 0, "trade_usd"].sum()
+    sells = -trades.loc[trades.trade_usd < 0, "trade_usd"].sum()
+    assert buys + trades["cost_usd"].sum() == pytest.approx(sells)  # still cash-neutral

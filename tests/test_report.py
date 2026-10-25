@@ -93,8 +93,13 @@ def _inputs(
         data_as_of="22 Oct 2026",
         benchmark="60/40",
         holdings=pd.DataFrame(
-            {"Weight": ["50.00%", "30.00%", "10.00%", "10.00%"]}, index=list(CURRENT)
+            {
+                "Value (USD)": ["250,000", "150,000", "50,000", "50,000"],
+                "Weight": ["50.00%", "30.00%", "10.00%", "10.00%"],
+            },
+            index=list(CURRENT),
         ),
+        value=500_000,
         allocation=pd.Series(CURRENT),
         client=profile,
         ips=ips,
@@ -113,17 +118,22 @@ def test_client_report_sections_figures_and_date(ctx) -> None:
     assert pdf.startswith(b"%PDF")
     text = _text(pdf)
     for section in [
-        "Portfolio review",
-        "Client summary",
-        "Holdings",
-        "Performance vs 60/40",
-        "Suitability against the IPS",
-        "Analyst memo",
-        "Methodology and limitations",
+        "Your portfolio review",
+        "In brief",
+        "Your goals and limits",
+        "What you hold today",
+        "How it has done",
+        "What we recommend",
+        "Proposed trades",
+        "Does it fit your investment policy?",
+        "Your adviser's commentary",
+        "Sign-off",
         "Important information",
+        "Appendix: Investment Policy Statement",
     ]:
         assert f"({section})" in text, section
-    assert "2026-10-25" in text and "EX-DXB" in text
+    assert "25 October 2026" in text and "EX-DXB" in text
+    assert "(250,000)" in text and "Total: USD 500,000." in text  # holdings in USD
     # every KPI figure is the tested kpi_table output, formatted
     for row in kpi_rows(inputs.kpis, "60/40")[1:]:
         for cell in row[1:]:
@@ -132,8 +142,9 @@ def test_client_report_sections_figures_and_date(ctx) -> None:
     for check in inputs.suitability["Current"]:  # narrow cells may wrap: check word by word
         words = [w for w in check.measured.split() if w != "–"]  # the dash is byte-escaped
         assert all(word in text for word in words), check.rule
+    assert "[tool]" not in text  # tool citations are stripped from the memo
     assert text.count("/Subtype /Image") >= 4  # allocation, growth, drawdown, stress
-    assert "(Fund domicile \\(information, not tax advice\\))" in text and "CSPX.L" in text
+    assert "domiciled \\(information, not tax advice\\))" in text and "CSPX.L" in text
 
 
 def test_report_without_memo_or_client_says_so(ctx) -> None:
@@ -142,6 +153,7 @@ def test_report_without_memo_or_client_says_so(ctx) -> None:
     text = _text(client_report(inputs, compress=False))
     assert "(No AI memo was generated for this report.)" in text
     assert "No client profile was entered" in text
+    assert "No optimisation was run for this review" in text
 
 
 def test_memo_markdown() -> None:
@@ -149,3 +161,104 @@ def test_memo_markdown() -> None:
     assert [type(f).__name__ for f in flow] == ["Paragraph"] * 3
     assert flow[1].bulletText == "•" and "<b>SPY</b>" in flow[1].text
     assert "&lt;text&gt; &amp; more" in flow[2].text
+    md = (
+        "# Summary\n* star bullet\n• dot bullet\n  - nested\n1. first\n2) second\n"
+        "*italic* and _also_ and `code`\n\n| Metric | Value |\n|---|---:|\n| Sharpe | 0.70 |"
+    )
+    flow = markdown_flowables(md)
+    kinds = [type(f).__name__ for f in flow]
+    assert kinds == ["Paragraph"] * 7 + ["Table", "Spacer"]
+    assert [f.bulletText for f in flow[1:6]] == ["•", "•", "•", "1.", "2."]
+    assert flow[3].style.name == "bullet2"  # indented bullet
+    assert flow[6].text == "<i>italic</i> and <i>also</i> and code"
+    assert len(flow[7]._cellvalues) == 2  # header + one row; the separator is dropped
+
+
+def test_clean_memo_strips_tool_tags_and_the_app_disclaimer() -> None:
+    from gpl.report import clean_memo
+
+    memo = (
+        "Volatility 9.55% [diagnose_portfolio]. Fell 21.67% [stress_test, run_candidates] "
+        "and [show_chart; what_if_portfolio]. See [the guide](https://x.y).\n\n---\n"
+        "*Not investment advice: AI-generated.*"
+    )
+    assert clean_memo(memo) == ("Volatility 9.55%. Fell 21.67% and. See [the guide](https://x.y).")
+
+
+def test_recommendation_and_trade_sections() -> None:
+    from gpl.report import recommendation_section, trade_section
+
+    latest = pd.DataFrame(
+        {"SPY": [0.5, 0.4], "BIL": [0.0, 0.2], "AGG": [0.5, 0.4]},
+        index=["Current", "Min variance"],
+    )
+    row = {"cagr": "6.00%", "annual_volatility": "8.00%", "sharpe": "0.50", "max_drawdown": "-12%"}
+    report = {
+        "goal": "Reduce risk",
+        "backtest_period": "2016-01-01 to 2026-09-30",
+        "walk_forward_after_costs": {"Current": row, "Min variance": row, "Benchmark": row},
+        "recommendation": {
+            "choice": "Min variance",
+            "status": "recommended",
+            "reasons": ["Min variance ranks first."],
+        },
+        "suitability_gate": {"failed_rules": {"Current": ["Liquidity: ..."], "Min variance": []}},
+    }
+    rec = recommendation_section(report, latest)
+    assert rec["headline"] == "We recommend moving to the Min variance portfolio."
+    assert rec["weights"][2] == ["BIL", "0.00%", "20.00%", "+20.00 pp"]
+    assert rec["metrics"][0] == ["", "Today", "Min variance", "Benchmark"] and rec["failed"] == []
+    closest = {
+        **report,
+        "recommendation": {**report["recommendation"], "status": "closest_fails"},
+        "suitability_gate": {"failed_rules": {"Min variance": ["Volatility: 13%, 1 pp beyond"]}},
+    }
+    rec = recommendation_section(closest, latest)
+    assert "not as a recommendation" in rec["headline"]
+    assert rec["failed"] == ["Volatility: 13%, 1 pp beyond"]
+    trades = pd.DataFrame(
+        {
+            "trade_usd": [-10_000.0, 9_990.0, 0.0],
+            "target_usd": [40_000.0, 19_990.0, 40_000.0],
+            "cost_usd": [10.0, 9.99, 0.0],
+            "action": ["Sell", "Buy", "Hold"],
+        },
+        index=["SPY", "BIL", "AGG"],
+    )
+    section = trade_section(
+        trades, 10, {"held": 19_990.0, "need": 25_000.0, "shortfall": 5_010.0, "ok": False}
+    )
+    assert [r[0] for r in section["rows"]] == ["Holding", "SPY", "BIL"]  # holds are not listed
+    assert section["summary"].startswith("Sales of USD 10,000 pay for purchases of USD 9,990")
+    assert "USD 5,010 short of the USD 25,000" in section["cash"]
+
+
+def test_report_shows_the_recommendation_trades_bullets_and_sign_off(ctx) -> None:
+    from gpl.report import recommendation_section, trade_section
+
+    inputs = _inputs(ctx)
+    latest = pd.DataFrame({t: [w, w] for t, w in CURRENT.items()}, index=["Current", "Risk parity"])
+    row = {"cagr": "6.00%", "annual_volatility": "8.00%", "sharpe": "0.50", "max_drawdown": "-12%"}
+    report = {
+        "goal": "Reduce risk",
+        "backtest_period": "2016 to 2026",
+        "walk_forward_after_costs": {"Current": row, "Risk parity": row},
+        "recommendation": {
+            "choice": "Risk parity",
+            "status": "recommended",
+            "reasons": ["Risk parity ranks first under the rule."],
+        },
+    }
+    inputs.recommendation = recommendation_section(report, latest)
+    trades = pd.DataFrame(
+        {"trade_usd": [-1_000.0], "target_usd": [249_000.0], "cost_usd": [1.0], "action": ["Sell"]},
+        index=["SPY"],
+    )
+    inputs.trades = trade_section(trades, 10)
+    inputs.adviser, inputs.adviser_licence = "A. Adviser", "F001234"
+    text = _text(client_report(inputs, compress=False))
+    assert "(We recommend moving to the Risk parity portfolio.)" in text
+    assert "Risk parity ranks first under the rule." in text
+    assert "(Proposed trades)" in text and "(1,000)" in text
+    assert "(F001234)" in text and "(Client acknowledgement and date)" in text
+    assert text.count("(\\177)") >= 5  # bullets drawn (reportlab's WinAnsi bullet, octal 177)

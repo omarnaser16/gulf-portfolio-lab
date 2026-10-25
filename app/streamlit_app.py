@@ -71,8 +71,13 @@ from gpl.plots import (
     weights_chart,
 )
 from gpl.recommend import GOALS, KEEP
-from gpl.report import ReportInputs, client_report
-from gpl.scenarios import classify_holdings
+from gpl.report import ReportInputs, client_report, recommendation_section, trade_section
+from gpl.scenarios import (
+    cash_need_check,
+    classify_holdings,
+    trade_list,
+    trades_covering_cash_need,
+)
 from gpl.suitability import check_suitability, suitability_table
 
 CFG = load_universe()
@@ -1482,9 +1487,29 @@ with tab_mine:
         else:
             proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
             usd = st.session_state.get(ws.MODE) == ws.USD
+            default_target = pd.Series(proposed["weights"]) if proposed else pd.Series(my_weights)
+            need, value = cash_need_for_trades(), portfolio_value()
+            if need and value:  # start from targets that keep the cash need after costs
+                held = (
+                    pd.Series({r["ticker"]: r["value"] for r in st.session_state[ws.ROWS]})
+                    if usd
+                    else pd.Series(my_weights) * value
+                ).reindex(list(my_weights))
+                latest_usd = pd.Series(
+                    {t: getattr(get_quote(t), "price_usd", None) for t in default_target.index},
+                    dtype=float,
+                )
+                default_target, _ = trades_covering_cash_need(
+                    held,
+                    default_target / default_target.sum(),
+                    latest_usd,
+                    cost_bps,
+                    need["cash_like"],
+                    need["need_usd"],
+                )
             rebalance = ws.render_rebalance(
                 pd.Series(my_weights),
-                pd.Series(proposed["weights"]) if proposed else pd.Series(my_weights),
+                default_target,
                 f"{proposed['name']}" if proposed else "current weights",
                 pd.Series(
                     {
@@ -1772,16 +1797,90 @@ def render_portfolio_overview() -> None:
 
 
 def latest_memo() -> tuple[str | None, list[str]]:
-    """Text and flagged figures of the latest analyst reply in the conversation, if any."""
+    """The memo for the report: the Optimise memo if one was written (it explains the
+    recommendation the report shows), else the latest analyst reply. Text and flagged figures.
+    """
+    opt = st.session_state.get("ws_opt") or {}
+    memo = opt.get("memo")
+    if memo and memo.get("role") == "assistant":
+        return memo["reply"].text, memo["reply"].unverified
     for turn in reversed(st.session_state.get("chat", [])):
         if turn.get("role") == "assistant":
             return turn["reply"].text, turn["reply"].unverified
     return None, []
 
 
+def report_holdings(value: float | None) -> pd.DataFrame:
+    """Holdings for the report: name, value in USD (when the portfolio value is known), weight."""
+    w = pd.Series(my_weights)
+    usd = st.session_state.get(ws.MODE) == ws.USD
+    amounts = (
+        pd.Series({r["ticker"]: r["value"] for r in st.session_state[ws.ROWS]}).reindex(w.index)
+        if usd
+        else (w * value if value else None)
+    )
+    table = {"Name": [getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in w.index]}
+    if amounts is not None:
+        table["Value (USD)"] = amounts.map("{:,.0f}".format)
+    table["Weight"] = w.map(pct)
+    return pd.DataFrame(table, index=w.index)
+
+
+def report_recommendation() -> tuple[dict | None, dict | None]:
+    """The Optimise run's recommendation and its trade list, formatted (None if not run).
+
+    Always the optimiser's own result, never a what-if from the chat. Trades are proposed
+    only for a recommendation that passes the IPS.
+    """
+    opt = st.session_state.get("ws_opt")
+    if not opt:
+        return None, None
+    report, run = opt["report"], opt["run"]
+    rec = recommendation_section(report, run.latest_weights)
+    value = portfolio_value()
+    if rec["choice"] is None or rec["status"] == "closest_fails" or not value:
+        return rec, None
+    usd = st.session_state.get(ws.MODE) == ws.USD
+    current = pd.Series(my_weights)
+    values = (
+        pd.Series({r["ticker"]: r["value"] for r in st.session_state[ws.ROWS]}).reindex(
+            current.index
+        )
+        if usd
+        else current * value
+    )
+    target = run.latest_weights.loc[rec["choice"]].fillna(0.0)
+    target = target / target.sum()
+    prices = pd.Series({t: getattr(get_quote(t), "price_usd", None) for t in target.index})
+    need = cash_need_for_trades()
+    if need:  # top up cash-like holdings so the need is covered after trading costs
+        adjusted, trades = trades_covering_cash_need(
+            values, target, prices.astype(float), cost_bps, need["cash_like"], need["need_usd"]
+        )
+        cash = cash_need_check(trades["target_usd"], need["cash_like"], need["need_usd"])
+    else:
+        adjusted, trades, cash = (
+            target,
+            trade_list(values, target, prices.astype(float), cost_bps),
+            None,
+        )
+    section = trade_section(trades, cost_bps, cash)
+    raised = [t for t in target.index if adjusted[t] > target[t] + 5e-5]
+    if raised:
+        section["summary"] += (
+            " To keep the cash you need after trading costs, "
+            + ", ".join(f"{t} is set to {adjusted[t]:.2%} (not {target[t]:.2%})" for t in raised)
+            + "."
+        )
+    return rec, section
+
+
 def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) -> None:
     """Build the client report on request (charts take a moment), then offer the PDF."""
     st.markdown("**Client report**")
+    a1, a2 = st.columns(2)
+    a1.text_input("Adviser name", key="rep_adviser")
+    a2.text_input("Licence / registration number", key="rep_licence")
     if st.button("Prepare client report (PDF)", key="prepare_report"):
         with st.spinner("Building the report…"):
             ctx = shared_context()
@@ -1793,21 +1892,32 @@ def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) ->
                     pass  # e.g. no benchmark: the report says what is missing
             memo, unverified = latest_memo()
             profile = client_ui.current_profile()
+            rec, trades = report_recommendation()
+            checked = {"Current": pd.Series(my_weights)}
+            if rec and rec["choice"]:  # the optimiser's portfolio, never a chat what-if
+                latest = st.session_state.ws_opt["run"].latest_weights
+                checked[rec["choice"]] = latest.loc[rec["choice"]].fillna(0.0)
             inputs = ReportInputs(
                 report_date=date.today(),
                 data_as_of=f"{data.price_as_of:%d %b %Y}",
                 benchmark=bench_name,
-                holdings=holdings,
+                holdings=report_holdings(portfolio_value()),
                 allocation=pd.Series(my_weights),
                 client=profile,
                 ips=client_ips(),
                 kpis=portfolio_kpis(),
                 charts=charts,
-                suitability=suitability_results(ports),
+                suitability=suitability_results(checked),
                 memo=memo,
                 memo_unverified=unverified,
+                adviser=st.session_state.get("rep_adviser", ""),
+                adviser_licence=st.session_state.get("rep_licence", ""),
                 domicile=domicile_section(),
+                value=portfolio_value(),
+                recommendation=rec,
+                trades=trades,
             )
+            st.session_state.client_report_flags = unverified
             ref = profile.reference if profile and profile.reference else "portfolio"
             st.session_state.client_report = (
                 client_report(inputs),
@@ -1824,9 +1934,15 @@ def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) ->
             type="primary",
         )
         st.caption(
-            "Includes the latest analyst memo, if one was written above. Prepare it "
-            "again after a new memo."
+            "Uses the Optimise recommendation (never a chat what-if) and the Optimise memo if "
+            "one was written, else the latest analyst memo. Prepare it again after changes."
         )
+        flags = st.session_state.get("client_report_flags")
+        if flags:
+            st.warning(
+                "Adviser check before sending: the memo has figures no tool returned: "
+                + ", ".join(flags)
+            )
 
 
 with tab_agent:

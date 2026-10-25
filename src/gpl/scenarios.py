@@ -242,3 +242,56 @@ def cash_need_check(after_usd: pd.Series, cash_like: Sequence[str], need_usd: fl
     held = float(after_usd.reindex(list(cash_like)).fillna(0.0).sum()) if cash_like else 0.0
     shortfall = max(0.0, need_usd - held)
     return {"held": held, "need": float(need_usd), "shortfall": shortfall, "ok": shortfall < 0.5}
+
+
+def cash_floor(
+    target: pd.Series, cash_like: Sequence[str], need_usd: float, investable_usd: float
+) -> pd.Series:
+    """Raise the cash-like holdings' target weights to cover ``need_usd`` of ``investable_usd``.
+
+    The cash-like holdings are scaled up together (keeping their mix; an equal split if they
+    are all at zero) and the others scaled down pro-rata, so the weights still add up to 1.
+    Unchanged when the need is already covered or there is no cash-like holding.
+    """
+    cash = [t for t in cash_like if t in target.index]
+    if not cash or need_usd <= 0 or investable_usd <= 0:
+        return target
+    floor = min(1.0, need_usd / investable_usd)
+    held = float(target[cash].sum())
+    if held >= floor - 1e-12:
+        return target
+    out = target.astype(float).copy()
+    mix = target[cash] / held if held > 0 else pd.Series(1 / len(cash), index=cash)
+    rest = [t for t in target.index if t not in cash]
+    rest_total = float(target[rest].sum())
+    out[cash] = mix * floor
+    if rest_total > 0:
+        out[rest] = target[rest] / rest_total * (1 - floor)
+    return out
+
+
+def trades_covering_cash_need(
+    current_values: pd.Series,
+    target: pd.Series,
+    prices_usd: pd.Series,
+    cost_bps: float,
+    cash_like: Sequence[str],
+    need_usd: float,
+    total_value: float | None = None,
+) -> tuple[pd.Series, pd.DataFrame]:
+    """``trade_list`` whose cash-like holdings end at or above ``need_usd`` after costs.
+
+    Costs are paid from the sales, so a target that holds exactly the need *before* costs
+    ends slightly short; the cash-like targets are topped up (``cash_floor``) until the
+    after-cost amount covers the need. Returns the adjusted target and the trades.
+    """
+    adjusted = target
+    trades = trade_list(current_values, adjusted, prices_usd, cost_bps, total_value)
+    for _ in range(10):
+        if cash_need_check(trades["target_usd"], cash_like, need_usd)["ok"]:
+            break
+        adjusted = cash_floor(
+            adjusted, cash_like, need_usd + 1.0, float(trades["target_usd"].sum())
+        )
+        trades = trade_list(current_values, adjusted, prices_usd, cost_bps, total_value)
+    return adjusted, trades
