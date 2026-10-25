@@ -124,3 +124,10 @@ def test_parse_amounts_keeps_raw_values() -> None:
 
     text = "SPY 120,000\nagg: 80000\nbad line\nSPY 5000\nGLD 0"
     assert parse_amounts(text) == {"SPY": 125_000.0, "AGG": 80_000.0}
+
+
+def test_rounding_to_100_01_is_not_a_notice() -> None:
+    _, _, note = normalise_holdings({"A": 33.34, "B": 33.33, "C": 33.34}, "pct")
+    assert note == ""  # 100.01: rounding
+    _, _, note = normalise_holdings({"A": 50, "B": 50.1}, "pct")
+    assert note == "Weights add up to 100.10%, so they were scaled to 100.00%."

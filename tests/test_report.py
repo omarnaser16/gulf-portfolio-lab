@@ -262,3 +262,20 @@ def test_report_shows_the_recommendation_trades_bullets_and_sign_off(ctx) -> Non
     assert "(Proposed trades)" in text and "(1,000)" in text
     assert "(F001234)" in text and "(Client acknowledgement and date)" in text
     assert text.count("(\\177)") >= 5  # bullets drawn (reportlab's WinAnsi bullet, octal 177)
+
+
+def test_percent_axis_ticks_never_round() -> None:
+    import matplotlib.pyplot as plt
+
+    from gpl.report import _style
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1, 2], [0.0, -0.11, -0.22])  # matplotlib would pick 2.5% steps here
+    _style(ax, "Drawdown", percent=True)
+    fig.canvas.draw()
+    ticks = [t for t in ax.get_yticks() if -0.25 <= t <= 0.01]
+    steps = {round(abs(b - a), 6) for a, b in zip(ticks, ticks[1:], strict=False)}
+    assert steps <= {0.01, 0.02, 0.05, 0.1}  # 1-2-5 steps
+    labels = [ax.yaxis.get_major_formatter()(t) for t in ticks]
+    assert all(lbl.rstrip("%").lstrip("−-").replace(".", "").isdigit() for lbl in labels)
+    plt.close(fig)

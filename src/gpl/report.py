@@ -401,7 +401,9 @@ def _style(ax, title: str, percent: bool = False) -> None:
     ax.grid(axis="y", color="#e6e5e0", linewidth=0.6)
     ax.tick_params(labelsize=8, colors=MUTED)
     if percent:
-        ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
+        # ticks on 1-2-5 steps, so a label never rounds (2.5% steps printed as "-2%, -5%, -7%")
+        ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=6, steps=[1, 2, 5, 10]))
+        ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=None))
 
 
 def _line_chart(frame: pd.DataFrame, title: str, reference: str | None, percent: bool) -> Image:

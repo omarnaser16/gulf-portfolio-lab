@@ -12,3 +12,6 @@ codeFont = "monospace"
 [client]
 showSidebarNavigation = false
 toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

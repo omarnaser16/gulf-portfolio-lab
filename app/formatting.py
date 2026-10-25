@@ -78,3 +78,13 @@ NUMBERS_CSS = """
 }
 </style>
 """
+
+
+def compact_usd(x: float | None) -> str:
+    """'$3.00m', '$250.0k', '$1.25bn', '$950' (fits a KPI card); '–' when unknown."""
+    if x is None:
+        return "–"
+    for size, suffix, decimals in ((1e9, "bn", 2), (1e6, "m", 2), (1e3, "k", 1)):
+        if abs(x) >= size:
+            return f"${x / size:,.{decimals}f}{suffix}"
+    return f"${x:,.0f}"

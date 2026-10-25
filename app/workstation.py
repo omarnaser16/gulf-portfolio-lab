@@ -20,7 +20,7 @@ from inputs import (
 )
 from streamlit_searchbox import st_searchbox
 
-from formatting import pct, plot
+from formatting import compact_usd, pct, plot
 from gpl.metrics import (
     benchmark_metrics,
     beta,
@@ -596,10 +596,13 @@ def render_kpis(
     """Five KPI cards: value, return (CAGR), volatility, Sharpe, max drawdown, with deltas vs the
     benchmark (from ``gpl.metrics.kpi_table``). Lower volatility counts as better."""
     cols = st.columns(5)
+    exact = portfolio_value()
     cols[0].metric(
         "Portfolio value",
         value_text,
-        help=None if value_text != "–" else "Enter holdings as USD amounts to see the value.",
+        help=f"USD {exact:,.2f}"
+        if exact is not None
+        else "Enter the portfolio value on Holdings (or holdings as USD amounts).",
     )
     if kpi is None:
         labels = ["Return (CAGR)", "Volatility", "Sharpe", "Max drawdown"]
@@ -632,9 +635,8 @@ def render_kpis(
 
 
 def portfolio_value_text() -> str:
-    """The portfolio value as text, or '–' when it hasn't been entered."""
-    value = portfolio_value()
-    return "–" if value is None else f"${value:,.0f}"
+    """The portfolio value, compact so it fits a KPI card ('$3.00m'); '–' if not entered."""
+    return compact_usd(portfolio_value())
 
 
 def _norm(heading: str) -> str:

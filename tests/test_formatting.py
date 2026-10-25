@@ -56,3 +56,19 @@ def test_style_percent_formats_numbers_only() -> None:
     table = pd.DataFrame({"when": ["Jan 2020"], "share": [0.2]})
     html = style_percent(table).to_html()
     assert "20.00%" in html and "Jan 2020" in html
+
+
+def test_compact_usd_fits_a_card() -> None:
+    from formatting import compact_usd
+
+    assert compact_usd(3_000_000) == "$3.00m" and compact_usd(250_000) == "$250.0k"
+    assert compact_usd(1_250_000_000) == "$1.25bn" and compact_usd(950) == "$950"
+    assert compact_usd(None) == "–"
+
+
+def test_usage_stats_are_off() -> None:
+    import tomllib
+    from pathlib import Path
+
+    config = tomllib.loads((Path(__file__).parents[1] / ".streamlit" / "config.toml").read_text())
+    assert config["browser"]["gatherUsageStats"] is False

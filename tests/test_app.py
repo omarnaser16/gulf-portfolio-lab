@@ -829,7 +829,7 @@ def test_kpi_cards_with_deltas_vs_the_benchmark(app: AppTest) -> None:
     assert app.metric[1].delta.endswith(" pp") and app.metric[1].value.endswith("%")
     assert any("deltas against 60/40 (SPY/AGG)" in c.value for c in app.caption)
     app.number_input(key="pf_value_holdings_0").set_value(10_000.0).run()  # entered once
-    assert app.metric[0].value == "$10,000"
+    assert app.metric[0].value == "$10.0k" and app.metric[0].help == "USD 10,000.00"
     app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
     assert app.metric[3].delta in (None, "")  # no Sharpe delta against cash
 
@@ -1146,7 +1146,7 @@ def test_one_portfolio_value_everywhere(app: AppTest) -> None:
     v = app.session_state[ws.PF_VERSION]
     for key in ("pf_value_holdings", "pf_value_client", "pf_value_rebalance"):
         assert app.number_input(key=f"{key}_{v}").value == 1_000_000.0
-    assert _metric(app, "Portfolio value") == "$1,000,000"
+    assert _metric(app, "Portfolio value") == "$1.00m"
     reasons = " ".join(m.value for m in app.markdown)
     assert "the client needs USD 100,000 held now" in reasons  # suitability uses the value
     # switching to USD keeps the weights and turns them into amounts of that value
@@ -1157,7 +1157,7 @@ def test_one_portfolio_value_everywhere(app: AppTest) -> None:
     app.radio(key="ws_mode").set_value("Weight (%)").run()
     v = app.session_state[ws.PF_VERSION]
     app.number_input(key=f"pf_value_client_{v}").set_value(750_000.0).run()
-    assert _metric(app, "Portfolio value") == "$750,000"
+    assert _metric(app, "Portfolio value") == "$750.0k"
     assert app.session_state["ctx"].portfolio_value == 750_000.0
 
 
@@ -1169,7 +1169,7 @@ def test_import_as_usd_amounts_keeps_the_amounts(app: AppTest) -> None:
     assert app.radio(key="ws_mode").value == "USD amount"
     amounts = {r["ticker"]: r["value"] for r in app.session_state[ws.ROWS]}
     assert amounts == {"SPY": 120_000.0, "AGG": 80_000.0, "GLD": 50_000.0}
-    assert _metric(app, "Portfolio value") == "$250,000"
+    assert _metric(app, "Portfolio value") == "$250.0k"
 
 
 def test_no_hidden_default_portfolio_value() -> None:

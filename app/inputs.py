@@ -41,6 +41,9 @@ def asset_groups(
 
 
 DEFAULT_HOLDINGS = "SPY 50\nAGG 30\nGLD 10\nKSA 10"
+# Inputs within 0.05 of 100% (e.g. 33.34 + 33.33 + 33.34 = 100.01) are rounding: rescaled
+# silently, with no "add up to 100.01%" notice.
+ROUNDING_TOLERANCE = 0.05
 _LINE = r"^([A-Za-z0-9^][A-Za-z0-9.\-=^]*)[\s,:;]+([\d,]*\.?\d+)\s*%?$"
 
 
@@ -77,7 +80,7 @@ def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], 
         holdings[ticker] = holdings.get(ticker, 0.0) + value
     total = sum(holdings.values())
     note = ""
-    if holdings and mode == "weights" and abs(total - 100) > 0.01:
+    if holdings and mode == "weights" and abs(total - 100) > ROUNDING_TOLERANCE:
         note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
     weights = {t: v / total for t, v in holdings.items()} if total else {}
     return weights, problems, note
@@ -180,7 +183,7 @@ def normalise_holdings(
     valid = {t: float(v) for t, v in values.items() if v is not None and v > 0}
     total = sum(valid.values())
     note = ""
-    if valid and mode == "pct" and abs(total - 100) > 0.01:
+    if valid and mode == "pct" and abs(total - 100) > ROUNDING_TOLERANCE:
         note = f"Weights add up to {total:.2f}%, so they were scaled to 100.00%."
     return ({t: v / total for t, v in valid.items()} if total else {}), problems, note
 

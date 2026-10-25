@@ -445,7 +445,8 @@ st.markdown(
 )
 st.caption(
     f"Sample: **{data.prices.index[0]:%d %b %Y} – {data.prices.index[-1]:%d %b %Y}** "
-    f"({len(returns):,} observations, {periods} a year). Every result depends on this period."
+    f"({len(returns):,} daily returns from {len(returns) + 1:,} price dates, about {periods} "
+    "a year). Every result depends on this period."
 )
 
 
@@ -485,7 +486,8 @@ with st.expander(
             + ", while US-listed assets trade Mon–Fri. (Dubai and Abu Dhabi moved from a "
             "Sunday to a Monday week on 1 Jan 2022, but Yahoo has no Friday prices for them, so "
             "they still differ from US markets.) The analysis uses only the "
-            f"{data.alignment['kept']:,} dates on which every selected market traded (about "
+            f"{data.alignment['kept']:,} price dates ({data.alignment['kept'] - 1:,} returns) on "
+            "which every selected market traded (about "
             f"{periods} a year), so some returns span more than one day; figures are annualised "
             f"with {periods} periods a year instead of 252."
         )
