@@ -22,6 +22,8 @@ dependencies = [
     "anthropic",
     "python-dotenv",
     "streamlit-searchbox",
+    "reportlab",   # PDF layout for the IPS and client report
+    "matplotlib",  # print-friendly charts in the PDFs
 ]
 
 [project.optional-dependencies]

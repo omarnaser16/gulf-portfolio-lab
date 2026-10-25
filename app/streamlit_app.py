@@ -11,6 +11,7 @@ import os
 from datetime import date
 
 import anthropic
+import client_ui
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -24,6 +25,7 @@ from gpl.agent import analyst as agent
 from gpl.agent.charts import build_chart
 from gpl.agent.spec import describe_goal, describe_limits, propose_spec, spec_from_draft
 from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
+from gpl.client import build_ips, ips_constraints, tighter
 from gpl.data import (
     AssetData,
     BenchmarkData,
@@ -684,7 +686,7 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
                     + ", ".join(proposal.numbers_not_in_goals)
                 )
 
-    draft = st.session_state.setdefault("ws_draft", dict(BLANK_DRAFT))
+    draft = st.session_state.setdefault("ws_draft", initial_draft())
     v = st.session_state.setdefault("ws_draft_v", 0)
 
     def as_float(value):  # the model writes integers (25); number inputs need floats
@@ -762,12 +764,47 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
     except ValueError as e:
         st.warning(str(e))
         return None
+    ips = client_ips()
+    if ips is not None and st.toggle(
+        "Use the client's IPS limits",
+        value=True,
+        key="ws_use_ips",
+        help="Adds the IPS limits (volatility, max weight, GCC minimum, exclusions) to the ones "
+        "above; where both set a limit, the stricter one applies.",
+    ):
+        ips_spec, notes = ips_constraints(ips, list(my_weights), holding_groups, ATTRIBUTES)
+        limits = tighter(limits, ips_spec)
+        for note in notes:
+            st.caption("• " + note)
     st.markdown(
         f"**Goal:** {describe_goal(goal, target)}  \n**Limits for every method:** "
         + "; ".join(describe_limits(limits))
         + f"  \n**Benchmark:** {bench_name}"
+        + (
+            "  \n**Client IPS applied**"
+            if ips is not None and st.session_state.get("ws_use_ips")
+            else ""
+        )
     )
     return goal, limits, target
+
+
+ATTRIBUTES = CFG.get("security_attributes", {})
+
+
+def client_ips():
+    """The current client's IPS, or None if no client profile is loaded."""
+    profile = client_ui.current_profile()
+    return None if profile is None else build_ips(profile, CFG)
+
+
+def initial_draft() -> dict:
+    """Blank Optimise form; with a client return target, start on 'Reach a target return'."""
+    draft = dict(BLANK_DRAFT)
+    profile = client_ui.current_profile()
+    if profile is not None and profile.return_target_pct is not None:
+        draft.update(goal="target_return", min_return_pct=profile.return_target_pct)
+    return draft
 
 
 def _results_section(result: dict, ai_ok: bool) -> None:
@@ -929,9 +966,31 @@ except (ValueError, DataUnavailable) as e:
     bench = None
     st.warning(f"Couldn't load the benchmark: {e} Choose another one.")
 
-tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
-    ["Portfolio", "Assets", "Frontier", "Backtest", "Monte Carlo", "Regime", "Analyst"]
+tab_client, tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = (
+    st.tabs(
+        [
+            "Client",
+            "Portfolio",
+            "Assets",
+            "Frontier",
+            "Backtest",
+            "Monte Carlo",
+            "Regime",
+            "Analyst",
+        ]
+    )
 )
+
+with tab_client:
+    client_ui.render_client_tab(
+        CFG,
+        list(my_weights),
+        ws.groups_of_holdings(),
+        ATTRIBUTES,
+        agent.has_credentials(),
+        agent.make_client,
+        A["model"],
+    )
 
 with tab_assets:
     st.subheader("Risk and return by asset")

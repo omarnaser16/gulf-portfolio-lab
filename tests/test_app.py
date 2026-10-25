@@ -88,6 +88,7 @@ def test_app_renders_every_tab(app: AppTest) -> None:
     assert not app.exception, app.exception
     sections = {"Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"}  # Portfolio
     assert [t.label for t in app.tabs if t.label not in sections] == [
+        "Client",
         "Portfolio",
         "Assets",
         "Frontier",
@@ -927,3 +928,50 @@ def test_memo_sections_pairing_and_disclaimer_last() -> None:
     assert [charts for _, charts in out] == [[], ["A"], ["B"], ["C"], []]
     assert out[0][0] == "Intro." and out[-1][0].strip().startswith("---")  # disclaimer last
     assert ws.memo_sections("No headings.", [("x", "A")]) == [("No headings.", []), ("", ["A"])]
+
+
+# ---------------------------------------------------------------------------- Client and IPS
+
+
+def test_client_tab_starts_empty_and_loads_an_example(app: AppTest) -> None:
+    assert any("Load an example" in i.value for i in app.info)
+    app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
+    app.button(key="client_load_example").click().run()
+    assert not app.exception, app.exception
+    scores = {m.label: m.value for m in app.metric}
+    assert scores["Risk score (lower of the two)"] == "2 / 5"
+    ips = next(m.value for m in app.markdown if m.value.startswith("**Return.**"))
+    assert "**Risk.** Risk score 2 of 5" in ips and "volatility at most 9.00% a year" in ips
+    assert "**Unique circumstances.** Sharia-compliant holdings only." in ips
+    assert any(d.label == "Download IPS (PDF)" for d in app.get("download_button"))
+
+
+def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
+    app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
+    app.button(key="client_load_example").click().run()
+    plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
+    # band 2: volatility at most 9%; home bias 30% GCC; SPY and AGG not Sharia-compliant
+    assert "Volatility at most 9.00% a year" in plan and "Group GCC: at least 30.00%" in plan
+    assert "SPY: at most 0.00%" in plan and "Client IPS applied" in plan
+    assert any("GLD" in c.value and "unknown" in c.value for c in app.caption)
+    app.toggle(key="ws_use_ips").set_value(False).run()
+    plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
+    assert "9.00%" not in plan
+
+
+def test_profile_json_round_trip_in_the_app(app: AppTest) -> None:
+    from gpl.client import EXAMPLE_CLIENTS, ClientProfile
+
+    app.button(key="client_new").click().run()
+    assert app.text_input(key="cl_ref_1").value == ""
+    saved = next(d for d in app.get("download_button") if d.label == "Save profile (JSON)")
+    assert saved.proto.label == "Save profile (JSON)"
+    # loading a profile through the uploader callback path
+    import client_ui
+
+    profile = ClientProfile.from_dict(EXAMPLE_CLIENTS["Doha, aggressive, 20 years"])
+    app.session_state["client"] = profile.to_dict()
+    app.session_state["client_v"] = 5
+    app.run()
+    assert app.text_input(key="cl_ref_5").value == "EX-DOH"
+    assert client_ui.CLIENT == "client"

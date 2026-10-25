@@ -131,3 +131,30 @@ exposure_meta:
   TLT: { region: United States, asset_type: Bonds }
   GLD: { region: Global, asset_type: Gold / commodities }
   "ISF.L": { region: United Kingdom, asset_type: Equity }
+
+# Risk bands from the client risk score (gpl/client.py). Judgement defaults the adviser can
+# override per client; fractions.
+risk_bands:
+  1: { max_volatility: 0.06, max_drawdown: 0.10, max_weight: 0.40 }
+  2: { max_volatility: 0.09, max_drawdown: 0.15, max_weight: 0.40 }
+  3: { max_volatility: 0.12, max_drawdown: 0.20, max_weight: 0.40 }
+  4: { max_volatility: 0.16, max_drawdown: 0.30, max_weight: 0.40 }
+  5: { max_volatility: 0.20, max_drawdown: 0.40, max_weight: 0.40 }
+
+# Sharia status (compliant | not_compliant; anything else is unknown) and sector for known
+# tickers. Partial and illustrative: an adviser must confirm with the client's Sharia screen.
+security_attributes:
+  SPY: { sharia: not_compliant, sector: Broad US equity }
+  EFA: { sharia: not_compliant, sector: Broad developed equity }
+  EEM: { sharia: not_compliant, sector: Broad emerging equity }
+  URTH: { sharia: not_compliant, sector: Broad world equity }
+  KSA: { sharia: not_compliant, sector: Broad Saudi equity }
+  UAE: { sharia: not_compliant, sector: Broad UAE equity }
+  QAT: { sharia: not_compliant, sector: Broad Qatar equity }
+  AGG: { sharia: not_compliant, sector: Conventional bonds }
+  TLT: { sharia: not_compliant, sector: Conventional bonds }
+  GLD: { sharia: unknown, sector: Gold }
+  SPUS: { sharia: compliant, sector: Sharia US equity }
+  HLAL: { sharia: compliant, sector: Sharia US equity }
+  "1120.SR": { sharia: compliant, sector: Financial Services }
+  "2222.SR": { sharia: compliant, sector: Energy }
