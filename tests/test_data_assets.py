@@ -265,3 +265,34 @@ def test_uae_stock_after_2022_is_not_a_mixed_calendar(yahoo) -> None:
     out = load_assets(["SPY", "EMAAR.AE"], "2023-01-01", "2024-12-31")
     assert not out.mixed_calendars and out.periods_per_year == 252
     assert out.history.loc["EMAAR.AE", "trading_days"] == "Mon–Fri"
+
+
+def test_has_price_data(yahoo) -> None:
+    from datetime import date
+
+    from gpl.data import has_price_data
+
+    assert has_price_data("SPY", today=date(2024, 12, 31)) == (True, "")
+    assert has_price_data("NOPE.SR", today=date(2024, 12, 31)) == (
+        False,
+        "no price data on Yahoo Finance in the last year",
+    )
+    assert has_price_data("bad ticker!")[0] is False
+
+
+def test_sample_limiters_hand_case() -> None:
+    from gpl.data import sample_limiters
+
+    history = pd.DataFrame(
+        {
+            "first_date": pd.to_datetime(["2015-09-17", "2010-01-04", "2024-03-12"]),
+        },
+        index=["KSA", "SPY", "NEW.SR"],
+    )
+    (lim,) = sample_limiters(history)
+    assert lim["ticker"] == "NEW.SR" and lim["start_without"] == pd.Timestamp("2015-09-17")
+    assert lim["gain_years"] == pytest.approx(
+        (pd.Timestamp("2024-03-12") - pd.Timestamp("2015-09-17")).days / 365.25
+    )
+    close = history.assign(first_date=pd.to_datetime(["2015-09-17", "2010-01-04", "2016-03-01"]))
+    assert sample_limiters(close) == []  # under a year: not worth flagging

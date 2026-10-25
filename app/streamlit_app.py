@@ -38,10 +38,12 @@ from gpl.data import (
     clean_prices,
     get_prices,
     get_risk_free,
+    has_price_data,
     latest_quote,
     load_assets,
     load_benchmark,
     load_universe,
+    sample_limiters,
     search_securities,
     security_attributes,
     to_returns,
@@ -176,6 +178,35 @@ def get_benchmark(
     ``_index`` isn't hashed; the loaded tickers and dates (which determine it) key the cache.
     """
     return load_benchmark(name, choice, _index, load_rf(start, end, day), start, end)
+
+
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
+def price_data_ok(ticker: str) -> tuple[bool, str]:
+    """``gpl.data.has_price_data``; if Yahoo is unreachable the ticker is allowed (and the
+    data notes report it later)."""
+    try:
+        return has_price_data(ticker)
+    except DataUnavailable:
+        return True, ""
+
+
+def render_sample_limiters() -> None:
+    """Name the holding whose late start shortens the common sample, and offer to exclude it."""
+    held = [t for t in data.history.index if t in my_weights]
+    for lim in sample_limiters(data.history.loc[held]):
+        t = lim["ticker"]
+        st.warning(
+            f"**{t}** starts on {lim['first_date']:%d %b %Y} and shortens the common sample by "
+            f"{lim['gain_years']:.1f} years (without it, the sample would start on "
+            f"{lim['start_without']:%d %b %Y}). Short samples make every estimate noisier."
+        )
+        st.button(
+            f"Exclude {t}",
+            key=f"ws_exclude_{t}",
+            on_click=ws.remove_holding,
+            args=(t,),
+            help="Removes it from the holdings; add it back any time from the search box.",
+        )
 
 
 @st.cache_data(show_spinner=False, ttl=900)
@@ -1441,7 +1472,10 @@ with tab_mine:
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 
     with sec_hold:
-        ws.render_holdings(find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS)
+        ws.render_holdings(
+            find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS, price_data_ok
+        )
+        render_sample_limiters()
         rates = bt.cost_rates(list(my_weights), cost_bps, COST_BY_SUFFIX)
         local = rates[rates != cost_bps]
         if len(local):

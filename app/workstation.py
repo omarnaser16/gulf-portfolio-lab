@@ -226,8 +226,12 @@ def render_holdings(
     config_groups: Mapping[str, Sequence[str]],
     names: Mapping[str, str],
     presets: Mapping[str, Sequence[str]] | None = None,
+    has_data: Callable[[str], tuple[bool, str]] | None = None,
 ) -> None:
-    """Search box, editable holdings table, import box and allocation chart."""
+    """Search box, editable holdings table, import box and allocation chart.
+
+    ``has_data``: checks a ticker has prices before it is added (``gpl.data.has_price_data``).
+    """
     presets = presets or {}
 
     def suggestions(term: str) -> list[tuple[str, str]]:
@@ -242,7 +246,11 @@ def render_holdings(
         """Add the pick once, then forget it: the searchbox would otherwise keep returning it
         (re-adding a holding just removed) and ignore the same ticker picked again later."""
         if symbol:
-            add_holding(symbol, st.session_state.get(META, {}).get(symbol, {}), config_groups)
+            ok, why = has_data(symbol) if has_data else (True, "")
+            if ok:
+                add_holding(symbol, st.session_state.get(META, {}).get(symbol, {}), config_groups)
+            else:
+                st.session_state["ws_add_error"] = f"{symbol}: {why}, so it was not added."
         st.session_state[SEARCH]["result"] = None
 
     st_searchbox(
@@ -255,6 +263,8 @@ def render_holdings(
         submit_function=picked,
     )
 
+    if st.session_state.get("ws_add_error"):
+        st.error(st.session_state.pop("ws_add_error"))
     rows = st.session_state[ROWS]
     m1, m2 = st.columns([1, 1])
     m1.radio("Enter holdings as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
@@ -365,7 +375,7 @@ def render_holdings(
                 "Replace holdings with this preset",
                 key="ws_preset_go",
                 on_click=_load_preset,
-                args=(presets, quote, config_groups),
+                args=(presets, quote, config_groups, has_data),
             )
             st.divider()
         st.text_area("One holding per line, e.g. 'SPY 40' or '2222.SR 30'", key="ws_import")
@@ -376,22 +386,31 @@ def render_holdings(
             "Replace holdings",
             key="ws_import_go",
             on_click=_import_list,  # runs before widgets are drawn, so it may set the mode
-            args=(quote, config_groups),
+            args=(quote, config_groups, has_data),
         )
         for problem in st.session_state.pop("ws_import_problems", []):
             st.error(problem)
 
 
 def _load_preset(
-    presets: Mapping[str, Sequence[str]], quote: Callable[[str], object], config_groups
+    presets: Mapping[str, Sequence[str]],
+    quote: Callable[[str], object],
+    config_groups,
+    has_data=None,
 ) -> None:
     tickers = list(presets[st.session_state.get("ws_preset") or next(iter(presets))])
     st.session_state["ws_import"] = "\n".join(f"{t} {100 / len(tickers):.6f}" for t in tickers)
     st.session_state["ws_import_kind"] = "Weights (%)"
-    _import_list(quote, config_groups)
+    _import_list(quote, config_groups, has_data)
 
 
-def _import_list(quote: Callable[[str], object], config_groups) -> None:
+def remove_holding(ticker: str) -> None:
+    """Callback: drop one holding (e.g. a new listing that shortens the common sample)."""
+    st.session_state[ROWS] = [r for r in st.session_state[ROWS] if r["ticker"] != ticker]
+    _bump()
+
+
+def _import_list(quote: Callable[[str], object], config_groups, has_data=None) -> None:
     text = st.session_state.get("ws_import", "")
     kind = st.session_state.get("ws_import_kind", "Weights (%)")
     amounts = not kind.startswith("Weights")
@@ -400,6 +419,19 @@ def _import_list(quote: Callable[[str], object], config_groups) -> None:
     if not weights:
         return
     raw = parse_amounts(text) if amounts else {}
+    if has_data:  # tickers without prices are reported, not added
+        for t in list(weights):
+            ok, why = has_data(t)
+            if not ok:
+                problems.append(f"{t}: {why}, so it was not added.")
+                weights.pop(t)
+                raw.pop(t, None)
+        st.session_state["ws_import_problems"] = problems
+        if not weights:
+            return
+        if not amounts:  # the remaining weights are rescaled to 100%
+            total = sum(weights.values())
+            weights = {t: w / total for t, w in weights.items()}
     new_rows = []
     for t, w in weights.items():
         q = quote(t)

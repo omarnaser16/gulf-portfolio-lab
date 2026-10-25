@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -324,6 +324,54 @@ def download_series(
                 logger.warning("Yahoo blocked %s; retrying in %.0fs", ticker, RETRY_DELAYS[attempt])
                 time.sleep(RETRY_DELAYS[attempt])
     raise DataUnavailable(f"Yahoo Finance did not respond for {ticker}: {_download_error(ticker)}")
+
+
+def has_price_data(
+    ticker: str, cache_dir: Path | None = None, today: date | None = None
+) -> tuple[bool, str]:
+    """Does Yahoo have prices for ``ticker`` in the last year? ``(ok, reason if not)``.
+
+    Used before a holding is added, so a mistyped or delisted ticker is rejected with a reason
+    instead of entering the portfolio with no history.
+    """
+    if not TICKER_PATTERN.match(ticker):
+        return False, "not a valid ticker format"
+    today = today or date.today()
+    series = download_series(ticker, today - timedelta(days=366), None, cache_dir)
+    if series is None or series.dropna().empty:
+        return False, "no price data on Yahoo Finance in the last year"
+    return True, ""
+
+
+def sample_limiters(history: pd.DataFrame, min_gain_days: int = 365) -> list[dict]:
+    """Assets whose late start shortens the common sample by at least ``min_gain_days``.
+
+    ``history`` is ``AssetData.history`` (``first_date`` per asset). The common sample starts
+    when the latest asset starts; without the asset(s) starting on that date it would start at
+    the next-latest first date. Returns ``[{"ticker", "first_date", "start_without",
+    "gain_years"}]`` (empty if no single start date costs that much history).
+    """
+    if len(history) < 2:
+        return []
+    first = history["first_date"]
+    latest = first.max()
+    setters = list(first.index[first == latest])
+    others = first.drop(setters)
+    if others.empty:
+        return []
+    start_without = others.max()
+    gain = (latest - start_without).days
+    if gain < min_gain_days:
+        return []
+    return [
+        {
+            "ticker": t,
+            "first_date": latest,
+            "start_without": start_without,
+            "gain_years": gain / 365.25,
+        }
+        for t in setters
+    ]
 
 
 def get_currency(ticker: str, cache_dir: Path | None = None) -> tuple[str, str]:

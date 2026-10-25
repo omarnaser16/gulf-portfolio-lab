@@ -1377,3 +1377,23 @@ def test_limit_boxes_clear_and_clear_all(app: AppTest) -> None:
     assert _limits(app) == {}  # the per-holding cap too
     assert app.slider(key="max_weight").value == 1.0
     assert any(c.value.startswith("No limits:") for c in app.caption)
+
+
+def test_tickers_without_prices_are_rejected_not_added(app: AppTest) -> None:
+    app.text_area(key="ws_import").set_value("SPY 60\nNOPE1 40")
+    app.button(key="ws_import_go").click().run()
+    assert not app.exception, app.exception
+    assert [r["ticker"] for r in app.session_state[ws.ROWS]] == ["SPY"]
+    assert app.session_state[ws.ROWS][0]["value"] == pytest.approx(100.0)  # rescaled
+    assert any("NOPE1: no price data on Yahoo Finance" in e.value for e in app.error)
+
+
+def test_a_new_listing_that_shortens_the_sample_can_be_excluded(app: AppTest) -> None:
+    app.text_area(key="ws_import").set_value("SPY 50\nAGG 40\nNEWCO 10")
+    app.button(key="ws_import_go").click().run()
+    assert not app.exception, app.exception
+    warning = next(w.value for w in app.warning if "shortens the common sample" in w.value)
+    assert warning.startswith("**NEWCO** starts on")
+    app.button(key="ws_exclude_NEWCO").click().run()
+    assert [r["ticker"] for r in app.session_state[ws.ROWS]] == ["SPY", "AGG"]
+    assert not any("shortens the common sample" in w.value for w in app.warning)
