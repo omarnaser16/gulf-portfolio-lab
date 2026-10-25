@@ -310,3 +310,34 @@ days; the work itself was done in a series of sessions.
   the optimiser's result, not the last chat answer.
 - **Status:** 625 tests passing.
 - **Next:** a practitioner review of the cash-like list and region names; deploy.
+
+## QA batch 2 — 2026-10-25
+- **Directed:** a second QA pass with nine fixes: periods on headline figures, date-aware
+  calendars, Sharia funds and benchmark, optimiser limits, market costs, data quality, the IPS
+  required return and band caps, a client-aware analyst with a calculator, and small UI fixes.
+- **Built by Claude Code:**
+  - *Periods:* every headline block names its dates; suitability shows full history and the
+    backtest period.
+  - *Calendars:* split at the UAE change.
+  - *Sharia:* a curated list (SPSK sukuk, SPRE, UMMA, iShares Islamic UCITS) and a Sharia 60/40
+    benchmark; domicile wording that tells funds from stocks.
+  - *Optimise:* goal changes reset limits; boxes clear; an active-limits table with sources.
+  - *Costs:* per-market rates; tickers without prices rejected; late starters named, with an
+    Exclude button.
+  - *IPS:* required return 6.60% in the QA case; caps 20–40% by band.
+  - *Analyst:* `get_client_profile` and `calculate` tools.
+  - *Small fixes:* compact KPI value; no 100.01% notice; 1-2-5 percent ticks; one sample
+    count; usage stats off.
+- **Findings:**
+  - Yahoo has almost no UAE Friday prices after 2022 (Mon–Thu in the data), so UAE stocks
+    still align on fewer dates.
+  - GCC costs cut the example Max Sharpe CAGR from 15.41% to 15.17%.
+  - The new 25% cap makes the Riyadh Sharia example infeasible: only four eligible holdings.
+  - A live memo listed both IPS failures and used `calculate` for a what-if.
+- **Mistake:** one commit (limits) went in with a failing test because my check read the wrong
+  exit code; fixed in the next commit, and every later commit checked pytest's own exit code.
+- **Learned:** a rule that is right in general (lower cap for cautious clients) can leave no
+  feasible portfolio for a narrow Sharia universe; the adviser must widen the holdings or the
+  IPS.
+- **Status:** 655 tests passing.
+- **Next:** practitioner review of the cost estimates, caps and Sharia list; deploy.

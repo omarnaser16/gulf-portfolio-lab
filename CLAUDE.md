@@ -42,7 +42,8 @@ it switched to build + explain mode, which has been used since:
 - **Weights:** sum to 1, long-only, default max weight 0.40 per asset.
 - **No look-ahead bias:** any estimate used to set weights at date *t* uses data up to *t* only, and the
   new weights apply from the **next** trading day.
-- **Transaction costs:** bps on turnover, default 10 bps.
+- **Transaction costs:** bps on turnover: the ⚙ Settings rate (default 10) for US listings, and
+  config `trading_costs.by_suffix` for local exchanges (`backtest.cost_rates`).
 - **Randomness:** every stochastic function takes a `seed` argument.
 - **FX:** every asset is analysed in USD. SAR, AED, QAR, BHD and OMR use their official USD pegs
   (Yahoo's quotes for them are noisy); other currencies, including KWD (pegged to a basket), use
@@ -56,7 +57,11 @@ it switched to build + explain mode, which has been used since:
 - **Covariance for the Optimise tab:** Ledoit-Wolf shrinkage, fitted per window (no look-ahead);
   other tabs keep the sample covariance.
 - **Calendars:** assets on different weekly calendars (Sun–Thu vs Mon–Fri) are aligned on the dates
-  all of them traded, and annualised with the observed periods per year instead of 252.
+  all of them traded, and annualised with the observed periods per year instead of 252. Calendars
+  are date-aware (`data.CALENDAR_CHANGES`: UAE changed on 1 Jan 2022) and count as mixed only
+  within the sample.
+- **Periods:** every headline figure names its dates (`metrics.period_label`); suitability risk
+  rules use the full history and also show the backtest-period figure.
 - **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
 - **Portfolio value:** one value (USD) everywhere: the total of USD holdings, or entered once on
   Holdings/Client/Rebalance (`workstation.portfolio_value`). No default amount.
@@ -87,7 +92,8 @@ streamlit run app/streamlit_app.py
 ## AI agent rules
 - **The LLM never calculates numbers.** Every figure in a memo comes from a tool result, and the memo
   says which tool produced it. The system prompt requires this and code flags any figure no tool
-  returned.
+  returned. Arithmetic goes through the `calculate` tool, which accepts only numbers already
+  returned by tools (or written by the user).
 - **The LLM never chooses weights or methods.** For optimisation it only transcribes the user's
   goals into a spec (one of five goals, a target, limits; percentages as written) through a strict
   tool with no weights or method field; the user confirms the spec before anything runs.

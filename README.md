@@ -33,13 +33,13 @@ code flags any figure that no tool produced.**
 
 | Part | What it does |
 |---|---|
-| **Data** | Any Yahoo Finance ticker, adjusted prices cached per ticker as parquet; converted to USD (official pegs for SAR, AED, QAR, BHD and OMR; market rates for other currencies; sub-units such as Kuwaiti fils scaled); different trading calendars aligned on common dates; history and data notes shown for every asset. |
+| **Data** | Any Yahoo Finance ticker, adjusted prices cached per ticker as parquet; converted to USD (official pegs for SAR, AED, QAR, BHD and OMR; market rates for other currencies; sub-units such as Kuwaiti fils scaled); different trading calendars aligned on common dates, date-aware (Dubai and Abu Dhabi moved from a Sunday to a Monday week in 2022); history and data notes shown for every asset. |
 | **Metrics** | Annual return, CAGR, volatility, Sharpe, Sortino, Calmar, drawdowns, historical and normal VaR, expected shortfall, trailing 1- and 3-year returns; against a benchmark: beta, Jensen's alpha, tracking error, information ratio, up/down capture, relative drawdown; correlation clusters. |
 | **Optimisation** | Min variance, max Sharpe (solved in convex form), efficient frontier, risk parity with a 40% weight cap; a constrained optimiser (max Sharpe, min variance, max return, target volatility, target return, risk parity and max diversification) with per-asset and group limits, exact feasibility checks and plain-language reasons when limits can't all be met; Ledoit-Wolf covariance shrinkage. |
-| **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, 10 bps costs on turnover. |
+| **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, costs on turnover by market (10 bps for US listings; judgement estimates of 30–40 bps for GCC exchanges, 15 bps for London). |
 | **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with fifteen tools wrapping the engine; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
+| **AI analyst** | Claude (Haiku 5.5 by default) with seventeen tools wrapping the engine, including the client's IPS and a `calculate` tool so arithmetic is done in code; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
 | **Adviser workflow** | Client profile and risk questionnaire, IPS (PDF) feeding the optimiser, suitability checks, fund-domicile check, drift monitor and trade list, client report (PDF). |
 | **Dashboard** | Dark, terminal-style Streamlit app: a top bar with the benchmark and ⚙ Settings, KPI cards, a *Client* tab, and a *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
 
@@ -177,10 +177,13 @@ uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class w
 because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
 
 **AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The fifteen tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
+The seventeen tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
 `backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_portfolio_diagnosis`,
-`get_optimisation_result`, `show_chart`, `what_if_portfolio`, `stress_test`, `get_regime_view`)
-wrap the engine and return pre-formatted numbers.
+`get_optimisation_result`, `show_chart`, `what_if_portfolio`, `stress_test`, `get_regime_view`,
+`check_suitability`, `check_domicile`, `get_drift_and_trades`, `get_client_profile`, `calculate`)
+wrap the engine and return pre-formatted numbers. `calculate` does simple arithmetic (sums,
+differences, shares) in code, and only on numbers already returned by a tool or written by the
+user.
 The system prompt forbids arithmetic and requires a bracketed tool citation for every figure. After
 each answer,
 code compares every decimal, percentage and multiple in it with the tool outputs and flags any that
@@ -236,7 +239,9 @@ a scripted fake model, so the suite never touches the network.
 ## Limitations
 
 - **Adviser tools are decision support, not advice.** The risk bands (e.g. band 3: 12%
-  volatility, 20% drawdown) are judgement defaults, not calibrated to client outcomes. Sharia
+  volatility, 20% drawdown, 30% in one holding) are judgement defaults, not calibrated to client
+  outcomes. The required return (income ÷ investable assets after cash set aside, plus inflation)
+  assumes a flat inflation rate. Sharia
   status and sectors come from a partial config list plus Yahoo sectors; anything unknown is
   "review", never a pass. Cash-like means the "Cash & short-term" group, a short config list
   (T-bill, short Treasury and sukuk funds) or volatility at most 3%; it is a proxy, not market
@@ -247,7 +252,10 @@ a scripted fake model, so the suite never touches the network.
 - **One sample period.** About ten years dominated by US equities, COVID and the 2022 bond sell-off.
   Results may not generalise; every figure is tied to the sample shown.
 - **Short GCC history** (from 2015) and a universe of ETFs chosen today (survivorship).
-- **Simple costs:** 10 bps per unit traded, with no bid-ask spread on thinner GCC ETFs and no taxes.
+- **Simple costs:** a flat rate per market (10 bps for US listings; 30–40 bps for GCC exchanges are
+  judgement estimates, not quotes), with no market impact by trade size and no taxes.
+- **UAE prices on Yahoo** have almost no Fridays since Dubai and Abu Dhabi moved to a Monday week
+  in 2022, so UAE stocks still trade on fewer common dates than US assets.
 - **The efficient frontier is hindsight:** it uses full-sample means and covariances. The backtests
   are the honest test.
 - **Regime whipsaw.** 2022 was clearly stressed (55.38% of days), but the month-end probability
