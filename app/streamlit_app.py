@@ -892,7 +892,8 @@ def domicile_section() -> dict | None:
     return format_domicile(
         domicile_report(
             pd.Series(my_weights), portfolio_value(), CFG, bool(profile and profile.us_person)
-        )
+        ),
+        {t: getattr(get_quote(t), "quote_type", "") for t in my_weights},
     )
 
 

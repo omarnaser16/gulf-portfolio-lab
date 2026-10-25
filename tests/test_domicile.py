@@ -70,4 +70,15 @@ def test_format_domicile() -> None:
     # 700,000 US-situs: 155,800 + 37% x 200,000 - 13,000 = 216,800
     assert any("USD 216,800" in s for s in f["summary"])
     assert any("NVDA" in s and "No verified" in s for s in f["summary"])
+    # with quote types: a fund may have a UCITS version; a single stock has none
+    both = domicile_report(pd.Series({"BIL": 0.5, "NVDA": 0.5}), 1_000_000, CFG, False)
+    f = format_domicile(both, {"BIL": "ETF", "NVDA": "EQUITY"})
+    assert any(
+        s.startswith("No Irish-domiciled alternative in the curated list for these funds: BIL")
+        for s in f["summary"]
+    )
+    assert any(
+        s.startswith("Single US stocks (NVDA) have no fund equivalent") for s in f["summary"]
+    )
+    assert not any("single US stocks have none" in s for s in f["summary"])
     assert format_domicile(domicile_report(pd.Series({"SPY": 1.0}), 1, CFG, True))["rows"] == []

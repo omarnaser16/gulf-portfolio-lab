@@ -91,6 +91,9 @@ benchmark_choices:
   "UAE market (UAE)":
     weights: { UAE: 1.00 }
     represents: "UAE stocks: iShares MSCI UAE ETF (US-listed, in USD)."
+  "Sharia 60/40 (SPUS/SPSK)":
+    weights: { SPUS: 0.60, SPSK: 0.40 }
+    represents: "60% Sharia-screened US stocks (SPUS) and 40% global sukuk (SPSK), rebalanced daily. History starts in Dec 2019, so comparisons are shorter."
   "Cash (13-week T-bills)":
     cash: true
     represents: "13-week US Treasury bills (^IRX), the same rate used for Sharpe ratios; no fund fees."
@@ -144,6 +147,10 @@ exposure_meta:
   AGG: { region: United States, asset_type: Bonds }
   TLT: { region: United States, asset_type: Bonds }
   GLD: { region: Global, asset_type: Gold / commodities }
+  SPUS: { region: United States, asset_type: Equity }
+  HLAL: { region: United States, asset_type: Equity }
+  SPSK: { region: Global, asset_type: Sukuk }
+  BIL: { region: United States, asset_type: Cash / T-bills }
   "ISF.L": { region: United Kingdom, asset_type: Equity }
 
 # Risk bands from the client risk score (gpl/client.py). Judgement defaults the adviser can
@@ -168,8 +175,16 @@ security_attributes:
   AGG: { sharia: not_compliant, sector: Conventional bonds }
   TLT: { sharia: not_compliant, sector: Conventional bonds }
   GLD: { sharia: unknown, sector: Gold }
+  # Curated Sharia-compliant funds (each screened by its index provider / Sharia board;
+  # verified on Yahoo Oct 2026). A fund is never treated as compliant from its name alone.
   SPUS: { sharia: compliant, sector: Sharia US equity }
   HLAL: { sharia: compliant, sector: Sharia US equity }
+  SPSK: { sharia: compliant, sector: Sukuk }
+  SPRE: { sharia: compliant, sector: Sharia global REITs }
+  UMMA: { sharia: compliant, sector: Sharia world equity }
+  "ISDU.L": { sharia: compliant, sector: Sharia US equity }
+  "ISWD.L": { sharia: compliant, sector: Sharia world equity }
+  "ISDE.L": { sharia: compliant, sector: Sharia emerging equity }
   "1120.SR": { sharia: compliant, sector: Financial Services }
   "2222.SR": { sharia: compliant, sector: Energy }
 

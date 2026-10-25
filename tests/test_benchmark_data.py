@@ -92,3 +92,10 @@ def test_security_attributes_config_first_then_cached_yahoo_sector(monkeypatch, 
     assert out == {"SPY": config["SPY"], "NVDA": {"sector": "Technology"}, "XYZ": {}}
     security_attributes(["NVDA"], config, tmp_path)
     assert calls == ["NVDA", "XYZ"]  # NVDA cached; SPY never looked up
+
+
+def test_sharia_benchmark_is_configured() -> None:
+    from gpl.data import load_universe
+
+    choice = load_universe()["benchmark_choices"]["Sharia 60/40 (SPUS/SPSK)"]
+    assert choice["weights"] == {"SPUS": 0.6, "SPSK": 0.4} and "Dec 2019" in choice["represents"]

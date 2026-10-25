@@ -246,3 +246,14 @@ def test_checks_name_their_period_and_show_the_headline_period_too() -> None:
         f"Over the backtest period ({period_label(headline)}): {short_vol:.2%}."
         in checks["Volatility"].reason
     )
+
+
+def test_curated_sukuk_fund_is_sharia_compliant() -> None:
+    from gpl.client import excluded_holdings
+
+    client = ips(sharia_only=True)
+    excluded, review = excluded_holdings(
+        client, ["SPSK", "SPUS", "AGG"], CFG["security_attributes"]
+    )
+    assert "SPSK" not in excluded and "SPSK" not in review and "SPUS" not in review
+    assert excluded == {"AGG": "not Sharia-compliant"}

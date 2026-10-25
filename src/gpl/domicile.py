@@ -103,8 +103,18 @@ def domicile_report(weights: pd.Series, value: float | None, cfg: Mapping, us_pe
     }
 
 
-def format_domicile(report: dict) -> dict:
-    """Formatted table rows and summary sentences (shared by the app, the AI tool and the PDF)."""
+FUND_TYPES = {"ETF", "MUTUALFUND", "Fund", "fund"}
+STOCK_TYPES = {"EQUITY", "Stock", "stock"}
+
+
+def format_domicile(report: dict, kinds: Mapping[str, str] | None = None) -> dict:
+    """Formatted table rows and summary sentences (shared by the app, the AI tool and the PDF).
+
+    ``kinds``: ticker -> quote type (e.g. "ETF", "EQUITY"), so holdings without an Irish
+    alternative are explained correctly: a fund may have a UCITS share class elsewhere; a
+    single stock has no fund equivalent.
+    """
+    kinds = kinds or {}
     if not report["applies"]:
         return {"label": report["label"], "summary": [report["reason"]], "rows": []}
     rows = []
@@ -141,11 +151,26 @@ def format_domicile(report: dict) -> dict:
         f"withholding for a non-US person; Irish funds pay {wh['irish_fund_on_us_dividends']:.0%} "
         "on US dividends at fund level.",
     ]
-    if report["no_alternative"]:
+    missing = report["no_alternative"]
+    funds = [t for t in missing if kinds.get(t) in FUND_TYPES]
+    stocks = [t for t in missing if kinds.get(t) in STOCK_TYPES]
+    other = [t for t in missing if t not in funds and t not in stocks]
+    if funds:
         summary.append(
-            "No verified Irish-domiciled alternative for: "
-            + ", ".join(report["no_alternative"])
-            + " (single US stocks have none; holding them directly stays US-situs)."
+            "No Irish-domiciled alternative in the curated list for these funds: "
+            + ", ".join(funds)
+            + ". A UCITS fund tracking a similar index may exist; ask the adviser."
+        )
+    if stocks:
+        summary.append(
+            "Single US stocks (" + ", ".join(stocks) + ") have no fund equivalent; held "
+            "directly, they stay US-situs."
+        )
+    if other:
+        summary.append(
+            "No verified Irish-domiciled alternative in the curated list for: "
+            + ", ".join(other)
+            + "."
         )
     summary.append("Before switching, compare costs, liquidity, tracking and share class.")
     return {"label": report["label"], "summary": summary, "rows": rows}
