@@ -1,10 +1,12 @@
 """Tests for the suitability checker: one rule at a time, with hand-checkable portfolios."""
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from gpl.client import ClientProfile, build_ips
+from gpl.client import ClientProfile, build_ips, month_after
 from gpl.data import load_universe
 from gpl.suitability import check_suitability, suitability_table
 
@@ -39,11 +41,16 @@ ATTRS = {
 EPISODES = [{"name": "Test crash", "start": "2020-02-19", "end": "2020-03-23"}]
 
 
-def ips(**kw):
+def ips(need: float = 0, **kw):
+    """IPS for a band-3 client; ``need``: USD cash need due in 12 months."""
+    if need:
+        kw["liquidity_needs"] = [
+            {"description": "Fees", "amount_usd": need, "date": month_after(date.today(), 12)}
+        ]
     return build_ips(ClientProfile(horizon_years=10, answers=ANSWERS, **kw), CFG)
 
 
-def run(weights, client=None, value=None):
+def run(weights, client=None, value=None, cash_like=("BOND",)):
     checks = check_suitability(
         pd.Series(weights),
         RETURNS,
@@ -54,7 +61,8 @@ def run(weights, client=None, value=None):
         periods_per_year=252,
         episodes=EPISODES,
         value=value,
-        liquid_max_volatility=0.06,
+        liquid_max_volatility=0.03,
+        cash_like=cash_like,
     )
     return {c.rule: c for c in checks}
 
@@ -82,11 +90,11 @@ def test_concentration_and_home_bias() -> None:
 
 
 def test_liquidity_reserve() -> None:
-    client = ips(portfolio_value_usd=100_000, liquidity_need_usd=20_000)  # needs 20%
+    client = ips(20_000, portfolio_value_usd=100_000)  # needs 20%
     assert run({"EQ": 0.4, "BOND": 0.3, "GCC": 0.3}, client, 100_000)["Liquidity"].status == "pass"
     tight = run({"EQ": 0.4, "BOND": 0.1, "GCC": 0.4, "UK": 0.1}, client, 100_000)["Liquidity"]
     assert tight.status == "fail" and "USD 10,000" in tight.reason and "USD 20,000" in tight.reason
-    unknown_value = run({"EQ": 1.0}, ips(liquidity_need_usd=20_000))["Liquidity"]
+    unknown_value = run({"EQ": 1.0}, ips(20_000))["Liquidity"]
     assert unknown_value.status == "review" and "portfolio value" in unknown_value.reason
 
 
@@ -139,7 +147,7 @@ def test_breach_amounts_and_text() -> None:
     assert conc.breach == pytest.approx(0.60) and "60.00 pp beyond the 40.00% limit" in breach_text(
         conc
     )
-    client = ips(portfolio_value_usd=100_000, liquidity_need_usd=20_000)
+    client = ips(20_000, portfolio_value_usd=100_000)
     liq = run({"EQ": 0.4, "BOND": 0.1, "GCC": 0.4, "UK": 0.1}, client, 100_000)["Liquidity"]
     assert liq.breach == pytest.approx(
         10_000
@@ -160,3 +168,26 @@ def test_no_stress_episodes_configured_needs_review() -> None:
     )
     stress = next(c for c in checks if c.rule == "Worst stress episode")
     assert stress.status == "review"
+
+
+def test_cash_like_holdings_hold_the_cash_need() -> None:
+    client = ips(20_000, portfolio_value_usd=100_000)
+    w = {"EQ": 0.4, "BOND": 0.3, "GCC": 0.3}
+    # BOND (3.17% volatility) only counts when it is on the cash-like list or in the group
+    assert run(w, client, 100_000)["Liquidity"].status == "pass"
+    off_list = run(w, client, 100_000, cash_like=())["Liquidity"]
+    assert off_list.status == "fail" and off_list.measured == "USD 0"
+    regrouped = check_suitability(
+        pd.Series(w),
+        RETURNS,
+        client,
+        ATTRS,
+        CURRENCIES,
+        {**GROUPS, "BOND": "Cash & short-term"},
+        252,
+        EPISODES,
+        100_000,
+    )
+    assert next(c for c in regrouped if c.rule == "Liquidity").status == "pass"
+    due = month_after(date.today(), 12)
+    assert f"by {date(int(due[:4]), int(due[5:]), 1):%b %Y}" in off_list.reason

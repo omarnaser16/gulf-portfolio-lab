@@ -86,6 +86,77 @@ def horizon_score(years: float) -> int:
     return 5
 
 
+def parse_month(text: str) -> date:
+    """'2028-10' (or '2028-10-15') -> 1 Oct 2028. Raises ValueError otherwise."""
+    parts = str(text).strip().split("-")
+    if len(parts) < 2:
+        raise ValueError(f"expected a month as YYYY-MM, got {text!r}")
+    year, month = int(parts[0]), int(parts[1])
+    return date(year, month, 1)
+
+
+def month_after(today: date, months: int) -> str:
+    """The month ``months`` after ``today``, as 'YYYY-MM'."""
+    index = today.year * 12 + today.month - 1 + months
+    return f"{index // 12:04d}-{index % 12 + 1:02d}"
+
+
+def months_until(when: str, today: date) -> int:
+    """Whole months from ``today``'s month to ``when`` ('YYYY-MM'); 0 if it has passed.
+
+    Oct 2028 seen from Oct 2026 is 24 months (about two years), not 12.
+    """
+    d = parse_month(when)
+    return max(0, (d.year - today.year) * 12 + d.month - today.month)
+
+
+def month_text(when: str) -> str:
+    """'2028-10' -> 'Oct 2028'."""
+    return f"{parse_month(when):%b %Y}"
+
+
+def cash_needs(
+    profile: ClientProfile, today: date, window_months: int = 36
+) -> tuple[list[dict], list[dict]]:
+    """Split the dated cash needs into those due within ``window_months`` and later ones.
+
+    Needs due within the window must already be held in cash-like holdings (a hard limit for
+    the optimiser and the trade list); later ones are recorded and start to bind when they come
+    within the window. Each need gets ``months`` (months away). A date that has passed counts
+    as due now, so the adviser sees it and updates the profile.
+    """
+    soon, later = [], []
+    for need in profile.liquidity_needs:
+        item = {**need, "months": months_until(need["date"], today)}
+        (soon if item["months"] <= window_months else later).append(item)
+    return soon, later
+
+
+def cash_like_holdings(
+    tickers: list[str],
+    groups: dict[str, str],
+    listed: list[str] | tuple[str, ...] = (),
+    annual_vols: dict[str, float] | None = None,
+    max_volatility: float = 0.03,
+) -> list[str]:
+    """Holdings that can meet a near-term cash need: cash, short-term bonds or sukuk.
+
+    A holding counts if the adviser put it in the "Cash & short-term" group, it is on the
+    configured list (T-bill, short Treasury and sukuk ETFs), or its annual volatility is at
+    most ``max_volatility`` (3%: short-dated bonds move about 0.2-2% a year; a broad bond fund
+    like AGG, around 5-6%, does not count).
+    """
+    vols = annual_vols or {}
+    return [
+        t
+        for t in tickers
+        if groups.get(t) == CASH_GROUP or t in listed or (t in vols and vols[t] <= max_volatility)
+    ]
+
+
+CASH_GROUP = "Cash & short-term"
+
+
 def _round_half_up(x: float) -> int:
     return int(x + 0.5)
 
@@ -104,8 +175,8 @@ class ClientProfile:
     goals: list[dict] = field(default_factory=list)  # {description, amount_usd|multiple, years}
     return_target_pct: float | None = None
     portfolio_value_usd: float | None = None
-    liquidity_need_usd: float = 0.0
-    liquidity_months: int = 12
+    # dated cash needs: {description, amount_usd, date "YYYY-MM"}
+    liquidity_needs: list[dict] = field(default_factory=list)
     reserve_pct: float = 0.0
     tax_notes: str = ""
     legal_notes: str = ""
@@ -123,21 +194,40 @@ class ClientProfile:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> ClientProfile:
-        """From saved JSON; unknown keys are ignored and missing ones take their defaults."""
+    def from_dict(cls, data: dict, today: date | None = None) -> ClientProfile:
+        """From saved JSON; unknown keys are ignored and missing ones take their defaults.
+
+        Profiles saved before cash needs were dated ("USD X within N months") are converted to
+        one dated need, N months after ``today`` (default: the day it is loaded).
+        """
         known = {f.name: f for f in fields(cls)}
         values = {k: v for k, v in data.items() if k in known}
+        if "liquidity_needs" not in data and float(data.get("liquidity_need_usd") or 0) > 0:
+            months = int(data.get("liquidity_months") or 12)
+            values["liquidity_needs"] = [
+                {
+                    "description": "Cash need",
+                    "amount_usd": float(data["liquidity_need_usd"]),
+                    "date": month_after(today or date.today(), months),
+                }
+            ]
         out = cls(**values)
-        for name in (
-            "horizon_years",
-            "liquidity_need_usd",
-            "reserve_pct",
-            "max_non_pegged_currency_pct",
-        ):
+        for name in ("horizon_years", "reserve_pct", "max_non_pegged_currency_pct"):
             try:
                 setattr(out, name, float(getattr(out, name)))
             except (TypeError, ValueError) as e:
                 raise ValueError(f"{name} must be a number, got {getattr(out, name)!r}") from e
+        needs = []
+        for need in out.liquidity_needs:
+            try:
+                amount = float(need["amount_usd"])
+                parse_month(need["date"])
+            except (KeyError, TypeError, ValueError) as e:
+                raise ValueError(
+                    f"each cash need needs an amount and a date (YYYY-MM), got {need!r}"
+                ) from e
+            needs.append({**need, "amount_usd": amount})
+        out.liquidity_needs = needs
         return out
 
 
@@ -231,9 +321,16 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
     )
     limits["max_non_pegged_currency"] = profile.max_non_pegged_currency_pct / 100
     value = profile.portfolio_value_usd
-    reserve_usd = profile.liquidity_need_usd + (value or 0) * profile.reserve_pct / 100
+    today = today or date.today()
+    window = int(cfg.get("cash_need_window_months", 36))
+    soon, later = cash_needs(profile, today, window)
+    need_usd = sum(n["amount_usd"] for n in soon)
+    reserve_usd = need_usd + (value or 0) * profile.reserve_pct / 100
     limits["liquidity_reserve_usd"] = reserve_usd
     limits["liquidity_reserve"] = reserve_usd / value if value else None
+    limits["cash_needs_due"] = soon
+    limits["cash_needs_later"] = later
+    limits["cash_need_window_months"] = window
     limits["sharia_only"] = profile.sharia_only
     limits["excluded_sectors"] = list(profile.excluded_sectors)
 
@@ -263,12 +360,7 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
             f"Residency: {profile.residency}. US person: {'yes' if profile.us_person else 'no'}."
             + (f" {profile.tax_notes}" if profile.tax_notes else "")
         ),
-        "Liquidity": (
-            f"Cash need of USD {profile.liquidity_need_usd:,.0f} within "
-            f"{profile.liquidity_months} months, plus a {profile.reserve_pct:g}% reserve: USD "
-            f"{reserve_usd:,.0f} to keep in low-volatility holdings"
-            + (f" ({_pct(limits['liquidity_reserve'])} of the portfolio)." if value else ".")
-        ),
+        "Liquidity": _liquidity_text(profile, soon, later, window, reserve_usd, limits, value),
         "Legal and regulatory": (
             f"Client classification: {profile.classification}. Regulator: {profile.regulator}."
             + (f" {profile.legal_notes}" if profile.legal_notes else "")
@@ -290,8 +382,38 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
             if sentence
         ),
     }
-    created = (today or date.today()).isoformat()
+    created = today.isoformat()
     return IPS(profile, risk, sections, limits, created)
+
+
+def _need_text(n: dict) -> str:
+    label = n.get("description") or "Cash need"
+    return f"{label}: USD {n['amount_usd']:,.0f} by {month_text(n['date'])} ({n['months']} months)"
+
+
+def _liquidity_text(profile, soon, later, window, reserve_usd, limits, value) -> str:
+    if not (soon or later or profile.reserve_pct):
+        return "No cash needs recorded."
+    parts = []
+    if soon:
+        parts.append(
+            f"Due within {window} months, held in cash, short-term bonds or sukuk from now: "
+            + "; ".join(_need_text(n) for n in soon)
+            + "."
+        )
+    if profile.reserve_pct:
+        parts.append(f"Plus a {profile.reserve_pct:g}% emergency reserve.")
+    if soon or profile.reserve_pct:
+        parts.append(
+            f"Total to keep in cash-like holdings: USD {reserve_usd:,.0f}"
+            + (f" ({_pct(limits['liquidity_reserve'])} of the portfolio)." if value else ".")
+        )
+    if later:
+        parts.append(
+            "Later needs (recorded; they become binding when due within "
+            f"{window} months): " + "; ".join(_need_text(n) for n in later) + "."
+        )
+    return " ".join(parts)
 
 
 def excluded_holdings(
@@ -314,16 +436,41 @@ def excluded_holdings(
 
 
 def ips_constraints(
-    ips: IPS, holdings: list[str], groups: dict[str, str], attributes: dict[str, dict]
+    ips: IPS,
+    holdings: list[str],
+    groups: dict[str, str],
+    attributes: dict[str, dict],
+    cash_like: list[str] | None = None,
 ) -> tuple[OptimisationSpec, list[str]]:
     """IPS limits as optimiser limits, plus notes for the adviser.
 
     Excluded holdings get a 0% maximum. Holdings with unknown Sharia status are not excluded
     automatically but noted for review. The drawdown limit can't be an optimiser constraint
-    (it isn't convex); the suitability check enforces it.
+    (it isn't convex); the suitability check enforces it. Cash needs due soon (plus any
+    reserve) become a hard minimum on the ``cash_like`` holdings (see ``cash_like_holdings``);
+    with none of them held, the limit can't be met and the note says what to add.
     """
     excluded, review = excluded_holdings(ips, holdings, attributes)
     lim = ips.limits
+    sets = {}
+    notes = []
+    need_usd, need = lim["liquidity_reserve_usd"], lim["liquidity_reserve"]
+    if need_usd > 0 and need is None:
+        notes.append(f"Cash need of USD {need_usd:,.0f}: enter the portfolio value to enforce it.")
+    elif need_usd > 0:
+        cash = [t for t in (cash_like or []) if t in holdings and t not in excluded]
+        sets["Cash need"] = (frozenset(cash), need, None)
+        if cash:
+            notes.append(
+                f"Cash need: at least {need:.2%} (USD {need_usd:,.0f}) in cash-like holdings "
+                f"({', '.join(cash)})."
+            )
+        else:
+            notes.append(
+                f"Cash need of USD {need_usd:,.0f} ({need:.2%}) can't be met: no holding is cash, "
+                "short-term bonds or sukuk. Add one (e.g. BIL, T-bills) or put a holding in the "
+                f"'{CASH_GROUP}' group."
+            )
     spec = OptimisationSpec(
         objective="max_sharpe",
         max_weight=lim["max_weight"] or 1.0,
@@ -331,8 +478,9 @@ def ips_constraints(
         groups=dict(groups),
         group_bounds={"GCC": (lim["home_bias_gcc"], None)} if lim["home_bias_gcc"] else {},
         max_volatility=lim["max_volatility"],
+        sets=sets,
     )
-    notes = [f"{t} excluded: {why}." for t, why in excluded.items()]
+    notes = [f"{t} excluded: {why}." for t, why in excluded.items()] + notes
     notes += [
         f"{t}: {why} (Sharia status unknown, not excluded automatically)."
         for t, why in review.items()
@@ -365,8 +513,16 @@ def tighter(a: OptimisationSpec, b: OptimisationSpec) -> OptimisationSpec:
         assets[t] = _stricter(
             *a.asset_bounds.get(t, (None, None)), *b.asset_bounds.get(t, (None, None))
         )
+    sets = {}
+    for name in {**a.sets, **b.sets}:
+        if name in a.sets and name in b.sets:
+            lo, hi = _stricter(*a.sets[name][1:], *b.sets[name][1:])
+            sets[name] = (a.sets[name][0] & b.sets[name][0], lo, hi)
+        else:
+            sets[name] = a.sets.get(name) or b.sets[name]
     return replace(
         a,
+        sets=sets,
         max_weight=min(a.max_weight, b.max_weight),
         max_volatility=min(vols) if vols else None,
         min_return=max(rets) if rets else None,
@@ -376,14 +532,13 @@ def tighter(a: OptimisationSpec, b: OptimisationSpec) -> OptimisationSpec:
     )
 
 
-def _example(ref, horizon, value, need, months, answers, **kw) -> dict:
+def _example(ref, horizon, value, needs, answers, **kw) -> dict:
     keys = [q["id"] for q in QUESTIONS]
     return ClientProfile(
         reference=ref,
         horizon_years=horizon,
         portfolio_value_usd=value,
-        liquidity_need_usd=need,
-        liquidity_months=months,
+        liquidity_needs=needs,
         answers=dict(zip(keys, answers, strict=True)),
         **kw,
     ).to_dict()
@@ -394,8 +549,7 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         "EX-DXB",
         10,
         500_000,
-        50_000,
-        12,
+        [{"description": "Property deposit", "amount_usd": 50_000, "date": "2027-10"}],
         [4, 3, 4, 4, 3, 3, 3],
         residency="UAE",
         regulator="DFSA (DIFC)",
@@ -406,8 +560,7 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         "EX-RUH",
         5,
         1_000_000,
-        100_000,
-        6,
+        [{"description": "School fees", "amount_usd": 100_000, "date": "2027-04"}],
         [3, 2, 2, 3, 2, 1, 3],
         residency="Saudi Arabia",
         regulator="CMA (Saudi Arabia)",
@@ -419,8 +572,7 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         "EX-DOH",
         20,
         250_000,
-        0,
-        12,
+        [],
         [5, 4, 5, 5, 4, 5, 4],
         residency="Qatar",
         regulator="QFCRA (Qatar)",

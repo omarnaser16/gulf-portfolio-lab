@@ -172,3 +172,13 @@ def test_trade_list_with_a_total_value_and_new_holding() -> None:
     assert t.loc["GLD", "trade_usd"] == pytest.approx(5_000) and t.loc["GLD", "action"] == "Buy"
     with pytest.raises(ValueError, match="add up to 100%"):
         trade_list(values, pd.Series({"SPY": 0.5}), pd.Series({"SPY": 1.0}), cost_bps=0)
+
+
+def test_cash_need_check_after_trades() -> None:
+    from gpl.scenarios import cash_need_check
+
+    after = pd.Series({"SPY": 1_200_000.0, "BIL": 410_000.0, "SHV": 0.0})
+    short = cash_need_check(after, ["BIL", "SHV"], 600_000)
+    assert short == {"held": 410_000.0, "need": 600_000.0, "shortfall": 190_000.0, "ok": False}
+    assert cash_need_check(after, ["BIL"], 400_000)["ok"]
+    assert cash_need_check(after, [], 1)["shortfall"] == 1

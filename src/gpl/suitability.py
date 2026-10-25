@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from gpl.client import IPS, PEGGED, excluded_holdings
+from gpl.client import IPS, PEGGED, cash_like_holdings, excluded_holdings, month_text
 from gpl.data import SUBUNITS
 from gpl.metrics import annualised_volatility, max_drawdown
 from gpl.scenarios import episode_performance
@@ -47,7 +47,8 @@ def check_suitability(
     periods_per_year: int,
     episodes: Sequence[Mapping[str, str]],
     value: float | None = None,
-    liquid_max_volatility: float = 0.06,
+    liquid_max_volatility: float = 0.03,
+    cash_like: Sequence[str] = (),
 ) -> list[Check]:
     """Check ``weights`` against every IPS rule.
 
@@ -60,9 +61,12 @@ def check_suitability(
         ``weights``, rebalanced daily, over the full sample.
     value : float, optional
         Portfolio value in USD (for the liquidity rule).
-    liquid_max_volatility : float, default 0.06
-        Holdings in the Bonds group, or with annual volatility at most this, count as the
-        low-volatility reserve for near-term cash needs.
+    liquid_max_volatility : float, default 0.03
+        Holdings with annual volatility at most this count as cash-like.
+    cash_like : sequence of str
+        Configured cash, short-term bond and sukuk funds; together with the "Cash & short-term"
+        group and the volatility rule they hold the reserve for cash needs due soon
+        (``gpl.client.cash_like_holdings``).
     """
     w = weights[weights > 0]
     port = returns[list(w.index)] @ w
@@ -220,7 +224,14 @@ def check_suitability(
 
     # Liquidity
     vols = returns[list(w.index)].std() * (periods_per_year**0.5)
-    liquid = [t for t in w.index if groups.get(t) == "Bonds" or vols[t] <= liquid_max_volatility]
+    liquid = cash_like_holdings(
+        list(w.index), dict(groups), list(cash_like), vols.to_dict(), liquid_max_volatility
+    )
+    due = "; ".join(
+        f"USD {n['amount_usd']:,.0f} by {month_text(n['date'])}" for n in lim["cash_needs_due"]
+    )
+    reserve = ips.client.reserve_pct
+    need_text = (due or "no dated need") + (f", plus a {reserve:g}% reserve" if reserve else "")
     liquid_share = float(w[liquid].sum()) if liquid else 0.0
     need = lim["liquidity_reserve_usd"]
     if need <= 0:
@@ -230,7 +241,7 @@ def check_suitability(
                 "pass",
                 _pct(liquid_share),
                 "none",
-                "The client has no near-term cash need recorded.",
+                f"No cash need is due within {lim['cash_need_window_months']} months.",
             )
         )
     elif not value:
@@ -253,9 +264,8 @@ def check_suitability(
                 "pass" if ok else "fail",
                 f"USD {held:,.0f}",
                 f"USD {need:,.0f}",
-                f"Low-volatility holdings ({names}) are worth USD {held:,.0f}; the client needs "
-                f"USD {need:,.0f} within {ips.client.liquidity_months} months (including any "
-                "reserve).",
+                f"Cash-like holdings (cash, short-term bonds, sukuk: {names}) are worth USD "
+                f"{held:,.0f}; the client needs USD {need:,.0f} held now ({need_text}).",
                 None if ok else need - held,
                 need,
             )

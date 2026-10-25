@@ -497,6 +497,10 @@ class OptimisationSpec:
         Group -> (minimum, maximum) total weight; either may be ``None``.
     max_volatility, min_return : float, optional
         Annual volatility cap and return floor, applied with any objective.
+    sets : mapping
+        Name -> (tickers, minimum, maximum): limits on the total weight of a named set of
+        holdings. Unlike ``groups``, sets may overlap each other and the groups, e.g.
+        ``{"Cash need": (frozenset({"BIL", "SHV"}), 0.25, None)}`` or a region minimum.
     """
 
     objective: Objective = "max_sharpe"
@@ -506,6 +510,9 @@ class OptimisationSpec:
     group_bounds: Mapping[str, tuple[float | None, float | None]] = field(default_factory=dict)
     max_volatility: float | None = None
     min_return: float | None = None
+    sets: Mapping[str, tuple[frozenset[str], float | None, float | None]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         if self.objective not in OBJECTIVES:
@@ -579,6 +586,23 @@ def _linear_constraints(
     group_mins = sum((g_lo or 0) for _, _, g_lo, _ in rows)
     if group_mins > 1 + _TOL:
         reasons.append(f"Group minimums add up to {group_mins:.2%}, more than 100%.")
+    for name, (members, s_lo, s_hi) in spec.sets.items():
+        member = np.array([t in members for t in index], dtype=float)
+        if not member.any():
+            if (s_lo or 0) > 0:
+                reasons.append(f"'{name}' must be at least {s_lo:.2%}, but no holding is in it.")
+            continue
+        rows.append((name, member, s_lo, s_hi))
+        if s_lo is not None and s_lo > min(1.0, member @ hi) + _TOL:
+            reasons.append(
+                f"'{name}' needs at least {s_lo:.2%}, but its holdings' caps allow only "
+                f"{min(1.0, member @ hi):.2%}."
+            )
+        if s_hi is not None and s_hi < member @ lo - _TOL:
+            reasons.append(
+                f"'{name}' is capped at {s_hi:.2%}, but its holdings' minimums add up to "
+                f"{member @ lo:.2%}."
+            )
     return lo, hi, rows, reasons
 
 
@@ -810,7 +834,11 @@ def _risk_parity_within(cov, spec, start, lo, hi, rows, extra) -> np.ndarray | N
     """
     sigma, n = cov.to_numpy(), len(cov)
     only_cap = not (
-        spec.asset_bounds or spec.group_bounds or spec.max_volatility or spec.min_return
+        spec.asset_bounds
+        or spec.group_bounds
+        or spec.sets
+        or spec.max_volatility
+        or spec.min_return
     )
     if only_cap:
         return risk_parity(cov, spec.max_weight).to_numpy()

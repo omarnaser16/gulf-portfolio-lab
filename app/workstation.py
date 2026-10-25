@@ -32,6 +32,7 @@ from gpl.optimise import risk_contributions
 from gpl.plots import allocation_chart
 
 ROWS, MODE, VERSION, LAST_PICK, META = "ws_rows", "ws_mode", "ws_version", "ws_last_pick", "ws_meta"
+CASH_LIKE = "ws_cash_like"  # configured cash-like funds (grouped as "Cash & short-term")
 USD, PCT = "USD amount", "Weight (%)"
 DEFAULT_TOTAL_USD = 10_000.0
 EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
@@ -39,8 +40,9 @@ READ_ONLY = {"background-color": "#1b1d22", "color": "#8f8c85"}  # muted = can't
 READ_ONLY_COLUMNS = ["Name", "Weight", "Price"]
 
 
-def init_state(config_groups: Mapping[str, Sequence[str]]) -> None:
+def init_state(config_groups: Mapping[str, Sequence[str]], cash_like: Sequence[str] = ()) -> None:
     """First visit: start from the example portfolio (weights in %)."""
+    st.session_state[CASH_LIKE] = list(cash_like)
     if ROWS in st.session_state:
         return
     weights, _, _ = parse_holdings(DEFAULT_HOLDINGS, "weights")
@@ -107,7 +109,12 @@ def add_holding(symbol: str, meta: Mapping[str, str], config_groups) -> None:
     if any(r["ticker"] == symbol for r in rows):
         return
     group = guess_group(
-        symbol, meta.get("exchange", ""), meta.get("type", ""), meta.get("name", ""), config_groups
+        symbol,
+        meta.get("exchange", ""),
+        meta.get("type", ""),
+        meta.get("name", ""),
+        config_groups,
+        st.session_state.get(CASH_LIKE, ()),
     )
     default = 1_000.0 if st.session_state[MODE] == USD else 10.0
     rows.append({"ticker": symbol, "group": group, "value": default})
@@ -301,6 +308,7 @@ def _import_list(quote: Callable[[str], object], config_groups) -> None:
             getattr(q, "quote_type", ""),
             getattr(q, "name", ""),
             config_groups,
+            st.session_state.get(CASH_LIKE, ()),
         )
         new_rows.append({"ticker": t, "group": group, "value": round(w * 100, 4)})
     st.session_state[ROWS] = new_rows
@@ -545,9 +553,14 @@ def render_rebalance(
     default_value: float,
     price_usd: Callable[[str], float | None],
     cost_bps: float,
+    cash_need: Mapping | None = None,
 ) -> dict | None:
-    """Drift monitor and trade list (``gpl.scenarios``). Returns the formatted result."""
-    from gpl.scenarios import drift, needs_rebalance, trade_list
+    """Drift monitor and trade list (``gpl.scenarios``). Returns the formatted result.
+
+    ``cash_need``: ``{"need_usd", "due", "cash_like"}`` from the client's IPS; the trades are
+    checked against it (``gpl.scenarios.cash_need_check``).
+    """
+    from gpl.scenarios import cash_need_check, drift, needs_rebalance, trade_list
 
     st.caption(
         f"Targets start from the {target_source}; edit any target. Drift = current minus "
@@ -618,11 +631,33 @@ def render_rebalance(
         )
     show = needs_rebalance(d) or st.toggle("Show the trades anyway", key="rb_show")
     result = {"band": pct(band), "outside_band": flagged, "drift": shown.to_dict(orient="index")}
-    if not show:
-        return result
     values = usd_values if usd_values is not None else current * value
     prices = pd.Series({t: price_usd(t) for t in tickers}, dtype=float)
     trades = trade_list(values, target, prices, cost_bps, None if usd_values is not None else value)
+    if cash_need and cash_need["need_usd"] > 0:
+        check = cash_need_check(trades["target_usd"], cash_need["cash_like"], cash_need["need_usd"])
+        held_in = ", ".join(cash_need["cash_like"]) or "none held"
+        if check["ok"]:
+            st.success(
+                f"✅ After these trades, cash-like holdings ({held_in}) are USD "
+                f"{check['held']:,.0f}, covering the USD {check['need']:,.0f} needed "
+                f"({cash_need['due']})."
+            )
+        else:
+            st.warning(
+                f"⚠️ After these trades, cash-like holdings ({held_in}) are USD "
+                f"{check['held']:,.0f}, USD {check['shortfall']:,.0f} short of the USD "
+                f"{check['need']:,.0f} the client needs ({cash_need['due']}). Raise the target "
+                "for cash, short-term bonds or sukuk."
+            )
+        result["cash_need_check"] = {
+            "cash_like_after_trades_usd": f"{check['held']:,.0f}",
+            "needed_usd": f"{check['need']:,.0f}",
+            "shortfall_usd": f"{check['shortfall']:,.0f}",
+            "due": cash_need["due"],
+        }
+    if not show:
+        return result
     table = pd.DataFrame(
         {
             "Action": trades["action"],

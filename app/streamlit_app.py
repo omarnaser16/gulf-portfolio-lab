@@ -25,7 +25,7 @@ from gpl.agent import analyst as agent
 from gpl.agent.charts import build_chart, chart_data
 from gpl.agent.spec import describe_goal, describe_limits, propose_spec, spec_from_draft
 from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
-from gpl.client import build_ips, ips_constraints, tighter
+from gpl.client import build_ips, cash_like_holdings, ips_constraints, month_text, tighter
 from gpl.data import (
     AssetData,
     BenchmarkData,
@@ -326,7 +326,7 @@ end = None if period == LATEST else date.fromisoformat(D["end"])
 # Set on Portfolio › Optimise; read here so every tab uses the current value.
 max_weight = float(st.session_state.get("max_weight", D["max_weight"]))
 day = date.today() if end is None else None
-ws.init_state(CFG["groups"])
+ws.init_state(CFG["groups"], CFG.get("cash_like", []))
 my_weights, holding_problems, holding_note = ws.current_weights()
 # The holdings are the universe for every tab; SPY and AGG are always loaded for 60/40.
 loaded = tuple(combine_tickers([list(my_weights)], ["SPY", "AGG"]))
@@ -468,6 +468,7 @@ def shared_context() -> AnalystContext:
                 "exposure_meta": CFG.get("exposure_meta", {}),
                 "domicile": CFG["domicile"],
                 "ucits_equivalents": CFG.get("ucits_equivalents", {}),
+                "cash_like": CFG.get("cash_like", []),
             },
             universe=universe,
             user_portfolio=my_weights if portfolio_ok else None,
@@ -782,11 +783,24 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
         "above; where both set a limit, the stricter one applies.",
     ):
         ips_spec, notes = ips_constraints(
-            ips, list(my_weights), holding_groups, get_attributes(tuple(my_weights))
+            ips,
+            list(my_weights),
+            holding_groups,
+            get_attributes(tuple(my_weights)),
+            cash_like_now(),
         )
         limits = tighter(limits, ips_spec)
         for note in notes:
             st.caption("• " + note)
+        if "Cash need" in ips_spec.sets and not ips_spec.sets["Cash need"][0]:
+            st.button(
+                "Add BIL (1-3 month T-bills) as a cash holding",
+                key="ws_add_cash",
+                on_click=ws.add_holding,
+                args=("BIL", {"type": "ETF", "name": "SPDR 1-3 Month T-Bill ETF"}, CFG["groups"]),
+                help="Adds BIL to the holdings (Cash & short-term group) so the optimiser can "
+                "hold the cash need. Its weight is then set by the optimiser.",
+            )
     st.markdown(
         f"**Goal:** {describe_goal(goal, target)}  \n**Limits for every method:** "
         + "; ".join(describe_limits(limits))
@@ -807,6 +821,31 @@ ATTRIBUTES = CFG.get("security_attributes", {})
 def get_attributes(tickers: tuple[str, ...]) -> dict[str, dict]:
     """Sharia status and sector: config first, then Yahoo's sector for stocks (cached)."""
     return security_attributes(list(tickers), ATTRIBUTES)
+
+
+def cash_like_now() -> list[str]:
+    """Holdings that count as cash-like for the client's cash needs (``gpl.client`` rule)."""
+    held = [t for t in my_weights if t in all_returns.columns]
+    vols = (all_returns[held].std() * np.sqrt(periods)).to_dict()
+    return cash_like_holdings(held, ws.groups_of_holdings(), CFG.get("cash_like", []), vols)
+
+
+def cash_need_for_trades() -> dict | None:
+    """The client's cash need to check the trade list against (None without one)."""
+    ips = client_ips()
+    if ips is None or ips.limits["liquidity_reserve_usd"] <= 0:
+        return None
+    due = "; ".join(
+        f"USD {n['amount_usd']:,.0f} by {month_text(n['date'])}"
+        for n in ips.limits["cash_needs_due"]
+    )
+    if ips.client.reserve_pct:
+        due = (due + ", plus " if due else "") + f"a {ips.client.reserve_pct:g}% reserve"
+    return {
+        "need_usd": ips.limits["liquidity_reserve_usd"],
+        "due": due,
+        "cash_like": cash_like_now(),
+    }
 
 
 def portfolio_value() -> float | None:
@@ -863,6 +902,8 @@ def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
             periods,
             CFG.get("stress_episodes", []),
             portfolio_value(),
+            0.03,
+            CFG.get("cash_like", []),
         )
         for name, w in portfolios.items()
     }
@@ -1122,6 +1163,7 @@ with tab_client:
         agent.has_credentials(),
         agent.make_client,
         A["model"],
+        cash_like_now() if portfolio_ok else [],
     )
     if client_ui.current_profile() is not None:
         st.divider()
@@ -1434,6 +1476,7 @@ with tab_mine:
                 portfolio_value() or ws.DEFAULT_TOTAL_USD,
                 lambda t: getattr(get_quote(t), "price_usd", None),
                 cost_bps,
+                cash_need_for_trades(),
             )
             if "ctx" in st.session_state:
                 st.session_state.ctx.rebalance = rebalance

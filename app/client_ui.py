@@ -20,6 +20,7 @@ from gpl.client import (
     ClientProfile,
     build_ips,
     ips_constraints,
+    parse_month,
 )
 from gpl.report import ips_pdf
 
@@ -136,19 +137,23 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         key="cl_ret" + k,
         placeholder="none",
     )
-    c1, c2, c3 = st.columns(3)
-    need = c1.number_input(
-        "Near-term cash need (USD)",
-        0.0,
-        1e10,
-        float(p.liquidity_need_usd),
-        1000.0,
-        key="cl_need" + k,
+    st.caption(
+        "Cash needs: what the client must withdraw, and when (YYYY-MM). Needs due within the "
+        "IPS window must be held in cash, short-term bonds or sukuk from now."
     )
-    months = c2.number_input(
-        "Needed within (months)", 0, 120, int(p.liquidity_months), 1, key="cl_months" + k
+    c1, c2 = st.columns([3, 1])
+    needs = c1.data_editor(
+        pd.DataFrame(p.liquidity_needs or [], columns=["description", "amount_usd", "date"]),
+        num_rows="dynamic",
+        key="cl_needs" + k,
+        width="stretch",
+        column_config={
+            "description": st.column_config.TextColumn("Cash need"),
+            "amount_usd": st.column_config.NumberColumn("Amount (USD)", format="%.0f", min_value=0),
+            "date": st.column_config.TextColumn("When (YYYY-MM)", help="e.g. 2028-10"),
+        },
     )
-    reserve = c3.number_input(
+    reserve = c2.number_input(
         "Extra cash reserve (% of portfolio)",
         0.0,
         100.0,
@@ -250,6 +255,24 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         )
         adviser_notes = st.text_area("Adviser notes", p.adviser_notes, key="cl_adv" + k)
 
+    need_rows = []
+    for _, row in needs.iterrows():
+        if pd.isna(row["amount_usd"]) or not str(row["date"] or "").strip():
+            if pd.notna(row["amount_usd"]) or str(row["description"] or "").strip():
+                st.warning(f"Cash need '{row['description']}' needs an amount and a date.")
+            continue
+        try:
+            parse_month(str(row["date"]))
+        except ValueError:
+            st.warning(f"Cash need date '{row['date']}' isn't a month like 2028-10; ignored.")
+            continue
+        need_rows.append(
+            {
+                "description": str(row["description"] or "Cash need"),
+                "amount_usd": float(row["amount_usd"]),
+                "date": str(row["date"]).strip()[:7],
+            }
+        )
     goal_rows = []
     for _, row in goals.iterrows():
         g = {c: row[c] for c in goals.columns if pd.notna(row[c]) and row[c] != ""}
@@ -266,8 +289,7 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         goals=goal_rows,
         return_target_pct=target,
         portfolio_value_usd=value,
-        liquidity_need_usd=need,
-        liquidity_months=int(months),
+        liquidity_needs=need_rows,
         reserve_pct=reserve,
         tax_notes=tax_notes,
         legal_notes=legal_notes,
@@ -290,6 +312,7 @@ def render_client_tab(
     ai_ok: bool,
     make_client: Callable,
     model: str,
+    cash_like: list[str] | None = None,
 ) -> None:
     st.subheader("Client profile and Investment Policy Statement")
     st.caption(
@@ -354,7 +377,7 @@ def render_client_tab(
     st.markdown("**Investment Policy Statement (RRTTLLU)**")
     st.markdown("\n\n".join(f"**{name}.** {text}" for name, text in ips.sections.items()))
     if holdings:
-        _, notes = ips_constraints(ips, holdings, dict(groups), dict(attributes))
+        _, notes = ips_constraints(ips, holdings, dict(groups), dict(attributes), cash_like)
         for note in notes:
             st.caption("• " + note)
     d1, d2 = st.columns(2)

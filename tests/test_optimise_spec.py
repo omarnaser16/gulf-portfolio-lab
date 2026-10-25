@@ -274,3 +274,42 @@ def test_new_objectives_respect_every_constraint(seed: int) -> None:
     assert gcc >= spec.group_bounds["GCC"][0] - 1e-6
     if spec.max_volatility is not None:
         assert result.volatility <= spec.max_volatility + 1e-6
+
+
+# ------------------------------------------------------------------- named sets (cash, regions)
+
+
+def test_set_minimum_binds_like_a_group() -> None:
+    # min variance holds 80% B; a cash need of 90% in {B} forces B to 90%
+    spec = OptimisationSpec("min_variance", sets={"Cash need": (frozenset({"B"}), 0.9, None)})
+    result = optimise(MU, COV, spec)
+    assert weights(result) == pytest.approx((0.1, 0.9), abs=1e-5)
+    assert "group 'Cash need' at its 90.00% minimum" in result.binding
+
+
+def test_sets_overlap_groups() -> None:
+    # A is GCC and also in the "Saudi" set; both minimums apply, the stricter binds
+    spec = OptimisationSpec(
+        "min_variance",
+        groups=GCC,
+        group_bounds={"GCC": (0.3, None)},
+        sets={"Saudi Arabia": (frozenset({"A"}), 0.5, None)},
+    )
+    assert weights(optimise(MU, COV, spec)) == pytest.approx((0.5, 0.5), abs=1e-5)
+
+
+def test_set_with_no_holding_is_infeasible_with_a_reason() -> None:
+    spec = OptimisationSpec("min_variance", sets={"Cash need": (frozenset({"BIL"}), 0.2, None)})
+    result = optimise(MU, COV, spec)
+    assert not result.feasible
+    assert "'Cash need' must be at least 20.00%, but no holding is in it." in result.reasons
+    capped = OptimisationSpec(
+        "min_variance", max_weight=0.5, sets={"Cash need": (frozenset({"B"}), 0.6, None)}
+    )
+    assert "its holdings' caps allow only 50.00%" in " ".join(optimise(MU, COV, capped).reasons)
+
+
+def test_risk_parity_respects_a_set() -> None:
+    spec = OptimisationSpec("risk_parity", sets={"Cash need": (frozenset({"B"}), 0.8, None)})
+    w = optimise(MU, COV, spec).weights
+    assert w["B"] >= 0.8 - 1e-6

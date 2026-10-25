@@ -1,5 +1,7 @@
 """Tests for the client profile, risk questionnaire, IPS and IPS -> optimiser limits."""
 
+from datetime import date
+
 import pytest
 
 from gpl.client import (
@@ -7,8 +9,13 @@ from gpl.client import (
     QUESTIONS,
     ClientProfile,
     build_ips,
+    cash_like_holdings,
     horizon_score,
     ips_constraints,
+    month_after,
+    month_text,
+    months_until,
+    parse_month,
     risk_profile,
     tighter,
 )
@@ -108,12 +115,67 @@ def test_ips_limits_from_band_and_overrides() -> None:
     ]
 
 
+TODAY = date(2026, 10, 25)
+
+
 def test_liquidity_reserve() -> None:
-    p = profile(portfolio_value_usd=500_000, liquidity_need_usd=50_000, reserve_pct=5)
-    ips = build_ips(p, CFG)
-    # 50,000 need + 5% of 500,000 = 75,000 -> 15% of the portfolio
+    needs = [
+        {"description": "Fees", "amount_usd": 50_000, "date": "2027-10"},
+        {"description": "Villa", "amount_usd": 600_000, "date": "2035-01"},  # beyond 36 months
+    ]
+    p = profile(portfolio_value_usd=500_000, liquidity_needs=needs, reserve_pct=5)
+    ips = build_ips(p, CFG, today=TODAY)
+    # 50,000 due within 36 months + 5% of 500,000 = 75,000 -> 15% of the portfolio
     assert ips.limits["liquidity_reserve_usd"] == 75_000
     assert ips.limits["liquidity_reserve"] == pytest.approx(0.15)
+    assert [n["months"] for n in ips.limits["cash_needs_due"]] == [12]
+    assert [n["months"] for n in ips.limits["cash_needs_later"]] == [99]
+    text = ips.sections["Liquidity"]
+    assert "Fees: USD 50,000 by Oct 2027 (12 months)" in text
+    assert "Later needs" in text and "Villa: USD 600,000 by Jan 2035" in text
+
+
+def test_dated_needs_months() -> None:
+    # the QA case: a need in Oct 2028 is about two years away, not 12 months
+    assert months_until("2028-10", TODAY) == 24
+    assert months_until("2026-03", TODAY) == 0  # passed: due now
+    assert month_after(TODAY, 14) == "2027-12" and month_text("2028-10") == "Oct 2028"
+    with pytest.raises(ValueError):
+        parse_month("October")
+
+
+def test_old_profiles_with_an_undated_need_still_load() -> None:
+    old = {"reference": "OLD", "liquidity_need_usd": 80_000, "liquidity_months": 6}
+    p = ClientProfile.from_dict(old, today=TODAY)
+    assert p.liquidity_needs == [
+        {"description": "Cash need", "amount_usd": 80_000.0, "date": "2027-04"}
+    ]
+    with pytest.raises(ValueError, match="YYYY-MM"):
+        ClientProfile.from_dict({"liquidity_needs": [{"amount_usd": 1, "date": "soon"}]})
+
+
+def test_cash_like_holdings_rule() -> None:
+    groups = {"BIL": "Bonds", "AGG": "Bonds", "MM": "Cash & short-term", "SPY": "Global equity"}
+    vols = {"BIL": 0.002, "AGG": 0.055, "MM": 0.01, "SPY": 0.17, "SPSK": 0.057}
+    tickers = ["BIL", "AGG", "MM", "SPY", "SPSK"]
+    # AGG (a broad bond fund) is not cash-like; SPSK (sukuk) is, because it is on the list
+    assert cash_like_holdings(tickers, groups, ["SPSK"], vols) == ["BIL", "MM", "SPSK"]
+
+
+def test_cash_need_becomes_a_hard_optimiser_minimum() -> None:
+    needs = [{"description": "Villa", "amount_usd": 600_000, "date": "2028-10"}]
+    p = profile(portfolio_value_usd=2_000_000, liquidity_needs=needs)
+    ips = build_ips(p, CFG, today=TODAY)
+    holdings = ["SPY", "AGG", "BIL"]
+    spec, notes = ips_constraints(ips, holdings, {}, {}, cash_like=["BIL"])
+    assert spec.sets["Cash need"] == (frozenset({"BIL"}), pytest.approx(0.30), None)
+    assert any("at least 30.00% (USD 600,000) in cash-like holdings (BIL)" in n for n in notes)
+    spec, notes = ips_constraints(ips, holdings[:2], {}, {}, cash_like=[])
+    assert spec.sets["Cash need"][0] == frozenset()  # infeasible: the optimiser says why
+    assert any("can't be met" in n and "BIL" in n for n in notes)
+    no_value = build_ips(profile(liquidity_needs=needs), CFG, today=TODAY)
+    _, notes = ips_constraints(no_value, holdings, {}, {}, cash_like=["BIL"])
+    assert any("enter the portfolio value" in n for n in notes)
 
 
 def test_ips_without_a_risk_score_has_no_risk_limits() -> None:
@@ -210,3 +272,16 @@ def test_sector_exclusion_ignores_case_and_one_year_is_singular() -> None:
     spec, _ = ips_constraints(build_ips(p, CFG), HOLDINGS, GROUPS, ATTRS)
     assert spec.asset_bounds == {"2222.SR": (None, 0.0)}  # sector "Energy"
     assert build_ips(p, CFG).sections["Return"] == "Goals: Deposit (in 1 year)"
+
+
+def test_tighter_merges_sets() -> None:
+    a = OptimisationSpec(sets={"Cash need": (frozenset({"BIL", "SHV"}), 0.2, None)})
+    b = OptimisationSpec(
+        sets={
+            "Cash need": (frozenset({"BIL"}), 0.3, 0.9),
+            "Saudi Arabia": (frozenset({"KSA"}), 0.1, None),
+        }
+    )
+    sets = tighter(a, b).sets
+    assert sets["Cash need"] == (frozenset({"BIL"}), 0.3, 0.9)
+    assert sets["Saudi Arabia"] == (frozenset({"KSA"}), 0.1, None)

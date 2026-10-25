@@ -68,6 +68,12 @@ CONFIG = {"gcc_equity": ["KSA"], "bonds": ["AGG"], "real_assets": ["GLD"], "glob
 
 
 def test_guess_group() -> None:
+    assert guess_group("BIL", "", "ETF", "SPDR 1-3 Month T-Bill", CONFIG) == "Cash & short-term"
+    assert guess_group("SPSK", "", "ETF", "Global Sukuk ETF", CONFIG) == "Cash & short-term"
+    assert (
+        guess_group("ZZZ", "", "ETF", "Whatever", CONFIG, cash_like=["ZZZ"]) == "Cash & short-term"
+    )
+    assert guess_group("AGG", "", "ETF", "iShares Core US Aggregate Bond", {}) == "Bonds"
     assert guess_group("KSA", "NYSEArca", "ETF", "iShares MSCI Saudi Arabia", CONFIG) == "GCC"
     assert guess_group("2222.SR", "Saudi", "Stock", "Saudi Arabian Oil Co.", CONFIG) == "GCC"
     assert guess_group("XYZ", "DFM", "Stock", "Some Dubai Co", CONFIG) == "GCC"

@@ -274,6 +274,19 @@ def describe_spec(spec: OptimisationSpec) -> list[str]:
                 if p
             )
         )
+    for name, (members, lo, hi) in spec.sets.items():
+        held = ", ".join(sorted(members)) or "no holding"
+        lines.append(
+            f"{name} ({held}): "
+            + " and ".join(
+                p
+                for p in [
+                    lo is not None and f"at least {lo:.2%}",
+                    hi is not None and f"at most {hi:.2%}",
+                ]
+                if p
+            )
+        )
     if spec.max_volatility is not None:
         lines.append(f"Volatility at most {spec.max_volatility:.2%} a year")
     if spec.min_return is not None:

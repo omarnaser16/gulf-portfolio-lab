@@ -231,3 +231,14 @@ def trade_list(
     out["units"] = trades / prices_usd.reindex(tickers)
     out["cost_usd"] = trades.abs() * rate
     return out
+
+
+def cash_need_check(after_usd: pd.Series, cash_like: Sequence[str], need_usd: float) -> dict:
+    """Do the cash-like holdings after the trades cover the cash need?
+
+    ``after_usd``: USD value of each holding after rebalancing (``trade_list``'s
+    ``target_usd``). Returns ``held``, ``need``, ``shortfall`` (0 if covered) and ``ok``.
+    """
+    held = float(after_usd.reindex(list(cash_like)).fillna(0.0).sum()) if cash_like else 0.0
+    shortfall = max(0.0, need_usd - held)
+    return {"held": held, "need": float(need_usd), "shortfall": shortfall, "ok": shortfall < 0.5}

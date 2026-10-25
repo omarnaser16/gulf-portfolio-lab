@@ -224,6 +224,7 @@ def build_context(
             "stress_episodes": cfg.get("stress_episodes", []),
             "domicile": cfg.get("domicile", {}),
             "ucits_equivalents": cfg.get("ucits_equivalents", {}),
+            "cash_like": cfg.get("cash_like", []),
             "exposure_meta": cfg.get("exposure_meta", {}),
         },
         universe=[t for t in universe if t in data.prices.columns],
@@ -802,7 +803,8 @@ def _ips_checks(ctx: AnalystContext, weights: pd.Series) -> list:
         ctx.periods,
         ctx.settings.get("stress_episodes", []),
         ctx.portfolio_value or ctx.ips.client.portfolio_value_usd,
-        ctx.settings.get("liquid_max_volatility", 0.06),
+        ctx.settings.get("liquid_max_volatility", 0.03),
+        ctx.settings.get("cash_like", []),
     )
 
 

@@ -1025,6 +1025,20 @@ def test_optimise_never_recommends_a_portfolio_that_fails_the_ips(optimise_app) 
         assert not any(i.value.startswith("**Keep your current") for i in at.info)
 
 
+def test_cash_need_is_a_hard_optimiser_limit(app: AppTest) -> None:
+    # Dubai: USD 50,000 due Oct 2027 on USD 500,000 -> at least 10% in cash-like holdings
+    app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    app.button(key="client_load_example").click().run()
+    notes = " ".join(c.value for c in app.caption)
+    assert "can't be met: no holding is cash, short-term bonds or sukuk" in notes  # AGG isn't
+    app.button(key="ws_add_cash").click().run()
+    assert not app.exception, app.exception
+    rows = {r["ticker"]: r["group"] for r in app.session_state[ws.ROWS]}
+    assert rows["BIL"] == "Cash & short-term"
+    plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
+    assert "Cash need (BIL): at least 10.00%" in plan
+
+
 def test_client_report_button_builds_a_pdf(app: AppTest) -> None:
     app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     app.button(key="client_load_example").click().run()

@@ -84,7 +84,7 @@ def parse_holdings(text: str, mode: str = "weights") -> tuple[dict[str, float], 
 
 # ------------------------------------------------------------------- workstation holdings
 
-GROUPS = ["GCC", "Global equity", "Bonds", "Gold", "Other"]
+GROUPS = ["GCC", "Global equity", "Bonds", "Cash & short-term", "Gold", "Other"]
 CONFIG_GROUP = {
     "gcc_equity": "GCC",
     "global_equity": "Global equity",
@@ -107,7 +107,17 @@ GCC_EXCHANGES = {
     "msm",
     "muscat",
 }
-BOND_WORDS = ("bond", "treasury", "aggregate", "fixed income", "sukuk", "t-bill", "gilt")
+BOND_WORDS = ("bond", "treasury", "aggregate", "fixed income", "gilt")
+CASH_WORDS = (
+    "t-bill",
+    "treasury bill",
+    "money market",
+    "0-1 year",
+    "0-1yr",
+    "0-3 month",
+    "1-3 month",
+    "sukuk",
+)
 
 
 def guess_group(
@@ -116,14 +126,19 @@ def guess_group(
     quote_type: str,
     name: str,
     config_groups: Mapping[str, Sequence[str]],
+    cash_like: Sequence[str] = (),
 ) -> str:
     """Best guess of a holding's group; the user can change it in the holdings table."""
+    if symbol in cash_like:
+        return "Cash & short-term"
     for key, members in config_groups.items():
         if symbol in members and key in CONFIG_GROUP:
             return CONFIG_GROUP[key]
     if symbol.upper().endswith(GCC_SUFFIXES) or (exchange or "").lower() in GCC_EXCHANGES:
         return "GCC"
-    lowered = (name or "").lower()
+    lowered = (name or "").lower().replace("–", "-")
+    if any(w in lowered for w in CASH_WORDS):
+        return "Cash & short-term"
     if any(w in lowered for w in BOND_WORDS):
         return "Bonds"
     if "gold" in lowered:

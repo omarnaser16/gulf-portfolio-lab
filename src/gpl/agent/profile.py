@@ -9,9 +9,10 @@ form before it is used.
 
 import re
 from dataclasses import dataclass, field, replace
+from datetime import date
 from typing import Any
 
-from gpl.client import CLASSIFICATIONS, ClientProfile
+from gpl.client import CLASSIFICATIONS, ClientProfile, month_after
 
 PROFILE_SYSTEM_PROMPT = """\
 You fill in a wealth manager's client form from their notes. You never calculate, estimate or \
@@ -162,7 +163,6 @@ def apply_proposal(profile: ClientProfile, draft: dict) -> ClientProfile:
         "horizon_years",
         "return_target_pct",
         "portfolio_value_usd",
-        "liquidity_need_usd",
         "residency",
         "us_person",
         "classification",
@@ -170,8 +170,15 @@ def apply_proposal(profile: ClientProfile, draft: dict) -> ClientProfile:
         "home_bias_gcc_pct",
     ]
     updates = {k: draft[k] for k in simple if draft.get(k) is not None}
-    if draft.get("liquidity_months") is not None:
-        updates["liquidity_months"] = int(draft["liquidity_months"])
+    if draft.get("liquidity_need_usd"):
+        months = int(draft.get("liquidity_months") or 12)
+        updates["liquidity_needs"] = [
+            {
+                "description": "Cash need",
+                "amount_usd": float(draft["liquidity_need_usd"]),
+                "date": month_after(date.today(), months),
+            }
+        ]
     if draft.get("excluded_sectors"):
         updates["excluded_sectors"] = [s[:1].upper() + s[1:] for s in draft["excluded_sectors"]]
     if draft.get("goals"):
