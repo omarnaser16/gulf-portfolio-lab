@@ -39,8 +39,8 @@ code flags any figure that no tool produced.**
 | **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, 10 bps costs on turnover. |
 | **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with nine tools wrapping the engine; memos for an investor profile, about the user's own portfolio, or explaining a recommendation, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
-| **Dashboard** | A *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
+| **AI analyst** | Claude (Haiku 5.5 by default) with twelve tools wrapping the engine; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
+| **Dashboard** | Dark, terminal-style Streamlit app: a top bar with the benchmark and ⚙ Settings, KPI cards, and a *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
 
 > 📸 *Screenshot placeholder: `docs/screenshots/analyst.png` (Analyst tab: memo, audit trail, cost line)*
 
@@ -82,6 +82,15 @@ code flags any figure that no tool produced.**
   *Recommendation*: a fixed rule per goal picks the method that fits the goal **and** held up out
   of sample, or says to keep your current portfolio, and shows its reasons. (5) An optional AI memo
   explains it. Results are historical and risk-adjusted, never presented as higher returns to come.
+- **Ask the analyst.** The Analyst page opens on your portfolio (KPI cards vs the benchmark,
+  holdings with share of risk, allocation). *Review my portfolio*, *Stress test my portfolio* or
+  *Explain the Optimise recommendation*, then ask follow-ups such as "what if I cut NVDA to 10%?".
+  Each memo section is followed by the charts the AI picked from a fixed list: current vs proposed
+  weights, growth of $1, drawdowns, a metrics table with deltas, money vs risk, a correlation
+  heatmap, rolling one-year volatility, the efficient frontier, a Monte Carlo fan, exposure by
+  region, asset type and currency, and stress tests (COVID crash 19 Feb – 23 Mar 2020, oil crash
+  6 Mar – 21 Apr 2020, rate shock 3 Jan – 12 Oct 2022). A what-if sets the holdings you name to
+  your exact weights and scales the others pro-rata; later charts compare it with today.
 - **Latest or reproducible.** The dashboard opens on the latest data ("Data as of …" at the top). The
   *Reproduce README results* option uses the fixed sample below and reproduces this README's tables
   exactly.
@@ -151,14 +160,22 @@ uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class w
 because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
 
 **AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The nine tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
+The twelve tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
 `backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_portfolio_diagnosis`,
-`get_optimisation_result`, `get_regime_view`) wrap the engine and return pre-formatted numbers.
+`get_optimisation_result`, `show_chart`, `what_if_portfolio`, `stress_test`, `get_regime_view`)
+wrap the engine and return pre-formatted numbers.
 The system prompt forbids arithmetic and requires a bracketed tool citation for every figure. After
 each answer,
 code compares every decimal, percentage and multiple in it with the tool outputs and flags any that
 don't match (a re-rounded "15.3%" for "15.27%" is flagged). Every tool call is shown in an audit
 trail, and the disclaimer is appended by code.
+
+**Charts the AI can't fake.** `show_chart` takes only a chart type from a whitelist and the
+section it belongs to; its schema has no numeric fields. Code computes the chart's data with the
+engine (`gpl/agent/charts.py`), keeps it, draws it from that data alone, and returns formatted
+key figures the AI may quote. Tests check every chart type against an independent calculation
+and that the AI's text cannot change a chart. `what_if_portfolio` refuses any weight that isn't
+in the user's own message ("halve NVDA" gets a question back, not a computed 10%).
 
 **Goals to a recommendation.** A separate, single model call fills one strict tool,
 `propose_spec`, whose schema is the spec: one of five goals, a target if the goal needs one, a
@@ -188,7 +205,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   Oct 2026 the same request recommended keeping the current portfolio. The rule has no minimum
   improvement, so a near-tie can flip with a few weeks of data (see Limitations).
 
-**Testing.** 479 tests (`pytest`), most with expected values small enough to check by hand. They
+**Testing.** 516 tests (`pytest`), most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -223,6 +240,11 @@ a scripted fake model, so the suite never touches the network.
 - **The recommendation rule has no materiality threshold:** any improvement on the goal metric
   counts, so a method can be recommended for a tiny gain (e.g. 0.006 of Sharpe) despite much higher
   turnover, and near-ties can flip as data is added.
+- **Analyst charts:** "proposed" growth, drawdown and metrics apply today's proposed weights to the
+  past (hindsight). Stress tests hold today's weights through each episode, rebalanced daily
+  without costs, and need the holdings' common history to cover it; with Sunday–Thursday
+  holdings an episode starts at the nearest earlier common date (e.g. the oil crash from 5 Mar
+  2020). Region tags are approximations (known fund exposure, otherwise country of listing).
 - **Benchmarks** are ETF proxies with fund fees, compared without trading costs (as indices are).
   On dates when the benchmark's market was closed but yours traded, it shows 0% and catches up next
   day. Against cash, beta, alpha, capture and correlation are not defined.
@@ -258,7 +280,7 @@ git clone <your-repo-url> && cd gulf-portfolio-lab
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 479 tests, no network needed
+pytest -q                       # 516 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 
@@ -274,13 +296,16 @@ src/gpl/metrics.py       risk and performance metrics
 src/gpl/optimise.py      min variance, max Sharpe, frontier, risk parity, constrained optimiser,
                          Ledoit-Wolf covariance
 src/gpl/recommend.py     goals, candidate methods and the recommendation rule
+src/gpl/scenarios.py     what-if weights, historical stress episodes, exposures
 src/gpl/backtest.py      monthly-rebalanced backtester and strategies
 src/gpl/montecarlo.py    simulations, goal probability, path drawdowns
 src/gpl/regime.py        labels, features, models, evaluation, walk-forward
 src/gpl/plots.py         plotly charts shared by notebooks and the app
 src/gpl/agent/           tools.py (tool schemas wrapping gpl), analyst.py (tool-use loop),
-                         spec.py (plain-English goals -> goal and limits)
-app/                     Streamlit dashboard (workstation.py: Portfolio tab)
+                         spec.py (plain-English goals -> goal and limits),
+                         charts.py (whitelisted charts built from engine data)
+app/                     Streamlit dashboard (workstation.py: Portfolio tab, KPI cards)
+.streamlit/config.toml   dark theme
 tests/                   pytest suite
 ```
 
@@ -296,7 +321,9 @@ My role (Omar Naser) was to **direct, review and test**:
   presented, for example capping risk parity at 40%, fixing the end date for reproducibility, and
   making the block bootstrap the default. I specified the Portfolio workstation, the benchmark
   set, the analyst-style Optimise workflow, and the rules that the AI only turns goals into limits I
-  confirm (never weights) and that a coded rule, not the AI, makes the recommendation.
+  confirm (never weights) and that a coded rule, not the AI, makes the recommendation. I asked
+  for the terminal-style UI, the Analyst's charts (chosen by the AI, built only from tool data),
+  stress tests and what-if follow-ups.
 - **Reviewed:** I read the results, notebooks and explanations, and asked for changes where something
   looked wrong or unclear, for example checking whether the regime model's probabilities were
   calibrated, leading with ROC AUC rather than accuracy, and stating limitations such as the 2022

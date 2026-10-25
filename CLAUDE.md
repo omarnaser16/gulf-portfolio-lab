@@ -58,6 +58,9 @@ it switched to build + explain mode, which has been used since:
 - **Calendars:** assets on different weekly calendars (Sun–Thu vs Mon–Fri) are aligned on the dates
   all of them traded, and annualised with the observed periods per year instead of 252.
 - **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
+- **UI:** dark theme (`.streamlit/config.toml`) and one plotly template (`gpl_dark`); show figures
+  with `formatting.plot` (theme=None). Benchmarks are grey dashed reference series. No sidebar:
+  settings live in the top-bar popover.
 
 ## Code style
 - Python 3.14, type hints everywhere, numpy-style docstrings.
@@ -86,6 +89,10 @@ streamlit run app/streamlit_app.py
 - **Recommendations are chosen by code.** `gpl/recommend.py` applies a fixed, tested rule per goal
   to walk-forward, after-cost results; the AI only explains the rule's choice and trade-offs, and
   never presents results as guaranteed or higher future returns.
+- **Charts come only from tool data.** The AI chooses chart type, order and section via
+  `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the
+  engine. What-if weights must appear in the user's own message; the other holdings are scaled
+  pro-rata.
 - API key in `.env` as `ANTHROPIC_API_KEY` (or Streamlit secrets when deployed); never committed.
   The model name lives in config, not in code.
 - Memos carry a "not investment advice" disclaimer, appended by code.

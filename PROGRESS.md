@@ -220,3 +220,26 @@ days; the work itself was done in a series of sessions.
   with three more weeks of data, so it may need a minimum improvement.
 - **Status:** 479 tests passing.
 - **Next:** decide on a minimum-improvement threshold; deploy; answer the outstanding quizzes.
+
+## Terminal-style UI and a charting analyst — 2026-10-25
+- **Directed:** I asked for a Bloomberg-style dark UI without a sidebar (settings in a popover,
+  benchmark always visible), KPI cards, an Analyst page centred on my portfolio whose memo
+  sections each come with a chart the AI picks but code builds, historical stress tests, and
+  what-if follow-ups. I chose pro-rata rescaling for what-ifs and kept the profile memos.
+- **Built by Claude Code:** the theme and one plotly template (palette checked for colour-blind
+  separation on the dark surface); KPI cards with deltas vs the benchmark; `scenarios.py`
+  (what-if weights, stress episodes, exposures); `show_chart` with eleven whitelisted chart types,
+  `what_if_portfolio` and `stress_test`; the new Analyst page with sections paired with charts.
+- **Live test:** with SPY 35%, NVDA 20%, AGG 25%, GLD 10%, Aramco 10%, the review showed NVDA at
+  20% of the money but 56.06% of the risk; in the 2022 rate shock the portfolio lost 25.83% vs
+  20.19% for 60/40. "What if I cut NVDA to 10%?" gave volatility 12.13% vs 15.92% and max drawdown
+  −21.18% vs −26.98%, but CAGR 14.33% vs 19.99% (hindsight). Stress numbers matched a separate
+  calculation.
+- **Caught:** charts whose section the AI misnamed ended up after the disclaimer (now before it);
+  a "2x" the tool had returned was flagged because it was only inside a field name; exposure labels
+  were clipped; KPI deltas were truncated; importing Streamlit replaces plotly's default template,
+  so the template is set on every figure.
+- **Learned:** a chart is only trustworthy if the model can't pass it numbers; with
+  Sunday–Thursday holdings an episode starts at the nearest earlier common date.
+- **Status:** 516 tests passing.
+- **Next:** decide on a minimum-improvement threshold for recommendations; deploy; quizzes.
