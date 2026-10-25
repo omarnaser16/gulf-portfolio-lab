@@ -106,11 +106,12 @@ def test_app_renders_every_tab(app: AppTest) -> None:
     ]
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
     # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings,
-    # domicile check (the rebalance drift table needs a portfolio value: none by default);
+    # domicile check, Optimise's active limits (the rebalance drift table needs a portfolio
+    # value: none by default);
     # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
     # limits editors, the rebalance targets and the frontier weights
-    assert len(app.table) == 11 and len(app.dataframe) == 6
+    assert len(app.table) == 12 and len(app.dataframe) == 6
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
