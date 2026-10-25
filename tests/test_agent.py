@@ -317,3 +317,99 @@ def test_backtest_output_explains_dates_and_confidence(ctx_mine) -> None:
     assert "not a data problem" in out["why_the_backtest_starts_later"]
     assert out["data_start"] < out["backtest_period"][:10]
     assert unverified_numbers("Your 1-day 95% VaR is 0.93%", [json.dumps(out), '"0.93%"']) == []
+
+
+# --------------------------------------------------------------- client profile and calculator
+
+
+def _unions(schema) -> int:
+    if isinstance(schema, dict):
+        own = int(isinstance(schema.get("type"), list) or "anyOf" in schema)
+        return own + sum(_unions(v) for v in schema.values())
+    if isinstance(schema, list):
+        return sum(_unions(v) for v in schema)
+    return 0
+
+
+def test_tool_schemas_stay_within_the_api_union_limit(ctx) -> None:
+    for d in tool_definitions(ctx):
+        assert _unions(d["input_schema"]) <= 16, d["name"]
+
+
+def _client_ctx(ctx) -> AnalystContext:
+    from datetime import date
+
+    from gpl.client import EXAMPLE_CLIENTS, ClientProfile, build_ips
+
+    profile = ClientProfile.from_dict(EXAMPLE_CLIENTS["Dubai, moderate, 10 years"])
+    profile.annual_income_need_usd = 20_000
+    ctx.ips = build_ips(profile, CFG, today=date(2026, 10, 25))
+    return ctx
+
+
+def test_client_profile_tool_reports_the_ips(ctx) -> None:
+    with pytest.raises(ToolError, match="no client profile"):
+        execute_tool(ctx, "get_client_profile", {})
+    out = execute_tool(_client_ctx(ctx), "get_client_profile", {})
+    assert (
+        out["limits"]["max_volatility"] == "12.00%"
+        and out["limits"]["max_weight_per_holding"] == "30.00%"
+    )
+    assert out["limits"]["cash_to_hold_usd"] == "50,000"
+    # 20,000 / (500,000 - 50,000) = 4.44% real, with 2.5% inflation -> 7.06%
+    assert out["required_return"] == pct((1 + 20_000 / 450_000) * 1.025 - 1)
+    assert "Required return" in out["ips"]["Return"]
+
+
+def test_calculate_only_uses_numbers_from_tools(ctx) -> None:
+    ctx.number_sources = ['{"cash_to_hold_usd": "600,000", "value": "3,000,000", "vol": "9.36%"}']
+    out = execute_tool(
+        ctx,
+        "calculate",
+        {"operation": "share_of", "values": [600000, 3000000], "label": "cash share"},
+    )
+    assert out["result"] == "20.00%" and out["inputs"] == ["600,000", "3e+06"]
+    out = execute_tool(
+        ctx,
+        "calculate",
+        {"operation": "subtract", "values": [3000000, 600000], "label": "investable"},
+    )
+    assert out["result"] == "2,400,000.00"
+    out = execute_tool(
+        ctx, "calculate", {"operation": "percent_change", "values": [600000, 3000000], "label": "x"}
+    )
+    assert out["result"] == "400.00%"
+    with pytest.raises(ToolError, match="did not come from any tool result"):
+        execute_tool(
+            ctx, "calculate", {"operation": "add", "values": [600000, 123456], "label": "x"}
+        )
+    with pytest.raises(ToolError, match="exactly two"):
+        execute_tool(
+            ctx,
+            "calculate",
+            {"operation": "divide", "values": [600000, 3000000, 9.36], "label": "x"},
+        )
+
+
+def test_calculate_result_can_be_quoted_in_the_memo(ctx) -> None:
+    ctx = _client_ctx(ctx)
+    client = FakeClient(
+        [
+            response([tool_use("t1", "get_client_profile", {})], "tool_use"),
+            response(
+                [
+                    tool_use(
+                        "t2",
+                        "calculate",
+                        {"operation": "share_of", "values": [50000, 500000], "label": "cash"},
+                    )
+                ],
+                "tool_use",
+            ),
+            response([text("Cash to hold is 10.00% of the portfolio [calculate].")], "end_turn"),
+        ]
+    )
+    ctx.portfolio_value = 500_000
+    reply = Analyst(ctx, client, model="m").ask("How much cash must I keep?")
+    assert [c.name for c in reply.tool_calls] == ["get_client_profile", "calculate"]
+    assert not reply.tool_calls[1].is_error and reply.unverified == []

@@ -97,6 +97,9 @@ class AnalystContext:
     attributes: Mapping[str, Mapping[str, str]] | None = None  # Sharia status, sector
     portfolio_value: float | None = None  # USD, for the liquidity rule
     rebalance: dict | None = None  # latest drift monitor and trade list (set by the app)
+    # every tool result and user message this conversation (set by the Analyst); `calculate`
+    # only accepts numbers that appear in them
+    number_sources: list[str] = field(default_factory=list)
     _cache: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -738,7 +741,7 @@ def run_candidates(
         report["benchmark"] = {"name": bench.name, "represents": bench.represents}
     if ips_checks:
         report["suitability_gate"] = {
-            "client": ctx.ips.client.reference or "(no reference)",
+            "client": ctx.ips.client.name or ctx.ips.client.reference or "(no name)",
             "current_passes_ips": rec.current_passes_ips,
             "failed_rules": {
                 n: [breach_text(c) for c in failures(ips_checks[n])] for n in latest.index
@@ -926,7 +929,7 @@ def check_suitability_tool(ctx: AnalystContext) -> dict:
     """Pass/fail/review per IPS rule, with the reason written from the measured numbers."""
     results = suitability_checks(ctx)
     return {
-        "client": ctx.ips.client.reference or "(no reference)",
+        "client": ctx.ips.client.name or ctx.ips.client.reference or "(no name)",
         "portfolios": {
             name: [
                 {
@@ -1178,12 +1181,137 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "get_client_profile",
+            "The client's profile and Investment Policy Statement results: risk score, limits "
+            "(volatility, drawdown, max per holding, GCC and region minimums, cash to hold, "
+            "Sharia, sectors, currency), required return and the RRTTLLU sections. Errors if "
+            "no client profile has been entered.",
+            {},
+        ),
+        tool(
+            "calculate",
+            "Arithmetic on numbers already returned by tools or written by the user (e.g. a "
+            "what-if amount, the share of a cash need in the portfolio). Never calculate in "
+            "your head: pass the numbers here and quote the result. Percentages as numbers of "
+            "percent (20.00% -> 20). Each value must appear in an earlier tool result.",
+            {
+                "operation": {"type": "string", "enum": list(OPERATIONS)},
+                "values": {"type": "array", "items": {"type": "number"}},
+                "label": {"type": "string"},
+            },
+        ),
+        tool(
             "get_regime_view",
             "Latest probability that next month is a stressed market, the model's out-of-sample "
             "track record vs a simple volatility rule, and caveats.",
             {},
         ),
     ]
+
+
+def get_client_profile(ctx: AnalystContext) -> dict:
+    """The client's profile and IPS results, all from ``gpl.client`` (tested rules)."""
+    if ctx.ips is None:
+        raise ToolError("no client profile: the adviser hasn't completed the Client tab")
+    ips, c, lim = ctx.ips, ctx.ips.client, ctx.ips.limits
+
+    def p(x) -> str:
+        return "not set" if x is None else pct(x)
+
+    return {
+        "client": c.name or c.reference or "(no name)",
+        "reference": c.reference,
+        "classification_and_regulator": f"{c.classification}, {c.regulator}",
+        "residency": c.residency,
+        "us_person": c.us_person,
+        "age": c.age,
+        "horizon_years": f"{c.horizon_years:g}",
+        "portfolio_value_usd": (
+            "not entered"
+            if (ctx.portfolio_value or c.portfolio_value_usd) is None
+            else f"{ctx.portfolio_value or c.portfolio_value_usd:,.0f}"
+        ),
+        "risk_profile": ips.risk.explanation,
+        "limits": {
+            "max_volatility": p(lim["max_volatility"]),
+            "max_drawdown": p(lim["max_drawdown"]),
+            "max_weight_per_holding": p(lim["max_weight"]),
+            "min_gcc": p(lim["home_bias_gcc"]),
+            "region_minimums": {r: pct(v) for r, v in lim["region_minimums"].items()},
+            "max_non_usd_pegged_currency": p(lim["max_non_pegged_currency"]),
+            "cash_to_hold_usd": f"{lim['liquidity_reserve_usd']:,.0f}",
+            "sharia_only": lim["sharia_only"],
+            "excluded_sectors": lim["excluded_sectors"],
+        },
+        "required_return": None if lim["required_return"] is None else pct(lim["required_return"]),
+        "ips": ips.sections,
+        "note": "Decision support for a licensed adviser. Check the portfolio against these "
+        "limits with check_suitability.",
+    }
+
+
+OPERATIONS = {
+    "add": "sum of the values",
+    "subtract": "first value minus the second",
+    "multiply": "product of the values",
+    "divide": "first value divided by the second",
+    "percent_change": "change from the first value to the second, in %",
+    "share_of": "first value as a % of the second",
+}
+
+
+def calculate(ctx: AnalystContext, operation: str, values: list[float], label: str) -> dict:
+    """Simple arithmetic on numbers already returned by tools (or written by the user).
+
+    The model never calculates in its head: it passes the numbers here, code checks each one
+    appears in an earlier tool result or user message, computes, and returns a result the memo
+    can quote. Percentages are passed as numbers of percent (20.00% -> 20).
+    """
+    from gpl.agent.analyst import numbers_in
+
+    if operation not in OPERATIONS:
+        raise ToolError(f"operation must be one of {list(OPERATIONS)}")
+    if len(values) < 2 or (operation != "add" and operation != "multiply" and len(values) != 2):
+        raise ToolError("add and multiply take two or more values; the others exactly two")
+    known: set[float] = set()
+    for source in ctx.number_sources:
+        known |= numbers_in(source, with_units_only=False)
+    unknown = [v for v in values if round(float(v), 6) not in known]
+    if unknown:
+        raise ToolError(
+            f"{unknown} did not come from any tool result or the user's message; call the tool "
+            "that gives these numbers first"
+        )
+    a, b = float(values[0]), float(values[1])
+    if (operation in ("divide", "share_of") and b == 0) or (
+        operation == "percent_change" and a == 0
+    ):
+        raise ToolError("division by zero")
+    match operation:
+        case "add":
+            result, text = sum(map(float, values)), None
+        case "subtract":
+            result, text = a - b, None
+        case "multiply":
+            result = 1.0
+            for v in values:
+                result *= float(v)
+            text = None
+        case "divide":
+            result, text = a / b, None
+        case "percent_change":
+            result = (b - a) / a
+            text = pct(result)
+        case "share_of":
+            result = a / b
+            text = pct(result)
+    return {
+        "label": label,
+        "operation": f"{operation}: {OPERATIONS[operation]}",
+        "inputs": [f"{v:,.6g}" for v in values],
+        "result": text if text is not None else f"{result:,.2f}",
+        "note": "Computed by code from numbers already returned by tools.",
+    }
 
 
 EXECUTORS: dict[str, Callable[..., dict]] = {
@@ -1202,6 +1330,8 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "check_domicile": check_domicile,
     "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
+    "get_client_profile": get_client_profile,
+    "calculate": calculate,
 }
 
 

@@ -88,6 +88,13 @@ Never choose a different method, propose weights or calculate anything yourself.
 imply that a method will earn higher returns: describe results as risk-adjusted and \
 historical, not a guarantee.
 
+Client: when a client profile exists (get_client_profile does not return an error), call it \
+first and frame the answer around the client's goals, required return, cash needs and limits.
+
+Arithmetic: never calculate in your head, not even a simple sum or share. For any figure that \
+is not already in a tool result (a what-if amount, a difference, a share of the portfolio), \
+call calculate with numbers from tool results and quote its result.
+
 Suitability: when a client profile exists (check_suitability does not return an error), \
 include a "### Suitability" section in reviews and recommendations: state each rule that \
 fails or needs review, quoting the tool's reason, for the current and proposed portfolios. \
@@ -133,6 +140,9 @@ def _numbers(text: str, with_units_only: bool) -> set[float]:
             continue
         values.add(round(float(token.rstrip("%×x")), 6))
     return values
+
+
+numbers_in = _numbers  # public name, used by the calculate tool
 
 
 def unverified_numbers(answer: str, sources: Iterable[str]) -> list[str]:
@@ -222,6 +232,7 @@ class Analyst:
         self.messages.append({"role": "user", "content": question})
         self._user_texts.append(question)
         self.ctx.last_user_message = question  # what-if weights must come from this message
+        self.ctx.number_sources.append(question)
         calls: list[ToolCall] = []
         input_tokens = output_tokens = 0
 
@@ -276,6 +287,7 @@ class Analyst:
         try:
             output = execute_tool(self.ctx, block.name, dict(block.input))
             call = ToolCall(block.id, block.name, dict(block.input), output)
+            self.ctx.number_sources.append(json.dumps(output))
         except ToolError as e:
             call = ToolCall(block.id, block.name, dict(block.input), f"Error: {e}", is_error=True)
         self.tool_log.append(call)
