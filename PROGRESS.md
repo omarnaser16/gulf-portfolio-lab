@@ -255,3 +255,26 @@ days; the work itself was done in a series of sessions.
 - **Learned:** a rule with no materiality threshold turns estimation noise into trades. Goals
   judged on volatility or return still have no minimum.
 - **Status:** 526 tests passing.
+
+## Wealth-manager workflow — 2026-10-25
+- **Directed:** following my roadmap document, I asked for a client profile and IPS builder
+  feeding the optimiser, a suitability checker, a client report PDF, a drift monitor with a trade
+  list, and a GCC fund-domicile check, all as decision support for a licensed adviser. I approved
+  reportlab and matplotlib for the PDFs, chose an editable target column for drift, and agreed to
+  make data.py writable for a cached Yahoo sector lookup.
+- **Built by Claude Code:** `client.py` (questionnaire: risk score = lower of capacity and
+  willingness; RRTTLLU IPS; IPS limits -> optimiser limits), AI form filling that never touches
+  the questionnaire, `suitability.py` (eight rules, reasons written from the numbers),
+  `report.py` (IPS and client report PDFs), drift and cash-neutral trade list, `domicile.py`
+  (US-situs check, estate-tax schedule, Irish alternatives verified on Yahoo).
+- **Checked live:** the AI filled a Dubai client from notes and its own conversion of "12 months"
+  to "1 year" was flagged; a memo's suitability section listed three fails without softening
+  them; a USD 500,000 all-US-situs portfolio shows an illustrative USD 142,800 estate tax.
+- **Caught:** the strict tool schema rejected an enum with null (fixed with anyOf); "2x" wasn't
+  read as a number; the PDF had near-empty pages, a clipped label and a legend over the data; the
+  report's two drawdowns (-13.81% backtest vs -21.67% full history) needed an explanation; AGGU
+  is a global index, so AGG maps to IUAA instead.
+- **Learned:** the lower of risk capacity and willingness governs; US-listed ETFs, including the
+  KSA fund, are US-situs for a Gulf investor; a trade list must pay its own costs.
+- **Status:** 582 tests passing.
+- **Next:** deploy; answer the outstanding quizzes; review the risk bands with a practitioner.

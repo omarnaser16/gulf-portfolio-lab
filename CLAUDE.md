@@ -94,6 +94,11 @@ streamlit run app/streamlit_app.py
   `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the
   engine. What-if weights must appear in the user's own message; the other holdings are scaled
   pro-rata.
+- **Adviser workflow:** the AI only fills the client form's facts from the adviser's notes
+  (never the risk questionnaire, scores or limits); the risk score, IPS limits, suitability,
+  drift trades and domicile figures come from tested rules (`client.py`, `suitability.py`,
+  `scenarios.py`, `domicile.py`). Everything is decision support for a licensed adviser;
+  domicile output is labelled "information, not tax advice".
 - API key in `.env` as `ANTHROPIC_API_KEY` (or Streamlit secrets when deployed); never committed.
   The model name lives in config, not in code.
 - Memos carry a "not investment advice" disclaimer, appended by code.

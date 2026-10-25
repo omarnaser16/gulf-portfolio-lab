@@ -39,10 +39,27 @@ code flags any figure that no tool produced.**
 | **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, 10 bps costs on turnover. |
 | **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with twelve tools wrapping the engine; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
-| **Dashboard** | Dark, terminal-style Streamlit app: a top bar with the benchmark and ⚙ Settings, KPI cards, and a *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
+| **AI analyst** | Claude (Haiku 5.5 by default) with fifteen tools wrapping the engine; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
+| **Adviser workflow** | Client profile and risk questionnaire, IPS (PDF) feeding the optimiser, suitability checks, fund-domicile check, drift monitor and trade list, client report (PDF). |
+| **Dashboard** | Dark, terminal-style Streamlit app: a top bar with the benchmark and ⚙ Settings, KPI cards, a *Client* tab, and a *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
 
 > 📸 *Screenshot placeholder: `docs/screenshots/analyst.png` (Analyst tab: memo, audit trail, cost line)*
+
+## For a wealth manager: plan, execute, review
+
+The tool follows the CFA portfolio-management loop as **decision support for a licensed
+adviser**. Every number comes from tested code; the AI only fills forms from the adviser's notes
+and explains results.
+
+| Step | In the tool |
+|---|---|
+| Discovery and risk profiling | *Client* tab: profile, classification and regulator (DFSA, FSRA, CMA…), a seven-question risk questionnaire scored by a tested rule (risk score = the lower of capacity and willingness; a gap of two or more is flagged), "describe the client in plain English" for the AI to fill the facts (never the questionnaire). Profiles save and load as JSON. |
+| Investment Policy Statement | RRTTLLU (Return, Risk, Time horizon, Taxes, Liquidity, Legal, Unique) generated from the profile, with limits from the risk band (e.g. band 3: volatility 12%, drawdown 20%) or adviser overrides; exported as a signable PDF. |
+| Strategic allocation | *Optimise* uses the IPS limits automatically (volatility cap, max weight, GCC minimum, excluded holdings at 0%), stricter of IPS and form. |
+| Suitability | Eight rules for the current and proposed portfolios: volatility, max drawdown, worst stress episode, concentration, home-market bias, liquidity, exclusions (Sharia, sectors), currency. Each is pass, fail or review, with a reason written from the numbers; in Optimise, Analyst, the memo and the report. |
+| Implementation | *Fund domicile check* for non-US clients: US-situs holdings (US-listed funds and stocks, including KSA), the illustrative US estate tax (18%–40% schedule minus the 13,000 USD non-resident credit, i.e. a 60,000 exemption), 30% vs 15% dividend withholding, and verified Irish-domiciled alternatives (SPY → CSPX.L, AGG → IUAA.L, GLD → IGLN.L…). Information, not tax advice. |
+| Monitoring and rebalancing | *Portfolio › Rebalance*: current vs editable target weights (default: the Optimise recommendation), a ±5 pp drift band, and a cash-neutral trade list (buy/sell in USD, estimated units and costs; buys + costs = sells), downloadable as CSV. |
+| Reporting | One-click, date-stamped *client report* PDF: client summary and IPS, holdings, performance vs benchmark, charts, suitability, domicile, the AI memo and disclaimers. |
 
 ## Using it as an investor
 
@@ -160,7 +177,7 @@ uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class w
 because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
 
 **AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The twelve tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
+The fifteen tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
 `backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_portfolio_diagnosis`,
 `get_optimisation_result`, `show_chart`, `what_if_portfolio`, `stress_test`, `get_regime_view`)
 wrap the engine and return pre-formatted numbers.
@@ -211,13 +228,21 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 526 tests (`pytest`), most with expected values small enough to check by hand. They
+**Testing.** 582 tests (`pytest`), most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
 
 ## Limitations
 
+- **Adviser tools are decision support, not advice.** The risk bands (e.g. band 3: 12%
+  volatility, 20% drawdown) are judgement defaults, not calibrated to client outcomes. Sharia
+  status and sectors come from a partial config list plus Yahoo sectors; anything unknown is
+  "review", never a pass. Liquidity is a proxy (bond holdings or volatility at most 6%), not
+  market depth. The estate-tax figure is an illustration under 2026 statutory rates with no
+  treaty, deductions or other US assets; the UCITS list is small, curated and only verified to
+  exist on Yahoo (costs and tracking not compared). Suitability risk figures use the full common
+  history, while performance uses the backtest period, so their drawdowns can differ.
 - **One sample period.** About ten years dominated by US equities, COVID and the 2022 bond sell-off.
   Results may not generalise; every figure is tied to the sample shown.
 - **Short GCC history** (from 2015) and a universe of ETFs chosen today (survivorship).
@@ -287,7 +312,7 @@ git clone <your-repo-url> && cd gulf-portfolio-lab
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 526 tests, no network needed
+pytest -q                       # 582 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 
@@ -303,15 +328,21 @@ src/gpl/metrics.py       risk and performance metrics
 src/gpl/optimise.py      min variance, max Sharpe, frontier, risk parity, constrained optimiser,
                          Ledoit-Wolf covariance
 src/gpl/recommend.py     goals, candidate methods and the recommendation rule
-src/gpl/scenarios.py     what-if weights, historical stress episodes, exposures
+src/gpl/scenarios.py     what-if weights, stress episodes, exposures, drift and trade list
+src/gpl/client.py        client profile, risk questionnaire, IPS, IPS -> optimiser limits
+src/gpl/suitability.py   pass/fail/review checks of a portfolio against the IPS
+src/gpl/domicile.py      US-situs check, illustrative US estate tax, UCITS alternatives
+src/gpl/report.py        IPS and client report PDFs (reportlab, matplotlib)
 src/gpl/backtest.py      monthly-rebalanced backtester and strategies
 src/gpl/montecarlo.py    simulations, goal probability, path drawdowns
 src/gpl/regime.py        labels, features, models, evaluation, walk-forward
 src/gpl/plots.py         plotly charts shared by notebooks and the app
 src/gpl/agent/           tools.py (tool schemas wrapping gpl), analyst.py (tool-use loop),
                          spec.py (plain-English goals -> goal and limits),
-                         charts.py (whitelisted charts built from engine data)
-app/                     Streamlit dashboard (workstation.py: Portfolio tab, KPI cards)
+                         charts.py (whitelisted charts built from engine data),
+                         profile.py (adviser's notes -> client form facts)
+app/                     Streamlit dashboard (workstation.py: Portfolio tab, KPI cards;
+                         client_ui.py: Client tab)
 .streamlit/config.toml   dark theme
 tests/                   pytest suite
 ```
