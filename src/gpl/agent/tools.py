@@ -391,6 +391,7 @@ def simulate_future(
     stats = terminal_stats(paths)
     return {
         "strategy": strategy,
+        "target_multiple": times(target_multiple),
         "weights_used": _weights(w),
         "horizon_years": horizon_years,
         "units": f"real USD after {pct(mc['inflation'])} inflation a year"

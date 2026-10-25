@@ -97,10 +97,11 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Analyst",
     ]
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
-    # by holding, diagnosis vs benchmark, assets, strategies, regime folds; dataframes: the
+    # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings;
+    # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
     # limits editors and the frontier weights
-    assert len(app.table) == 9 and len(app.dataframe) == 5
+    assert len(app.table) == 10 and len(app.dataframe) == 5
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -339,7 +340,8 @@ def analyst_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[AppTes
 
 def test_analyst_writes_an_audited_memo(analyst_app) -> None:
     at, client = analyst_app
-    at.button(key="write_memo").click().run()
+    at.selectbox(key="profile_example").set_value("Dubai, moderate, 10 years").run()
+    at.button(key="write_portfolio_memo").click().run()
     assert not at.exception, at.exception
     assert any("Moderate investor" in m.value for m in at.markdown)
     assert any("not investment advice" in m.value.lower() for m in at.markdown)
@@ -353,12 +355,12 @@ def test_analyst_writes_an_audited_memo(analyst_app) -> None:
 
 def test_analyst_follow_up_continues_the_conversation(analyst_app) -> None:
     at, client = analyst_app
-    at.button(key="write_memo").click().run()
+    at.button(key="write_portfolio_memo").click().run()
     at.chat_input(key="follow_up").set_value("What if I were more conservative?").run()
     assert not at.exception, at.exception
     assert any("risk parity" in m.value for m in at.markdown)
     roles = [m["role"] for m in client.requests[-1]["messages"]]
-    assert roles[-1] == "user" and roles.count("user") == 3  # profile, tool results, follow-up
+    assert roles[-1] == "user" and roles.count("user") == 3  # review, tool results, follow-up
 
 
 # --------------------------------------------------------------------- any asset, data period
@@ -790,9 +792,138 @@ def test_kpi_cards_with_deltas_vs_the_benchmark(app: AppTest) -> None:
         "Sharpe",
         "Max drawdown",
     ]
-    assert app.metric[0].value == "enter USD amounts"
-    assert "vs 60/40 (SPY/AGG)" in app.metric[1].delta and app.metric[1].value.endswith("%")
+    assert app.metric[0].value == "–"
+    assert app.metric[1].delta.endswith(" pp") and app.metric[1].value.endswith("%")
+    assert any("deltas against 60/40 (SPY/AGG)" in c.value for c in app.caption)
     app.radio(key="ws_mode").set_value("USD amount").run()  # 10,000 USD by default
     assert app.metric[0].value == "$10,000"
     app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
     assert app.metric[3].delta in (None, "")  # no Sharpe delta against cash
+
+
+# ------------------------------------------------------------- Analyst: charts, what-if, stress
+
+
+@pytest.fixture
+def chart_app(monkeypatch, tmp_path):
+    def make(script: list) -> tuple[AppTest, FakeClient]:
+        client = FakeClient(script)
+        monkeypatch.setattr(yf, "download", synthetic_download)
+        monkeypatch.setattr(yf, "Ticker", FakeTicker)
+        monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(agent, "has_credentials", lambda: True)
+        monkeypatch.setattr(agent, "make_client", lambda: client)
+        st.cache_data.clear()
+        at = AppTest.from_file(APP, default_timeout=240)
+        at.run()
+        return at, client
+
+    return make
+
+
+def _titles(at: AppTest) -> list[str]:
+    return [json.loads(c.proto.spec)["layout"]["title"]["text"] for c in at.get("plotly_chart")]
+
+
+def test_analyst_page_shows_the_portfolio_first(app: AppTest) -> None:
+    holdings = next(
+        t.value
+        for t in app.table
+        if "Share of risk" in t.value.columns
+        and "Volatility (ann.)" in t.value.columns
+        and "Name" in t.value.columns
+    )
+    assert list(holdings.index) == ["SPY", "AGG", "GLD", "KSA"]
+    assert "Allocation by holding" in _titles(app)
+
+
+def test_memo_sections_are_paired_with_charts_built_by_code(chart_app) -> None:
+    at, client = chart_app(
+        [
+            response(
+                [
+                    tool_use("c1", "show_chart", {"chart": "money_vs_risk", "section": "Risk"}),
+                    tool_use("c2", "show_chart", {"chart": "stress_test", "section": "Stress"}),
+                    tool_use(
+                        "c3", "show_chart", {"chart": "correlation_heatmap", "section": "Nowhere"}
+                    ),
+                ],
+                "tool_use",
+            ),
+            response([text("### Risk\nSPY dominates.\n\n### Stress\nCOVID hurt.")], "end_turn"),
+        ]
+    )
+    at.button(key="write_portfolio_memo").click().run()
+    assert not at.exception, at.exception
+    titles = _titles(at)
+    risk_i = titles.index("Share of money vs share of risk (current)")
+    assert titles[risk_i + 1] == "Historical stress tests"  # in the memo's order
+    assert titles[risk_i + 2] == "Correlation of daily returns"  # unmatched: at the end
+    md = [m.value for m in at.markdown]
+    assert any(m.startswith("### Risk") for m in md) and any(m.startswith("### Stress") for m in md)
+
+
+def test_what_if_follow_up_updates_the_charts(chart_app) -> None:
+    at, client = chart_app(
+        [
+            response([text("### Summary\nA balanced portfolio.")], "end_turn"),
+            response(
+                [
+                    tool_use(
+                        "w1",
+                        "what_if_portfolio",
+                        {"changes": [{"ticker": "SPY", "weight_pct": 30}]},
+                    ),
+                    tool_use(
+                        "c1",
+                        "show_chart",
+                        {"chart": "weights_current_vs_proposed", "section": "What changes"},
+                    ),
+                ],
+                "tool_use",
+            ),
+            response([text("### What changes\nLess SPY.")], "end_turn"),
+        ]
+    )
+    at.button(key="write_portfolio_memo").click().run()
+    at.chat_input(key="follow_up").set_value("What if I cut SPY to 30%?").run()
+    assert not at.exception, at.exception
+    specs = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+    weights_fig = next(
+        f for f in specs if f["layout"]["title"]["text"] == "Current vs proposed weights"
+    )
+    what_if = next(t for t in weights_fig["data"] if t["name"] == "What-if")
+    values = dict(zip(what_if["y"], _decode(what_if["x"]), strict=True))
+    assert values["SPY"] == pytest.approx(0.30)
+    assert values["AGG"] == pytest.approx(0.42)  # 30/50 of the remaining 70%
+
+
+def _decode(values) -> list[float]:
+    """Plotly sends numeric arrays as base64 typed arrays ({"dtype", "bdata"})."""
+    import base64
+
+    if isinstance(values, dict):
+        return list(np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"]))
+    return list(values)
+
+
+def test_stress_test_button(chart_app) -> None:
+    at, client = chart_app(
+        [
+            response([tool_use("s1", "stress_test", {})], "tool_use"),
+            response([text("### Stress\nSee the episodes.")], "end_turn"),
+        ]
+    )
+    at.button(key="stress_memo").click().run()
+    assert not at.exception, at.exception
+    assert client.requests[0]["messages"][0]["content"].startswith("Stress test my portfolio")
+    result = client.requests[1]["messages"][-1]["content"][0]["content"]
+    assert "COVID crash" in result and "2020-02-19 to 2020-03-23" in result
+
+
+def test_memo_sections_pairing_and_disclaimer_last() -> None:
+    memo = "Intro.\n### Risk\nSPY dominates.\n### Outlook\nCalm.\n\n---\n*Not investment advice.*"
+    out = ws.memo_sections(memo, [("risk", "A"), ("**Outlook**", "B"), ("Elsewhere", "C")])
+    assert [charts for _, charts in out] == [[], ["A"], ["B"], ["C"], []]
+    assert out[0][0] == "Intro." and out[-1][0].strip().startswith("---")  # disclaimer last
+    assert ws.memo_sections("No headings.", [("x", "A")]) == [("No headings.", []), ("", ["A"])]

@@ -450,16 +450,20 @@ def render_kpis(
     """Five KPI cards: value, return (CAGR), volatility, Sharpe, max drawdown, with deltas vs the
     benchmark (from ``gpl.metrics.kpi_table``). Lower volatility counts as better."""
     cols = st.columns(5)
-    cols[0].metric("Portfolio value", value_text)
+    cols[0].metric(
+        "Portfolio value",
+        value_text,
+        help=None if value_text != "–" else "Enter holdings as USD amounts to see the value.",
+    )
     if kpi is None:
         labels = ["Return (CAGR)", "Volatility", "Sharpe", "Max drawdown"]
         for c, label in zip(cols[1:], labels, strict=True):
             c.metric(label, "–")
         return
-    vs = f"vs {benchmark_name}"
 
+    # deltas are vs the benchmark (named in the caption below the cards); kept short so they fit
     def pp(x: float) -> str:
-        return f"{x * 100:+.2f} pp {vs}"
+        return f"{x * 100:+.2f} pp"
 
     sharpe_delta = kpi.loc["sharpe", "delta"]
     cols[1].metric("Return (CAGR)", pct(kpi.loc["cagr", "portfolio"]), pp(kpi.loc["cagr", "delta"]))
@@ -472,7 +476,7 @@ def render_kpis(
     cols[3].metric(
         "Sharpe",
         f"{kpi.loc['sharpe', 'portfolio']:.2f}",
-        None if pd.isna(sharpe_delta) or is_cash else f"{sharpe_delta:+.2f} {vs}",
+        None if pd.isna(sharpe_delta) or is_cash else f"{sharpe_delta:+.2f}",
     )
     cols[4].metric(
         "Max drawdown",
@@ -486,4 +490,48 @@ def portfolio_value_text() -> str:
     if st.session_state.get(MODE) == USD:
         total = sum(r["value"] for r in st.session_state.get(ROWS, []) if r["value"] > 0)
         return f"${total:,.0f}"
-    return "enter USD amounts"
+    return "–"
+
+
+def _norm(heading: str) -> str:
+    return " ".join(heading.strip().lstrip("#").strip().strip("*").lower().split())
+
+
+def memo_sections(text: str, charts: Sequence[tuple[str, object]]) -> list[tuple[str, list]]:
+    """Split a memo on '###' headings and attach each chart to the section it names.
+
+    Returns ``[(markdown, charts), ...]`` in memo order. Text before the first heading is its
+    own block; charts whose section matches no heading are attached to a final empty block,
+    so nothing the analyst asked for is lost.
+    """
+    blocks: list[tuple[str, str]] = []  # (heading key, markdown)
+    current: list[str] = []
+    key = ""
+    for line in text.splitlines():
+        if line.startswith("### "):
+            if current:
+                blocks.append((key, "\n".join(current)))
+            key, current = _norm(line), [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append((key, "\n".join(current)))
+    out = [(md, []) for _, md in blocks]
+    unplaced = []
+    keys = [k for k, _ in blocks]
+    for section, data in charts:
+        target = _norm(section)
+        if target and target in keys:
+            out[keys.index(target)][1].append(data)
+        else:
+            unplaced.append(data)
+    if unplaced:
+        # before the disclaimer the app appends ("---" then "... not investment advice ...")
+        last_md = out[-1][0] if out else ""
+        cut = last_md.rfind("\n---\n")
+        if cut >= 0 and "not investment advice" in last_md[cut:].lower():
+            out[-1] = (last_md[:cut], out[-1][1])
+            out += [("", unplaced), (last_md[cut:], [])]
+        else:
+            out.append(("", unplaced))
+    return out

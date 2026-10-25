@@ -21,6 +21,7 @@ from formatting import NUMBERS_CSS, pct, plot, show_metrics_table, style_columns
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
+from gpl.agent.charts import build_chart
 from gpl.agent.spec import describe_goal, describe_limits, propose_spec, spec_from_draft
 from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
 from gpl.data import (
@@ -55,6 +56,7 @@ from gpl.optimise import (
 )
 from gpl.plots import (
     SERIES_COLORS,
+    allocation_chart,
     drawdown_chart,
     equity_chart,
     fan_chart,
@@ -455,6 +457,9 @@ def shared_context() -> AnalystContext:
                 "var_level": D["var_level"],
                 "regime": R,
                 "montecarlo": MC,
+                "optimise_lab": CFG.get("optimise_lab", {}),
+                "stress_episodes": CFG.get("stress_episodes", []),
+                "exposure_meta": CFG.get("exposure_meta", {}),
             },
             universe=universe,
             user_portfolio=my_weights if portfolio_ok else None,
@@ -464,7 +469,10 @@ def shared_context() -> AnalystContext:
         st.session_state.ctx = ctx
         st.session_state.ctx_key = settings_key
         st.session_state.pop("ws_opt", None)  # an optimisation belongs to the old holdings
-    return st.session_state.ctx
+    ctx = st.session_state.ctx
+    ctx.benchmark = bench  # follows the top-bar choice without rebuilding the context
+    ctx.holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
+    return ctx
 
 
 def ask_analyst(analyst: agent.Analyst, question: str) -> dict:
@@ -480,9 +488,21 @@ def ask_analyst(analyst: agent.Analyst, question: str) -> dict:
         return {"role": "error", "text": f"API error: {e}"}
 
 
-def render_reply(reply: agent.AnalystReply) -> None:
-    """Memo text, unverified-number warning, cost line and audit trail."""
-    st.markdown(reply.text)
+def render_reply(reply: agent.AnalystReply, key: str = "reply") -> None:
+    """Memo sections, each followed by the charts the analyst attached to it (drawn by code
+    from engine data), then the unverified-number warning, cost line and audit trail."""
+    for i, (markdown, charts) in enumerate(ws.memo_sections(reply.text, reply.charts)):
+        if markdown.strip():
+            st.markdown(markdown)
+        for j, data in enumerate(charts):
+            built = build_chart(data)
+            if isinstance(built, pd.DataFrame):
+                st.markdown(f"**{data.title}**")
+                st.table(built)
+            else:
+                plot(built, key=f"{key}_{i}_{j}")
+            if data.notes:
+                st.caption(" ".join(data.notes))
     if reply.unverified:
         st.warning(
             "These figures did not come from any tool result, so treat them with suspicion: "
@@ -861,6 +881,14 @@ def render_optimise() -> None:
         with st.spinner("Re-optimising each method month by month and backtesting…"):
             report, run = run_candidates(ctx, goal, limits, my_weights, target)
         ctx.optimisation = report
+        choice = run.recommendation.choice
+        if choice != KEEP:  # charts on the Analyst page compare current with this
+            w = run.latest_weights.loc[choice]
+            ctx.proposed = {
+                "name": f"{choice} (recommended)",
+                "weights": w[w > 0].to_dict(),
+                "source": "Optimise recommendation",
+            }
         st.session_state.ws_opt = {"report": report, "run": run, "memo": None, "key": run_key}
     result = st.session_state.get("ws_opt")
     if result and result["key"] == run_key:
@@ -1411,14 +1439,55 @@ with tab_regime:
         "percentile' (no model). Always-calm = never flag stress."
     )
 
+EXAMPLE_PROFILES = {
+    "Dubai, moderate, 10 years": "I'm 35, based in Dubai, investing in USD for 10 years with "
+    "moderate risk tolerance. I'd like to end with at least 1.5x my money.",
+    "Riyadh, conservative, 5 years": "I'm 58 and live in Riyadh. I want to preserve capital over "
+    "5 years with low risk; avoiding big drawdowns matters more than return.",
+    "Doha, aggressive, 20 years": "I'm 27 in Doha, saving for 20 years, comfortable with large "
+    "swings. I'd like to reach 3x my money.",
+}
+
+
+def _use_example() -> None:
+    choice = st.session_state.get("profile_example")
+    if choice in EXAMPLE_PROFILES:
+        st.session_state.about_me = EXAMPLE_PROFILES[choice]
+
+
+def render_portfolio_overview() -> None:
+    """KPI cards, holdings (weight, share of risk, volatility) and the allocation chart."""
+    render_portfolio_kpis()
+    if not portfolio_ok:
+        st.info("Add holdings with price history on the Portfolio tab.")
+        return
+    w = pd.Series(my_weights)
+    rets = all_returns[list(w.index)]
+    table = summary_table(rets, rf=rf, periods_per_year=periods)
+    holdings = pd.DataFrame(
+        {
+            "Name": [holding_names.get(t, "") for t in w.index],
+            "Weight": w.map(pct),
+            "Share of risk": risk_contributions(w, rets.cov()).map(pct),
+            "Volatility (ann.)": table["ann_vol"].map(pct),
+        },
+        index=w.index,
+    )
+    left, right = st.columns([3, 2])
+    left.table(holdings)
+    with right:
+        plot(allocation_chart(w, "Allocation by holding"), key="analyst_allocation")
+
+
 with tab_agent:
     st.subheader("AI analyst")
+    render_portfolio_overview()
     st.caption(
-        f"Describe an investor profile. The analyst ({A['model']}) calls this dashboard's own "
-        "functions as tools on your holdings and the ⚙ Settings, and writes a memo. It is "
-        "not allowed to "
-        "calculate: every number must be copied from a tool result and cite the tool, and any "
-        "number that no tool returned is flagged below the answer. Not investment advice."
+        f"The analyst ({A['model']}) calls this dashboard's own functions as tools on your "
+        "holdings, the ⚙ Settings and the benchmark, and writes a memo with charts. It never "
+        "calculates: every number must come from a tool and cite it (others are flagged), and "
+        "every chart is drawn by code from the finance engine; the AI only chooses which charts "
+        "to show and where. Not investment advice."
     )
     if universe_issue:
         st.info(universe_issue)
@@ -1439,65 +1508,79 @@ with tab_agent:
             )
             st.session_state.analyst_key = settings_key
             st.session_state.chat = []
+        shared_context()  # keep the benchmark and groups current for the tools
 
-        examples = {
-            "Dubai, moderate, 10 years": "I'm 35, based in Dubai, investing in USD for 10 years "
-            "with moderate risk tolerance. I'd like to end with at least 1.5x my money.",
-            "Riyadh, conservative, 5 years": "I'm 58 and live in Riyadh. I want to preserve "
-            "capital over 5 years with low risk; avoiding big drawdowns matters more than return.",
-            "Doha, aggressive, 20 years": "I'm 27 in Doha, saving for 20 years, comfortable with "
-            "large swings. I'd like to reach 3x my money.",
-        }
-        if not st.session_state.chat:
-            choice = st.selectbox("Start from an example", list(examples), key="profile_example")
-            profile = st.text_area("Investor profile", examples[choice], height=100, key="profile")
-            b1, b2 = st.columns(2)
-            start_memo = b1.button("Write memo", type="primary", key="write_memo")
-            portfolio_memo = b2.button(
-                "Write memo about my portfolio",
+        with st.expander("About me (optional): age, horizon, risk tolerance, goal"):
+            st.selectbox(
+                "Fill from an example",
+                ["—", *EXAMPLE_PROFILES],
+                key="profile_example",
+                on_change=_use_example,
+            )
+            st.text_area("About me", key="about_me", height=90)
+        about = st.session_state.get("about_me", "").strip()
+        holdings_text = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
+        b1, b2, b3, b4 = st.columns([2, 2, 2, 1])
+        actions = {
+            "review": b1.button(
+                "Review my portfolio",
+                type="primary",
                 key="write_portfolio_memo",
                 disabled=not portfolio_ok,
-                help="Uses the holdings on the Portfolio tab."
-                if portfolio_ok
-                else "Enter valid holdings on the Portfolio tab first.",
-            )
-        else:
-            profile, start_memo, portfolio_memo = None, False, False
-            if st.button("New conversation", key="new_conversation"):
-                st.session_state.analyst_key = None
-                st.rerun()
+            ),
+            "optimise": b2.button(
+                "Explain the Optimise recommendation",
+                key="explain_optimise",
+                disabled=not shared_context().optimisation,
+                help=None
+                if shared_context().optimisation
+                else "Run the candidate methods on Portfolio › Optimise first.",
+            ),
+            "stress": b3.button(
+                "Stress test my portfolio", key="stress_memo", disabled=not portfolio_ok
+            ),
+        }
+        if b4.button("New conversation", key="new_conversation"):
+            st.session_state.analyst_key = None
+            if (shared_context().proposed or {}).get("name") == "What-if":
+                shared_context().proposed = None
+            st.rerun()
+        questions = {
+            "review": f"Please review my portfolio ({holdings_text}) against the benchmark, "
+            "including where its risk comes from and a stress-test section."
+            + (f" About me: {about}" if about else ""),
+            "optimise": "Please explain the diagnosis of my portfolio and the recommendation "
+            "from the Optimise section: why this method fits my goal, the trade-offs, and how "
+            "much to trust the results.",
+            "stress": "Stress test my portfolio against the benchmark in the historical "
+            "episodes, with their dates, and explain what drove the results.",
+        }
 
         def ask(question: str) -> None:
             st.session_state.chat.append({"role": "user", "text": question})
             st.session_state.chat.append(ask_analyst(st.session_state.analyst, question))
 
-        if start_memo and profile:
-            ask(profile)
-            st.rerun()  # redraw with the conversation instead of the profile form
-        if portfolio_memo:
-            holdings = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
-            ask(
-                f"Please review my portfolio ({holdings}), entered on the Portfolio tab. "
-                f"About me: {profile}"
-            )
-            st.rerun()
+        for name, pressed in actions.items():
+            if pressed:
+                ask(questions[name])
+                st.rerun()
 
-        for turn in st.session_state.chat:
+        for n, turn in enumerate(st.session_state.chat):
             if turn["role"] == "user":
                 st.chat_message("user").markdown(turn["text"])
             elif turn["role"] == "error":
                 st.error(turn["text"])
             else:
                 with st.chat_message("assistant"):
-                    render_reply(turn["reply"])
+                    render_reply(turn["reply"], key=f"chat_{n}")
 
-        if st.session_state.chat:
-            follow_up = st.chat_input(
-                "Ask a follow-up (e.g. 'What if I were more conservative?')", key="follow_up"
-            )
-            if follow_up:
-                ask(follow_up)
-                st.rerun()
+        follow_up = st.chat_input(
+            "Ask a follow-up, e.g. 'What if I cut SPY to 30%?' or 'How did I do in 2022?'",
+            key="follow_up",
+        )
+        if follow_up:
+            ask(follow_up)
+            st.rerun()
 
 st.divider()
 st.caption(DISCLAIMER)
