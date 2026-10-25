@@ -41,6 +41,7 @@ from gpl.data import (
     security_attributes,
     to_returns,
 )
+from gpl.domicile import domicile_report, format_domicile
 from gpl.metrics import drawdown_series, kpi_table, relative_drawdown, summary_table
 from gpl.montecarlo import (
     goal_probability,
@@ -465,6 +466,8 @@ def shared_context() -> AnalystContext:
                 "optimise_lab": CFG.get("optimise_lab", {}),
                 "stress_episodes": CFG.get("stress_episodes", []),
                 "exposure_meta": CFG.get("exposure_meta", {}),
+                "domicile": CFG["domicile"],
+                "ucits_equivalents": CFG.get("ucits_equivalents", {}),
             },
             universe=universe,
             user_portfolio=my_weights if portfolio_ok else None,
@@ -814,6 +817,31 @@ def portfolio_value() -> float | None:
     return None if profile is None else profile.portfolio_value_usd
 
 
+def domicile_section() -> dict | None:
+    """US-situs check for the current holdings (formatted); None without holdings."""
+    if not portfolio_ok:
+        return None
+    profile = client_ui.current_profile()
+    return format_domicile(
+        domicile_report(
+            pd.Series(my_weights), portfolio_value(), CFG, bool(profile and profile.us_person)
+        )
+    )
+
+
+def render_domicile() -> None:
+    st.markdown("**Fund domicile check (GCC clients)**")
+    result = domicile_section()
+    if result is None:
+        st.info("Add holdings on the Portfolio tab to check their domicile.")
+        return
+    st.info(result["label"])
+    if result["rows"]:
+        st.table(pd.DataFrame(result["rows"]).set_index("Ticker"))
+    for line in result["summary"]:
+        st.caption("• " + line)
+
+
 SUITABILITY_ICON = {"pass": "✅", "fail": "❌", "review": "⚠️"}
 
 
@@ -1067,6 +1095,9 @@ with tab_client:
         agent.make_client,
         A["model"],
     )
+    if client_ui.current_profile() is not None:
+        st.divider()
+        render_domicile()
 
 with tab_assets:
     st.subheader("Risk and return by asset")
@@ -1643,6 +1674,7 @@ def render_portfolio_overview() -> None:
     if proposed:
         ports[proposed["name"]] = pd.Series(proposed["weights"], dtype=float)
     render_suitability(ports, "analyst")
+    render_domicile()
     render_report_button(holdings, ports)
 
 
@@ -1681,6 +1713,7 @@ def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) ->
                 suitability=suitability_results(ports),
                 memo=memo,
                 memo_unverified=unverified,
+                domicile=domicile_section(),
             )
             ref = profile.reference if profile and profile.reference else "portfolio"
             st.session_state.client_report = (

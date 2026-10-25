@@ -28,6 +28,8 @@ def cctx(ctx) -> AnalystContext:
         **ctx.settings,
         "stress_episodes": CFG["stress_episodes"],
         "exposure_meta": CFG["exposure_meta"],
+        "domicile": CFG["domicile"],
+        "ucits_equivalents": CFG["ucits_equivalents"],
     }
     return AnalystContext(
         prices=ctx.prices,
@@ -212,3 +214,15 @@ def test_suitability_tool_wraps_the_checker(cctx) -> None:
         exclusions["status"] == "fail"
         and "SPY (50.00%): not Sharia-compliant" in exclusions["reason"]
     )
+
+
+def test_domicile_tool_matches_the_formatter(cctx) -> None:
+    from gpl.domicile import domicile_report, format_domicile
+
+    cctx.portfolio_value = 200_000
+    out = execute_tool(cctx, "check_domicile", {})
+    direct = format_domicile(domicile_report(pd.Series(CURRENT), 200_000, CFG, us_person=False))
+    assert {k: out[k] for k in direct} == direct and "assumption" in out
+    # SPY 50% + AGG 30% + GLD 10% + KSA 10% are all US-listed: 200,000 US-situs
+    # tentative 38,800 + 32% x 50,000 = 54,800, minus 13,000 -> 41,800
+    assert any("USD 41,800" in s for s in out["summary"])

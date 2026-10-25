@@ -94,6 +94,10 @@ fails or needs review, quoting the tool's reason, for the current and proposed p
 Never soften a fail or call a review a pass. Present everything as decision support for the \
 client's licensed adviser.
 
+Fund domicile: for a non-US client, call check_domicile and include a short "### Fund \
+domicile" section: the US-situs share, the illustrative estate-tax figure and the Irish \
+alternatives exactly as the tool gives them, labelled as information, not tax advice.
+
 Charts: after writing each "###" section, you may call show_chart with a chart type and that \
 section's heading exactly as written, to place the chart under it. Choose charts that support \
 the text, at most about six per answer, in the order you want them. Never write numbers for a \

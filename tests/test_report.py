@@ -48,6 +48,7 @@ import pandas as pd  # noqa: E402
 from gpl.agent.charts import chart_data  # noqa: E402
 from gpl.agent.tools import AnalystContext  # noqa: E402
 from gpl.data import BenchmarkData  # noqa: E402
+from gpl.domicile import domicile_report, format_domicile  # noqa: E402
 from gpl.metrics import kpi_table  # noqa: E402
 from gpl.report import ReportInputs, client_report, kpi_rows, markdown_flowables  # noqa: E402
 from gpl.suitability import check_suitability  # noqa: E402
@@ -102,6 +103,7 @@ def _inputs(
         suitability={"Current": checks},
         memo=memo,
         memo_unverified=["12.34%"],
+        domicile=format_domicile(domicile_report(pd.Series(CURRENT), 500_000, CFG, False)),
     )
 
 
@@ -131,6 +133,7 @@ def test_client_report_sections_figures_and_date(ctx) -> None:
         words = [w for w in check.measured.split() if w != "–"]  # the dash is byte-escaped
         assert all(word in text for word in words), check.rule
     assert text.count("/Subtype /Image") >= 4  # allocation, growth, drawdown, stress
+    assert "(Fund domicile \\(information, not tax advice\\))" in text and "CSPX.L" in text
 
 
 def test_report_without_memo_or_client_says_so(ctx) -> None:

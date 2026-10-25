@@ -222,6 +222,8 @@ def build_context(
             "montecarlo": cfg["montecarlo"],
             "optimise_lab": cfg.get("optimise_lab", {}),
             "stress_episodes": cfg.get("stress_episodes", []),
+            "domicile": cfg.get("domicile", {}),
+            "ucits_equivalents": cfg.get("ucits_equivalents", {}),
             "exposure_meta": cfg.get("exposure_meta", {}),
         },
         universe=[t for t in universe if t in data.prices.columns],
@@ -856,6 +858,24 @@ def check_suitability_tool(ctx: AnalystContext) -> dict:
     }
 
 
+def check_domicile(ctx: AnalystContext) -> dict:
+    """US-situs holdings, illustrative US estate tax and Irish alternatives (not tax advice)."""
+    from gpl.domicile import domicile_report, format_domicile
+
+    if not ctx.user_portfolio:
+        raise ToolError("the user has not entered a portfolio on the Portfolio tab")
+    cfg = {
+        "domicile": ctx.settings["domicile"],
+        "ucits_equivalents": ctx.settings.get("ucits_equivalents", {}),
+    }
+    us_person = bool(ctx.ips and ctx.ips.client.us_person)
+    value = ctx.portfolio_value or (ctx.ips.client.portfolio_value_usd if ctx.ips else None)
+    out = format_domicile(domicile_report(pd.Series(ctx.user_portfolio), value, cfg, us_person))
+    if ctx.ips is None:
+        out["assumption"] = "No client profile: assumes the client is not a US person."
+    return out
+
+
 def get_drift_and_trades(ctx: AnalystContext) -> dict:
     """The drift monitor and trade list from the Rebalance section (computed by tested code)."""
     if not ctx.rebalance:
@@ -1048,6 +1068,13 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             {},
         ),
         tool(
+            "check_domicile",
+            "For non-US clients: which holdings are US-situs (US-listed funds and stocks), the "
+            "illustrative US estate tax above the 60,000 USD exemption, dividend withholding, "
+            "and Irish-domiciled UCITS alternatives. Information, not tax advice.",
+            {},
+        ),
+        tool(
             "get_drift_and_trades",
             "Current vs target weights, which holdings drifted outside the band, and the "
             "rebalancing trade list (buy/sell, USD amounts, estimated units and costs) from "
@@ -1085,6 +1112,7 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "stress_test": stress_test,
     "check_suitability": check_suitability_tool,
     "get_drift_and_trades": get_drift_and_trades,
+    "check_domicile": check_domicile,
     "get_optimisation_result": get_optimisation_result,
     "get_regime_view": get_regime_view,
 }

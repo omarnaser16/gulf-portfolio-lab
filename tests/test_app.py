@@ -99,11 +99,11 @@ def test_app_renders_every_tab(app: AppTest) -> None:
     ]
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
     # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings,
-    # rebalance drift;
+    # rebalance drift, domicile check;
     # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
     # limits editors, the rebalance targets and the frontier weights
-    assert len(app.table) == 11 and len(app.dataframe) == 6
+    assert len(app.table) == 12 and len(app.dataframe) == 6
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -1045,3 +1045,13 @@ def test_rebalance_trade_list_against_proposed_target(app: AppTest) -> None:
     assert trades.loc["SPY", "Amount (USD)"] == "6,007.20"  # cash-neutral after 10 bps costs
     assert any(d.label == "Download trade list (CSV)" for d in app.get("download_button"))
     assert app.session_state["ctx"].rebalance["totals"]["costs_usd"] == "12.00"
+
+
+def test_domicile_check_on_analyst_and_client_tabs(app: AppTest) -> None:
+    table = next(t.value for t in app.table if "Irish-domiciled alternative" in t.value.columns)
+    assert table.loc["SPY", "US-situs"] == "yes"
+    assert table.loc["SPY", "Irish-domiciled alternative"].startswith("CSPX.L")
+    assert any("Information, not tax advice" in i.value for i in app.info)
+    assert any("Enter the portfolio value" in c.value for c in app.caption)
+    app.radio(key="ws_mode").set_value("USD amount").run()  # 10,000 USD: below the exemption
+    assert any("estate tax if the client died today: USD 0 " in c.value for c in app.caption)

@@ -158,3 +158,24 @@ security_attributes:
   HLAL: { sharia: compliant, sector: Sharia US equity }
   "1120.SR": { sharia: compliant, sector: Financial Services }
   "2222.SR": { sharia: compliant, sector: Energy }
+
+# GCC domicile check (gpl/domicile.py). INFORMATION, NOT TAX ADVICE: rates and thresholds as of
+# 2026 for non-US persons; confirm with a tax adviser.
+domicile:
+  rates_as_of: "2026"
+  us_estate_exemption_usd: 60000       # non-resident, non-citizen exemption on US-situs assets
+  nra_unified_credit_usd: 13000        # the credit equivalent to the 60,000 exemption
+  withholding_us_fund_non_us_person: 0.30   # on dividends from US-domiciled funds/stocks
+  withholding_irish_fund_us_dividends: 0.15 # paid at fund level by Irish funds (US-Ireland treaty)
+  overrides: {}                        # ticker -> "US" or another domicile, if listing misleads
+
+# Irish-domiciled alternatives to US-listed funds, each verified on Yahoo Finance (Oct 2026).
+# Not a recommendation: check costs, liquidity, tracking and share class before switching.
+ucits_equivalents:
+  SPY: { ticker: CSPX.L, name: "iShares Core S&P 500 UCITS ETF USD (Acc)", domicile: Ireland, match: "same index (S&P 500)" }
+  AGG: { ticker: IUAA.L, name: "iShares US Aggregate Bond UCITS ETF USD (Acc)", domicile: Ireland, match: "same index (US aggregate bonds)" }
+  GLD: { ticker: IGLN.L, name: "iShares Physical Gold ETC", domicile: Ireland, match: "physical gold; an ETC, not a UCITS fund" }
+  URTH: { ticker: SWDA.L, name: "iShares Core MSCI World UCITS ETF USD (Acc)", domicile: Ireland, match: "same index (MSCI World)" }
+  EEM: { ticker: IEEM.L, name: "iShares MSCI EM UCITS ETF USD (Dist)", domicile: Ireland, match: "same index (MSCI Emerging Markets)" }
+  TLT: { ticker: IDTL.L, name: "iShares $ Treasury Bond 20+yr UCITS ETF USD (Dist)", domicile: Ireland, match: "same exposure (US Treasuries 20+ years)" }
+  KSA: { ticker: IKSA.L, name: "iShares MSCI Saudi Arabia Capped UCITS ETF USD (Acc)", domicile: Ireland, match: "similar exposure, different index (capped)" }

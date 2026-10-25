@@ -261,6 +261,7 @@ class ReportInputs:
     memo: str | None = None
     memo_unverified: list[str] = field(default_factory=list)
     adviser: str = ""
+    domicile: dict | None = None  # gpl.domicile.format_domicile output
 
 
 def _png(fig) -> Image:
@@ -515,6 +516,22 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
                 )
             )
             story.append(Spacer(1, 6))
+    # domicile
+    if inputs.domicile is not None:
+        story.append(para("Fund domicile (information, not tax advice)", "h2"))
+        story.append(para(inputs.domicile["label"], "small"))
+        rows = inputs.domicile["rows"]
+        if rows:
+            cols = list(rows[0])
+            story.append(
+                table(
+                    [cols, *[[r[c] for c in cols] for r in rows]],
+                    widths=[20 * mm, 18 * mm, 24 * mm, 18 * mm, 94 * mm],
+                )
+            )
+        story += [
+            Paragraph(esc(s), STYLES["body"], bulletText="•") for s in inputs.domicile["summary"]
+        ]
     # memo
     story.append(para("Analyst memo", "h2"))
     story.append(
