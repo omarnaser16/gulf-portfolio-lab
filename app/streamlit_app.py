@@ -17,7 +17,7 @@ import streamlit as st
 import workstation as ws
 from inputs import asset_groups, combine_tickers
 
-from formatting import pct, show_metrics_table, style_columns, style_percent
+from formatting import NUMBERS_CSS, pct, plot, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
@@ -271,16 +271,18 @@ def first_eight(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.iloc[:, : len(SERIES_COLORS)]
 
 
-st.set_page_config(page_title="Gulf Portfolio Lab", page_icon="📈", layout="wide")
-st.title("Gulf Portfolio Lab")
-st.caption(
-    "Risk, optimisation, backtests, simulation and regime forecasts for GCC and global ETFs."
+st.set_page_config(
+    page_title="Gulf Portfolio Lab",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
-
-with st.sidebar:
-    st.header("Data")
+st.markdown(NUMBERS_CSS, unsafe_allow_html=True)
+head_title, head_bench, head_settings = st.columns([5, 3, 1.2], vertical_alignment="bottom")
+head_title.markdown("## Gulf Portfolio Lab")
+with head_settings.popover("⚙ Settings", width="stretch"):
     period = st.radio(
-        "Period",
+        "Data period",
         [LATEST, README_MODE],
         key="data_period",
         help="Latest data refreshes daily. The README results use a fixed end date so they can "
@@ -292,14 +294,15 @@ with st.sidebar:
             "To reproduce the README tables, load the **README universe** preset on Portfolio › "
             "Holdings (Import a list or start from a preset)."
         )
-    st.header("Backtest settings")
     cost_bps = st.number_input("Costs (bps on turnover)", 0.0, 100.0, float(D["cost_bps"]), 5.0)
     lookback = st.select_slider(
         "Estimation window (observations)", [126, 252, 504], value=D["lookback"]
     )
-    st.header("Strategies")
+    st.divider()
     names = st.multiselect(
-        "Show", STRATEGY_NAMES + BENCHMARK_NAMES, default=STRATEGY_NAMES + BENCHMARK_NAMES
+        "Strategies to show",
+        STRATEGY_NAMES + BENCHMARK_NAMES,
+        default=STRATEGY_NAMES + BENCHMARK_NAMES,
     )
     use_regime = st.toggle(
         "Add regime-aware versions",
@@ -310,8 +313,6 @@ with st.sidebar:
     threshold = st.slider(
         "De-risk when P(stressed) ≥", 0.2, 0.9, float(R["threshold"]), 0.05, disabled=not use_regime
     )
-    st.divider()
-    st.caption(DISCLAIMER)
 
 end = None if period == LATEST else date.fromisoformat(D["end"])
 # Set on Portfolio › Optimise; read here so every tab uses the current value.
@@ -427,7 +428,7 @@ SHORT_SAMPLE = (
     f"The common sample has only {len(returns):,} observations, not enough for a "
     f"{lookback}-observation estimation window plus a month of results. It is limited by "
     f"{', '.join(data.history.index[data.history['sets_start']])}: remove it, add an earlier start "
-    "date, or choose a shorter estimation window in the sidebar."
+    "date, or choose a shorter estimation window in ⚙ Settings."
 )
 
 A = CFG["agent"]
@@ -592,7 +593,7 @@ def _diagnosis_section(ctx: AnalystContext) -> None:
     st.table(holdings)
     w = pd.Series(my_weights)
     rc = risk_contributions(w, all_returns[w.index].cov())
-    st.plotly_chart(
+    plot(
         paired_bars_chart(w, rc, ("Share of money", "Share of risk"), "Money vs risk"),
         width="stretch",
     )
@@ -783,7 +784,7 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         st.markdown("**Latest weights of each method** (what it would hold now)")
         st.table(run.latest_weights.map(pct))
         if rec["choice"] != KEEP:
-            st.plotly_chart(
+            plot(
                 paired_bars_chart(
                     run.latest_weights.loc["Current"],
                     run.latest_weights.loc[rec["choice"]],
@@ -792,7 +793,7 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                 ),
                 width="stretch",
             )
-    st.plotly_chart(equity_chart(run.equity, "Growth of $1, walk-forward after costs"))
+    plot(equity_chart(run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"))
     st.info(report["caveats"])
 
     if ai_ok and st.button("Explain the recommendation (AI memo)", key="ws_opt_memo"):
@@ -874,6 +875,32 @@ def time_key() -> int:
     return st.session_state["ws_spec_counter"]
 
 
+bench_choices = {
+    **CFG["benchmark_choices"],
+    **{
+        f"{t} (an asset in your data)": {
+            "weights": {t: 1.0},
+            "represents": f"{NAMES.get(t, t)}, converted to USD.",
+        }
+        for t in data.prices.columns
+    },
+}
+bench_name = head_bench.selectbox(
+    "Benchmark",
+    list(bench_choices),
+    key="ws_benchmark",
+    help="What your portfolio is compared with across the dashboard. Total-return ETF "
+    "proxies, so dividends count as they do in your portfolio.",
+)
+st.caption(f"Benchmark **{bench_name}**: {bench_choices[bench_name]['represents']}")
+try:
+    bench = get_benchmark(
+        bench_name, bench_choices[bench_name], all_returns.index, loaded, start, end, day
+    )
+except (ValueError, DataUnavailable) as e:
+    bench = None
+    st.warning(f"Couldn't load the benchmark: {e} Choose another one.")
+
 tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = st.tabs(
     ["Portfolio", "Assets", "Frontier", "Backtest", "Monte Carlo", "Regime", "Analyst"]
 )
@@ -921,16 +948,14 @@ with tab_frontier:
         for name, w in portfolios.items():
             ret, vol = portfolio_performance(w, mu, cov)
             points[name] = (vol, ret)
-        st.plotly_chart(
-            frontier_chart(efficient_frontier(mu, cov, 40, max_weight), points), width="stretch"
-        )
+        plot(frontier_chart(efficient_frontier(mu, cov, 40, max_weight), points), width="stretch")
         st.dataframe(style_percent(pd.DataFrame(portfolios).T), width="stretch")
 with tab_backtest:
     if universe_issue:
         st.info(universe_issue)
     else:
         if not names:
-            st.info("Pick at least one strategy in the sidebar.")
+            st.info("Pick at least one strategy in ⚙ Settings.")
         elif not enough_history:
             st.warning(SHORT_SAMPLE)
         else:
@@ -974,12 +999,10 @@ with tab_backtest:
                 + f"; SPY holds {pct(CFG['benchmarks']['spy']['SPY'])}."
             )
             equity = first_eight(pd.DataFrame({n: r.equity for n, r in results.items()}))
-            st.plotly_chart(equity_chart(equity), width="stretch")
-            st.plotly_chart(
-                drawdown_chart(drawdown_series(strat_returns[equity.columns])), width="stretch"
-            )
+            plot(equity_chart(equity), width="stretch")
+            plot(drawdown_chart(drawdown_series(strat_returns[equity.columns])), width="stretch")
             chosen = st.selectbox("Weights over time for", list(results))
-            st.plotly_chart(
+            plot(
                 weights_chart(
                     results[chosen].weights,
                     groups=groups,
@@ -989,31 +1012,6 @@ with tab_backtest:
             )
 with tab_mine:
     st.subheader("My portfolio")
-    bench_choices = {
-        **CFG["benchmark_choices"],
-        **{
-            f"{t} (an asset in your data)": {
-                "weights": {t: 1.0},
-                "represents": f"{NAMES.get(t, t)}, converted to USD.",
-            }
-            for t in data.prices.columns
-        },
-    }
-    bench_name = st.selectbox(
-        "Benchmark",
-        list(bench_choices),
-        key="ws_benchmark",
-        help="What your portfolio is compared with on the Screen, Benchmark and Optimise tabs. "
-        "Total-return ETF proxies, so dividends count as they do in your portfolio.",
-    )
-    st.caption(f"**{bench_name}:** {bench_choices[bench_name]['represents']}")
-    try:
-        bench = get_benchmark(
-            bench_name, bench_choices[bench_name], all_returns.index, loaded, start, end, day
-        )
-    except (ValueError, DataUnavailable) as e:
-        bench = None
-        st.warning(f"Couldn't load the benchmark: {e} Choose another one.")
     sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt = st.tabs(
         ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise"]
     )
@@ -1083,7 +1081,7 @@ with tab_mine:
                     index=w.index,
                 )
             )
-            st.plotly_chart(risk_contribution_chart(w, rc), width="stretch")
+            plot(risk_contribution_chart(w, rc), width="stretch")
             st.caption(
                 "Share of risk is each holding's contribution to the portfolio's volatility (full "
                 "sample). A holding whose share of risk is much larger than its weight dominates "
@@ -1117,8 +1115,8 @@ with tab_mine:
                 f"at most {pct(max_weight)} each."
             )
             equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
-            st.plotly_chart(equity_chart(equity), width="stretch")
-            st.plotly_chart(drawdown_chart(drawdown_series(rets)), width="stretch")
+            plot(equity_chart(equity), width="stretch")
+            plot(drawdown_chart(drawdown_series(rets)), width="stretch")
             st.caption(
                 "Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab."
             )
@@ -1151,8 +1149,8 @@ with tab_mine:
             growth = pd.DataFrame(
                 {"Your portfolio": (1 + p).cumprod(), bench_name: (1 + b).cumprod()}
             )
-            st.plotly_chart(equity_chart(growth), width="stretch")
-            st.plotly_chart(
+            plot(equity_chart(growth, reference=bench_name))
+            plot(
                 drawdown_chart(
                     pd.DataFrame(
                         {"Your portfolio relative to the benchmark": relative_drawdown(p, b)}
@@ -1175,7 +1173,7 @@ with tab_mc:
         st.info(universe_issue)
     else:
         if not names:
-            st.info("Pick at least one strategy in the sidebar.")
+            st.info("Pick at least one strategy in ⚙ Settings.")
         elif not enough_history:
             st.warning(SHORT_SAMPLE)
         else:
@@ -1244,7 +1242,7 @@ with tab_mc:
                 "horizon: 1 in 20 simulations falls at least this far at some point. The other "
                 "numbers only look at the end; this shows how rough the ride is.",
             )
-            st.plotly_chart(
+            plot(
                 fan_chart(
                     paths,
                     title=f"{mc_strategy}: simulated growth of $1 ({units})",
@@ -1311,7 +1309,7 @@ with tab_regime:
 
     monthly = p.resample("ME").last().dropna()
     realised = regime["labels"].reindex(p.index).resample("ME").last()
-    st.plotly_chart(
+    plot(
         regime_chart(
             monthly, threshold, realised, title="Month-end probability of a stressed month ahead"
         ),
@@ -1394,7 +1392,7 @@ with tab_agent:
     st.subheader("AI analyst")
     st.caption(
         f"Describe an investor profile. The analyst ({A['model']}) calls this dashboard's own "
-        "functions as tools on your holdings and the sidebar settings, and writes a memo. It is "
+        "functions as tools on your holdings and the ⚙ Settings, and writes a memo. It is "
         "not allowed to "
         "calculate: every number must be copied from a tool result and cite the tool, and any "
         "number that no tool returned is flagged below the answer. Not investment advice."
@@ -1477,3 +1475,6 @@ with tab_agent:
             if follow_up:
                 ask(follow_up)
                 st.rerun()
+
+st.divider()
+st.caption(DISCLAIMER)

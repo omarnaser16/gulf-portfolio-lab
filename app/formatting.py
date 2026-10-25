@@ -60,3 +60,21 @@ def style_columns(table: pd.DataFrame, formats: dict[str, str] | None = None) ->
     formats = formats or {}
     numeric = table.select_dtypes("number").columns
     return table.style.format({c: formats.get(c, PCT) for c in numeric})
+
+
+def plot(fig, **kwargs) -> None:
+    """Show a plotly figure with the project's ``gpl_dark`` template (not Streamlit's theme)."""
+    kwargs.setdefault("width", "stretch")
+    st.plotly_chart(fig, theme=None, **kwargs)
+
+
+# Minimal, robust CSS: tabular monospaced figures in metric cards and table cells (labels and
+# headers keep the normal font so they don't wrap).
+NUMBERS_CSS = """
+<style>
+[data-testid="stMetricValue"], [data-testid="stMetricDelta"], [data-testid="stTable"] td {
+  font-family: SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+</style>
+"""

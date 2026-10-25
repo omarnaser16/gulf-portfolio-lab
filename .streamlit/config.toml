@@ -1,0 +1,14 @@
+# Dark, terminal-style theme (amber accent). Charts use the matching plotly template in
+# src/gpl/plots.py ("gpl_dark"); the app passes theme=None so Streamlit doesn't override it.
+[theme]
+base = "dark"
+primaryColor = "#FFA028"
+backgroundColor = "#0B0B0C"
+secondaryBackgroundColor = "#15171B"
+textColor = "#E6E4DF"
+font = "sans serif"
+codeFont = "monospace"
+
+[client]
+showSidebarNavigation = false
+toolbarMode = "minimal"

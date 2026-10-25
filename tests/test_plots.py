@@ -127,3 +127,19 @@ def test_allocation_chart_sends_plain_lists() -> None:
 
     data = json.loads(allocation_chart(pd.Series({"A": 0.6, "B": 0.4})).to_json())["data"][0]
     assert data["values"] == [0.6, 0.4] and data["labels"] == ["A", "B"]
+
+
+def test_dark_template_and_reference_series() -> None:
+    from gpl.plots import REFERENCE_COLOR, SURFACE, series_styles
+
+    styles = series_styles(["Current", "Benchmark", "Proposed"], reference="Benchmark")
+    assert styles["Benchmark"] == {"color": REFERENCE_COLOR, "width": 2, "dash": "dash"}
+    assert styles["Current"]["color"] == SERIES_COLORS[0]  # amber
+    assert styles["Proposed"]["color"] == SERIES_COLORS[1]  # cyan: the reference takes no slot
+    idx = pd.bdate_range("2024-01-01", periods=3)
+    fig = equity_chart(
+        pd.DataFrame({"A": [1, 1.1, 1.2], "Benchmark": [1, 1, 1]}, index=idx), reference="Benchmark"
+    )
+    assert fig.layout.paper_bgcolor == SURFACE and fig.data[1].line.dash == "dash"
+    # set on each figure, not only as plotly's default (importing Streamlit changes that)
+    assert fig.layout.template.layout.colorway == tuple(SERIES_COLORS)

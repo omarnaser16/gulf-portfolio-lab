@@ -19,7 +19,7 @@ from inputs import (
 )
 from streamlit_searchbox import st_searchbox
 
-from formatting import pct
+from formatting import pct, plot
 from gpl.metrics import (
     benchmark_metrics,
     beta,
@@ -35,7 +35,7 @@ ROWS, MODE, VERSION, LAST_PICK, META = "ws_rows", "ws_mode", "ws_version", "ws_l
 USD, PCT = "USD amount", "Weight (%)"
 DEFAULT_TOTAL_USD = 10_000.0
 EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
-READ_ONLY = {"background-color": "#f1f2f4", "color": "#6b7079"}  # grey = can't edit
+READ_ONLY = {"background-color": "#1b1d22", "color": "#8f8c85"}  # muted = can't edit
 READ_ONLY_COLUMNS = ["Name", "Weight", "Price"]
 
 
@@ -312,7 +312,7 @@ def _import_list(quote: Callable[[str], object], config_groups) -> None:
 def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
     by = st.radio("Show allocation by", ["Holding", "Group"], key="ws_alloc_by", horizontal=True)
     shown = weights if by == "Holding" else weights.groupby(lambda t: groups.get(t, "Other")).sum()
-    st.plotly_chart(allocation_chart(shown, title=f"Allocation by {by.lower()}"), width="stretch")
+    plot(allocation_chart(shown, title=f"Allocation by {by.lower()}"))
 
 
 def screen_table(

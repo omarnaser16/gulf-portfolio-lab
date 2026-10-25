@@ -118,10 +118,20 @@ def test_too_low_cap_explains_instead_of_stopping(app: AppTest) -> None:
     assert app.dataframe  # the Portfolio tab still works, so the cap or holdings can be fixed
 
 
-def test_sidebar_has_no_asset_picker_and_holdings_drive_the_tabs(app: AppTest) -> None:
-    keys = {w.key for w in app.sidebar.get("multiselect") + app.sidebar.get("text_input")}
-    assert not {"presets", "custom_tickers"} & keys
-    assert not any(s.key == "max_weight" for s in app.sidebar.slider)
+def test_no_sidebar_settings_in_a_popover_and_dark_charts(app: AppTest) -> None:
+    assert len(app.sidebar.children) == 0  # nothing in the sidebar at all
+    assert app.radio(key="data_period").label == "Data period"  # now in ⚙ Settings
+    assert app.selectbox(key="ws_benchmark").label == "Benchmark"  # top bar
+    charts = app.get("plotly_chart")
+    assert charts and all(c.proto.theme == "" for c in charts)  # theme=None: our template
+    assert all(json.loads(c.proto.spec)["layout"]["paper_bgcolor"] == "#121316" for c in charts)
+    before = _metric_tables(app)[1].loc["Max Sharpe", "CAGR"]
+    app.number_input[0].set_value(100.0).run()  # costs (bps) in the settings popover
+    assert not app.exception, app.exception
+    assert _metric_tables(app)[1].loc["Max Sharpe", "CAGR"] != before
+
+
+def test_holdings_drive_the_tabs(app: AppTest) -> None:
     assert app.slider(key="max_weight").label == "Max weight per asset (optimiser limit)"
     assets_table = _metric_tables(app)[0]
     assert set(assets_table.index) == {"SPY", "AGG", "GLD", "KSA"}  # the default holdings

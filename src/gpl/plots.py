@@ -7,6 +7,10 @@ Presentation only: these functions take results from the finance modules and ret
 beyond reshaping (e.g. summing weights within an asset group).
 
 Colour follows the entity, not its rank: series get categorical slots in a fixed order.
+All charts share one dark plotly template, ``gpl_dark``, set on every figure (not only as
+plotly's default, which importing Streamlit replaces), matching the dashboard's terminal-style
+theme. A benchmark or other reference series is drawn as a neutral grey dashed line outside the
+categorical slots.
 """
 
 from collections.abc import Mapping, Sequence
@@ -14,30 +18,75 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 
-# Validated categorical palette (light surface), assigned in this order, never cycled.
+# Categorical palette for the dark surface, assigned in this order, never cycled. Checked with
+# the dataviz validator against #121316: lightness band, chroma, adjacent colour-blind
+# separation (worst 8.3) and normal-vision separation (worst 19.7) all pass. Slot 1 (amber) is
+# "current", slot 2 (cyan) "proposed".
 SERIES_COLORS = [
-    "#2a78d6",  # blue
-    "#eb6834",  # orange
-    "#1baf7a",  # aqua
-    "#eda100",  # yellow
-    "#e87ba4",  # magenta
+    "#c98500",  # amber
+    "#2a9fb5",  # cyan
+    "#d55181",  # magenta
     "#008300",  # green
-    "#4a3aa7",  # violet
-    "#e34948",  # red
+    "#9085e9",  # violet
+    "#e66767",  # red
+    "#3987e5",  # blue
+    "#199e70",  # aqua
 ]
-SURFACE = "#fcfcfb"
-TEXT_PRIMARY = "#0b0b0b"
-TEXT_SECONDARY = "#52514e"
-GRID = "#e6e5e0"
+REFERENCE_COLOR = "#8e8e8a"  # benchmark / reference series: grey, dashed
+SHADE = "#30333a"  # background shading (e.g. stressed months), visible on the dark surface
+SURFACE = "#121316"
+TEXT_PRIMARY = "#e6e4df"
+TEXT_SECONDARY = "#a9a69f"
+GRID = "#26282d"
 PCT = ".2%"  # d3 format: 0.09 -> 9.00%
-SEQUENTIAL_BLUE = ["#cfe0f6", "#8fb8ea", "#2a78d6"]  # light -> dark, one hue
+SEQUENTIAL_BLUE = ["#16323f", "#1f5d6e", "#2a9fb5"]  # dark -> bright cyan, one hue
+MONO = "SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
+
+pio.templates["gpl_dark"] = go.layout.Template(
+    layout={
+        "paper_bgcolor": SURFACE,
+        "plot_bgcolor": SURFACE,
+        "font": {"color": TEXT_SECONDARY, "size": 12},
+        "title": {"font": {"color": TEXT_PRIMARY, "size": 16}, "x": 0.01, "xanchor": "left"},
+        "colorway": SERIES_COLORS,
+        "xaxis": {
+            "gridcolor": GRID,
+            "linecolor": GRID,
+            "zerolinecolor": GRID,
+            "tickfont": {"family": MONO},
+        },
+        "yaxis": {
+            "gridcolor": GRID,
+            "linecolor": GRID,
+            "zerolinecolor": GRID,
+            "tickfont": {"family": MONO},
+        },
+        "hoverlabel": {"bgcolor": "#1d2025", "font": {"family": MONO, "color": TEXT_PRIMARY}},
+        "legend": {"font": {"color": TEXT_SECONDARY}},
+    }
+)
+pio.templates.default = "gpl_dark"
+
+
+def series_styles(names: Sequence[str], reference: str | None = None) -> dict[str, dict]:
+    """Line style per series: categorical slots in order; ``reference`` grey and dashed."""
+    styles, slot = {}, 0
+    for name in names:
+        if name == reference:
+            styles[name] = {"color": REFERENCE_COLOR, "width": 2, "dash": "dash"}
+        else:
+            styles[name] = {"color": SERIES_COLORS[slot], "width": 2}
+            slot += 1
+    return styles
 
 
 def _base_layout(fig: go.Figure, title: str, y_title: str, y_format: str) -> go.Figure:
     # A long legend wraps onto the title, so with many series it goes below the plot instead.
     below = len(fig.data) > 5
     fig.update_layout(
+        template="gpl_dark",
         title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
@@ -59,36 +108,42 @@ def _check_series_count(n: int) -> None:
         raise ValueError(f"{n} series exceed {len(SERIES_COLORS)} colour slots; group or facet")
 
 
-def equity_chart(equity: pd.DataFrame, title: str = "Growth of $1") -> go.Figure:
-    """Line chart of wealth curves, one column per strategy."""
-    _check_series_count(equity.shape[1])
+def equity_chart(
+    equity: pd.DataFrame, title: str = "Growth of $1", reference: str | None = None
+) -> go.Figure:
+    """Line chart of wealth curves, one column per strategy (``reference`` grey dashed)."""
+    _check_series_count(equity.shape[1] - (reference in equity.columns))
     fig = go.Figure()
-    for color, name in zip(SERIES_COLORS, equity.columns, strict=False):
+    styles = series_styles(list(equity.columns), reference)
+    for name in equity.columns:
         fig.add_trace(
             go.Scatter(
                 x=equity.index,
                 y=equity[name],
                 name=str(name),
                 mode="lines",
-                line={"color": color, "width": 2},
+                line=styles[name],
                 hovertemplate="%{y:.2f}",
             )
         )
     return _base_layout(fig, title, "Wealth (nominal USD)", ".2f")
 
 
-def drawdown_chart(drawdowns: pd.DataFrame, title: str = "Drawdown from peak") -> go.Figure:
+def drawdown_chart(
+    drawdowns: pd.DataFrame, title: str = "Drawdown from peak", reference: str | None = None
+) -> go.Figure:
     """Line chart of drawdown series (values <= 0), one column per strategy."""
-    _check_series_count(drawdowns.shape[1])
+    _check_series_count(drawdowns.shape[1] - (reference in drawdowns.columns))
     fig = go.Figure()
-    for color, name in zip(SERIES_COLORS, drawdowns.columns, strict=False):
+    styles = series_styles(list(drawdowns.columns), reference)
+    for name in drawdowns.columns:
         fig.add_trace(
             go.Scatter(
                 x=drawdowns.index,
                 y=drawdowns[name],
                 name=str(name),
                 mode="lines",
-                line={"color": color, "width": 2},
+                line=styles[name],
                 hovertemplate="%{y:.2%}",
             )
         )
@@ -287,7 +342,7 @@ def regime_chart(
     if realised is not None:
         for start, end in _runs(realised.reindex(p_stressed.index) == 1):
             fig.add_vrect(
-                x0=start, x1=end, fillcolor=GRID, opacity=0.8, line_width=0, layer="below"
+                x0=start, x1=end, fillcolor=SHADE, opacity=0.9, line_width=0, layer="below"
             )
         # legend entry for the shading
         fig.add_trace(
@@ -296,7 +351,7 @@ def regime_chart(
                 y=[None],
                 mode="markers",
                 name="Actually stressed",
-                marker={"color": GRID, "size": 12, "symbol": "square"},
+                marker={"color": SHADE, "size": 12, "symbol": "square"},
             )
         )
     fig = _base_layout(fig, title, "P(stressed)", PCT)
@@ -359,6 +414,7 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
         )
     )
     fig.update_layout(
+        template="gpl_dark",
         title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
         paper_bgcolor=SURFACE,
         font={"color": TEXT_SECONDARY, "size": 12},
