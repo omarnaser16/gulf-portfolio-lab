@@ -434,3 +434,19 @@ days; the work itself was done in a series of sessions.
 - **Open question:** add a second verified Sharia cash or sukuk fund, or let the adviser
   widen the Riyadh IPS?
 - **Status:** 891 tests passing.
+
+## Riyadh example labelled — 2026-11-04
+- **Decided:** keep the Riyadh IPS unchanged, and label the example clearly instead.
+- **Built by Claude Code:**
+  - The label "No portfolio meets every rule: closest mix shown, with the reasons." appears
+    in four places:
+    - the example picker ("· closest mix");
+    - the Client step;
+    - the Suitability step, with each failed rule's measured breach;
+    - the suitability record, so it carries into the client report.
+  - The reason is written from the IPS's own limits (25% cap, 30% GCC, 9% volatility, 15%
+    drawdown). The label shows only while the example's own portfolio is loaded, so it
+    disappears once the holdings change or another client is loaded.
+- **Checked on live data:** the Suitability step shows "Volatility: 9.35%, 0.35 pp beyond
+  the 9.00% limit" under the label.
+- **Status:** 893 tests passing.
