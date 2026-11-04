@@ -389,3 +389,25 @@ days; the work itself was done in a series of sessions.
 - **Status:** 884 tests passing (655 at the start of the session).
 - **Next:** a practitioner review of the fact-find fields and rules; deploy the public demo
   with the "do not enter real client data" notice.
+
+## Open items closed — 2026-11-04
+- **Directed:** finish the open items from the upgrade, then check the Optimise step, the AI
+  chat and every page of the client report.
+- **Built by Claude Code:**
+  - The three example clients have complete fact-finds and now produce a final IPS. Their
+    risk scores and limits are unchanged (a test locks them).
+  - Benchmarks are grey in every backtest chart: 60/40 dashed, SPY dotted, and neither takes
+    a colour slot.
+  - The analyst's suitability tool runs the knowledge & experience check too.
+- **Checked:**
+  - Optimise on live data: with BIL added, Max Sharpe is recommended and passes every rule.
+  - A live AI review: every figure cites a tool and the charts are drawn by code.
+  - The real 10-page client report, downloaded from the app and read page by page. The
+    trade totals add up.
+- **Found in the PDF and fixed:**
+  - Chart markers ("[show_chart: …]") and a citation with a note were left in the
+    commentary.
+  - "Important information" sat alone at the foot of a page.
+  - The goals' required return printed "-0.00%" and gave the rate twice.
+  - Capacity for loss had no % sign.
+- **Status:** 889 tests passing.
