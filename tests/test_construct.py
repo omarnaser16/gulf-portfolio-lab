@@ -287,3 +287,15 @@ def test_policy_benchmark_fits_the_ips_by_construction() -> None:
     # Sharia: SPSK is the only bond/cash fund, so a defensive mix can't stay within the cap
     sharia = policy_benchmark(_ips(sharia_only=True), rets)
     assert not sharia.passes and "can't stay within the 30.00% cap" in sharia.reasons[0]
+
+
+def test_domicile_suggestions_only_claim_what_applies() -> None:
+    from gpl.construct import domicile_suggestions
+    from gpl.data import load_investable
+
+    tags = load_investable()
+    ideas = {s.remove: s.reason for s in domicile_suggestions(
+        pd.Series({"SPY": 0.5, "GLD": 0.2, "BIL": 0.3}), tags, us_person=False)}  # fmt: skip
+    assert "withholding on its dividends" in ideas["SPY"]
+    assert "withholding" not in ideas["BIL"] and "estate-tax" in ideas["BIL"]
+    assert "pays no dividends" in ideas["GLD"]

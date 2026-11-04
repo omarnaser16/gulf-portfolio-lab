@@ -84,6 +84,8 @@ STYLES = {
 STYLES["h3"] = ParagraphStyle(
     "h3", parent=STYLES["body"], fontName="Helvetica-Bold", spaceBefore=6, spaceAfter=2
 )
+for _heading in ("h2", "h3"):  # a heading never ends a page: it moves with what follows
+    STYLES[_heading].keepWithNext = 1
 STYLES["bullet"] = ParagraphStyle(
     "bullet", parent=STYLES["body"], leftIndent=12, bulletIndent=2, spaceAfter=1
 )
@@ -362,7 +364,7 @@ LIMITATIONS = [
     "The policy checks follow the rules in your Investment Policy Statement. 'Adviser to "
     "check' means the data cannot decide (for example, an unknown Sharia status).",
     "The recommendation compares several standard portfolio methods on past data, each "
-    "re-estimated month by month using only information available at the time, after costs. "
+    "re-estimated at each rebalance using only information available at the time, after costs. "
     "It is risk-adjusted and historical, not a promise of higher returns.",
     "The commentary was drafted with an AI assistant from the figures above and reviewed by "
     "your adviser; the AI did not calculate any figure or choose any weights.",
@@ -955,11 +957,16 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
             )
         )
     # suitability
-    story.append(para("Does it fit your investment policy?", "h2"))
     if not inputs.suitability:
+        story.append(para("Does it fit your investment policy?", "h2"))
         story.append(para("No policy check: no client profile was entered."))
-    else:
-        story.append(_suitability_table(inputs.suitability))
+    else:  # the heading stays with its table
+        story.append(
+            KeepTogether(
+                [para("Does it fit your investment policy?", "h2"),
+                 _suitability_table(inputs.suitability)]
+            )
+        )  # fmt: skip
         story.append(
             para(
                 "Risk figures (volatility, drawdown) use each mix over the holdings' full shared "

@@ -593,18 +593,32 @@ def domicile_suggestions(
     if us_person:
         return []
     twins = {r["ucits_of"]: t for t, r in universe.items() if r.get("ucits_of")}
-    return [
-        Swap(
-            "domicile",
-            t,
-            twins[t],
-            f"{t} is US-domiciled; {twins[t]} ({universe[twins[t]]['name']}) is the Irish "
-            "equivalent: lower US dividend withholding (15% vs 30%) and no US estate-tax "
-            "exposure. Information, not tax advice: check costs, tracking and share class.",
+    out = []
+    for t in current.index:
+        if current[t] <= 0 or t not in twins:
+            continue
+        alt = twins[t]
+        income = universe[alt]["asset_class"] in ("Equity", "Real estate")
+        benefit = (
+            "lower US withholding on its dividends (15% at fund level vs 30%) and no US "
+            "estate-tax exposure"
+            if income
+            else "no US estate-tax exposure (it pays no dividends to withhold on: "
+            f"{universe[alt]['asset_class'].lower()})"
+            if universe[alt]["asset_class"] == "Gold"
+            else "no US estate-tax exposure"
         )
-        for t in current.index
-        if current[t] > 0 and t in twins
-    ]
+        out.append(
+            Swap(
+                "domicile",
+                t,
+                alt,
+                f"{t} is US-domiciled; {alt} ({universe[alt]['name']}) is the Irish "
+                f"equivalent: {benefit}. Information, not tax advice: check costs, tracking "
+                "and share class.",
+            )
+        )
+    return out
 
 
 def apply_swaps(current: pd.Series, swaps: list[Swap]) -> list[str]:
