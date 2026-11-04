@@ -211,8 +211,11 @@ def recommend(
     tolerance: float = 0.005,
     held_up_ratio: float = 0.5,
     min_sharpe_gain: float = 0.05,
+    extra: tuple[str, ...] = (),
 ) -> Recommendation:
     """Apply the goal's rule to walk-forward results.
+
+    ``extra``: further candidate rows judged by the same rule (e.g. "Re-weight + swaps").
 
     Parameters
     ----------
@@ -258,7 +261,7 @@ def recommend(
     benchmark = table.loc[BENCHMARK] if BENCHMARK in table.index else None
     if goal == "beat_benchmark_less_risk" and benchmark is None:
         raise ValueError("beat_benchmark_less_risk needs a Benchmark row")
-    cands = table[table.index.isin(list(CANDIDATES))]
+    cands = table[table.index.isin([*CANDIDATES, *extra])]
     cands = cands[cands["feasible"].astype(bool)]
     survived = {
         n: held_up(r["in_sample_sharpe"], r["sharpe"], held_up_ratio) for n, r in cands.iterrows()
@@ -366,3 +369,100 @@ def _move_off_failing(
             "out of sample; no passing method held up."
         )
     return Recommendation(pick, rule, reasons, order, survived, "recommended", False)
+
+
+# ------------------------------------------------------------------------ Build mode
+
+TRACKER = "Benchmark tracker"
+DIVERSIFIED = "Diversified (IPS)"
+BUILD_RULE = (
+    "Highest walk-forward information ratio after costs among portfolios that pass the IPS, "
+    "held up out of sample, kept volatility at most the benchmark's (within {tol}) and tracking "
+    "error within {te}, and beat the benchmark out of sample (excess return and information "
+    "ratio above zero). If none did: a low-cost benchmark tracker if it passes the IPS, else "
+    "the best IPS-compliant diversified portfolio."
+)
+
+
+def recommend_build(
+    table: pd.DataFrame,
+    tracking_error_max: float,
+    tolerance: float = 0.005,
+    held_up_ratio: float = 0.5,
+) -> Recommendation:
+    """Choose among built portfolios by a fixed rule (``BUILD_RULE``); never promises returns.
+
+    ``table``: one row per candidate plus ``Benchmark``, with ``volatility``, ``sharpe``,
+    ``in_sample_sharpe``, ``excess_return``, ``information_ratio``, ``tracking_error``,
+    ``feasible`` and (with an IPS) ``passes_ips``, ``ips_fails``, ``ips_breach``. Statuses:
+    "recommended" (beats the benchmark under the rule), "next_best" (the tracker or the
+    diversified portfolio: it does not beat the benchmark) or "closest_fails" (nothing passes
+    the IPS: the closest, with its breaches).
+    """
+    rule = BUILD_RULE.format(tol=f"{tolerance * 100:.2f} pp", te=f"{tracking_error_max:.2%}")
+    bench_vol = float(table.loc[BENCHMARK, "volatility"])
+    cands = table.drop(index=[BENCHMARK, CURRENT], errors="ignore")
+    if "feasible" in cands:
+        cands = cands[cands["feasible"].fillna(True).astype(bool)]
+    passes = (
+        cands["passes_ips"].fillna(False).astype(bool)
+        if "passes_ips" in cands
+        else pd.Series(True, index=cands.index)
+    )
+    survived = {
+        n: held_up(cands.loc[n, "in_sample_sharpe"], cands.loc[n, "sharpe"], held_up_ratio)
+        for n in cands.index
+    }
+    builds = cands.drop(index=[TRACKER, DIVERSIFIED], errors="ignore")
+    ok = builds[
+        passes.reindex(builds.index)
+        & pd.Series(survived).reindex(builds.index).fillna(False).astype(bool)
+        & (builds["volatility"] <= bench_vol + tolerance)
+        & (builds["tracking_error"] <= tracking_error_max + tolerance)
+        & (builds["excess_return"] > 0)
+        & (builds["information_ratio"] > 0)
+    ]
+    if len(ok):
+        ranking = ok.sort_values("information_ratio", ascending=False).index.tolist()
+        pick = ranking[0]
+        r = ok.loc[pick]
+        reasons = [
+            f"{pick} ranks first under the rule: walk-forward information ratio "
+            f"{r['information_ratio']:.2f}, {r['excess_return']:.2%} a year above the benchmark "
+            f"after costs, tracking error {r['tracking_error']:.2%}, volatility "
+            f"{r['volatility']:.2%} against the benchmark's {bench_vol:.2%}.",
+            "Historical and risk-adjusted: not a promise that it will beat the benchmark.",
+        ]
+        return Recommendation(pick, rule, reasons, ranking, survived, "recommended")
+    why = "No built portfolio beat the benchmark out of sample after costs within the IPS."
+    for name, label in (
+        (TRACKER, "a low-cost benchmark tracker"),
+        (DIVERSIFIED, "the best IPS-compliant diversified portfolio"),
+    ):
+        if name in cands.index and passes.get(name, False):
+            return Recommendation(
+                name,
+                rule,
+                [
+                    why,
+                    f"Next best option: {label}. It does not beat the benchmark; it is the "
+                    "rule's fallback, not a forecast.",
+                ],
+                [],
+                survived,
+                "next_best",
+            )
+    pool = cands if "ips_fails" in cands else None
+    if pool is None or pool.empty:
+        return Recommendation(KEEP, rule, [why, "No candidate could be built."], [], survived,
+                              "closest_fails")  # fmt: skip
+    closest = _closest(pool)
+    return Recommendation(
+        closest,
+        rule,
+        [why, f"No portfolio passes every IPS rule; the closest is {closest}, shown with its "
+              "breaches. Not suitable as it stands."],
+        [],
+        survived,
+        "closest_fails",
+    )  # fmt: skip

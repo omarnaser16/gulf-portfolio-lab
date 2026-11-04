@@ -249,3 +249,73 @@ def test_keep_needs_a_passing_current_portfolio_and_always_has_reasons() -> None
     assert rec.reasons[-1] == "Your current portfolio passes every IPS rule."
     ungated = recommend("max_risk_adjusted", table(BASE).assign(sharpe=lambda f: f.sharpe))
     assert ungated.current_passes_ips is None  # no IPS: no claim either way
+
+
+# ------------------------------------------------------------------------ Build mode
+
+
+def _build_table(**overrides) -> pd.DataFrame:
+    from gpl.recommend import DIVERSIFIED, TRACKER
+
+    rows = {
+        "Max IR": dict(volatility=0.10, sharpe=0.80, in_sample_sharpe=1.0, excess_return=0.01,
+                       information_ratio=0.30, tracking_error=0.03, passes_ips=True),
+        "Max IR · momentum tilt": dict(volatility=0.10, sharpe=0.85, in_sample_sharpe=1.0,
+                                       excess_return=0.015, information_ratio=0.45,
+                                       tracking_error=0.035, passes_ips=True),
+        TRACKER: dict(volatility=0.11, sharpe=0.70, in_sample_sharpe=0.7, excess_return=-0.001,
+                      information_ratio=-0.5, tracking_error=0.002, passes_ips=True),
+        DIVERSIFIED: dict(volatility=0.08, sharpe=0.75, in_sample_sharpe=0.9, excess_return=-0.01,
+                          information_ratio=-0.2, tracking_error=0.05, passes_ips=True),
+        "Benchmark": dict(volatility=0.11, sharpe=0.72, in_sample_sharpe=None, excess_return=0.0,
+                          information_ratio=None, tracking_error=0.0, passes_ips=None),
+    }  # fmt: skip
+    for name, change in overrides.items():
+        rows[name] = {**rows[name], **change}
+    table = pd.DataFrame(rows).T
+    table["ips_fails"] = [0 if p else 1 for p in table["passes_ips"]]
+    table["ips_breach"] = 0.0
+    return table
+
+
+def test_build_picks_the_highest_ir_that_beats_the_benchmark() -> None:
+    from gpl.recommend import recommend_build
+
+    rec = recommend_build(_build_table(), tracking_error_max=0.04)
+    assert rec.status == "recommended" and rec.choice == "Max IR · momentum tilt"
+    assert rec.ranking == ["Max IR · momentum tilt", "Max IR"]
+    assert "not a promise" in rec.reasons[-1]
+
+
+def test_build_excludes_too_much_tracking_error_volatility_or_ips_fails() -> None:
+    from gpl.recommend import recommend_build
+
+    rec = recommend_build(
+        _build_table(**{"Max IR · momentum tilt": {"tracking_error": 0.06}}), 0.04
+    )
+    assert rec.choice == "Max IR"  # 6.00% tracking error is over the 4.00% limit
+    rec = recommend_build(_build_table(**{"Max IR · momentum tilt": {"volatility": 0.13}}), 0.04)
+    assert rec.choice == "Max IR"  # riskier than the benchmark
+    rec = recommend_build(_build_table(**{"Max IR · momentum tilt": {"passes_ips": False}}), 0.04)
+    assert rec.choice == "Max IR"
+    rec = recommend_build(_build_table(**{"Max IR · momentum tilt": {"sharpe": 0.3}}), 0.04)
+    assert rec.choice == "Max IR"  # 0.3 is under half its in-sample 1.0: didn't hold up
+
+
+def test_build_falls_back_to_tracker_then_diversified_then_closest() -> None:
+    from gpl.recommend import DIVERSIFIED, TRACKER, recommend_build
+
+    none_beat = {
+        "Max IR": {"excess_return": -0.01},
+        "Max IR · momentum tilt": {"information_ratio": -0.1},
+    }
+    rec = recommend_build(_build_table(**none_beat), 0.04)
+    assert rec.status == "next_best" and rec.choice == TRACKER
+    assert "does not beat the benchmark" in rec.reasons[1]
+    rec = recommend_build(_build_table(**none_beat, **{TRACKER: {"passes_ips": False}}), 0.04)
+    assert rec.status == "next_best" and rec.choice == DIVERSIFIED
+    all_fail = {n: {"passes_ips": False} for n in ("Max IR", "Max IR · momentum tilt", TRACKER,
+                                                  DIVERSIFIED)}  # fmt: skip
+    all_fail["Max IR"]["ips_fails"] = 1
+    rec = recommend_build(_build_table(**all_fail), 0.04)
+    assert rec.status == "closest_fails" and "Not suitable as it stands" in rec.reasons[1]
