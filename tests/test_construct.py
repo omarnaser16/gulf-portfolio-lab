@@ -239,3 +239,21 @@ def test_improve_strategy_swaps_and_caps_turnover() -> None:
     assert w[added].iloc[-1] > 0  # the diversifier is held
     steps = w.diff().abs().sum(axis=1).iloc[1:]
     assert (steps <= 0.3 + 1e-6).all()  # every rebalance within the 30% limit
+
+
+def test_limits_come_before_the_turnover_limit_by_hand() -> None:
+    from gpl.construct import limit_turnover_within
+
+    current = pd.Series({"A": 0.5, "B": 0.3, "C": 0.2})  # A breaks the 40% cap
+    target = pd.Series({"A": 0.3, "B": 0.4, "C": 0.3})
+    spec = OptimisationSpec(max_weight=0.4)
+    # the full move trades 0.40; a 0.10 limit allows a quarter of it, but A must fall from
+    # 50% to 40%: (0.5 - 0.4) / (0.5 - 0.3) = half of the move
+    w, share, need = limit_turnover_within(current, target, 0.10, spec)
+    assert need == pytest.approx(0.5) and share == pytest.approx(0.5)
+    assert w["A"] == pytest.approx(0.40) and turnover(current, w) == pytest.approx(0.20)
+    _, share, _ = limit_turnover_within(current, target, 1.0, spec)
+    assert share == 1.0  # the turnover limit allows the whole move
+    within = pd.Series({"A": 0.4, "B": 0.35, "C": 0.25})  # already within the cap
+    w, share, need = limit_turnover_within(within, target, 0.10, spec)
+    assert need == 0.0 and turnover(within, w) == pytest.approx(0.10)

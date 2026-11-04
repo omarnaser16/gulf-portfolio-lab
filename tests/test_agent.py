@@ -441,3 +441,78 @@ def test_suitability_tool_includes_the_knowledge_check(ctx) -> None:
         assert next(r for r in rules if r["rule"] == "Knowledge & experience")["status"] == "pass"
     finally:
         ctx.user_portfolio, ctx.product_types, ctx.ips = before
+
+
+# ------------------------------------------------------------------ Build and Improve modes
+
+
+def _universe_ctx(ctx):
+    from dataclasses import replace
+
+    from gpl.agent.tools import UniverseData
+    from gpl.construct import _groups
+    from gpl.data import BenchmarkData, load_investable
+
+    tags = load_investable()
+    tickers = list(ctx.prices.columns)
+    rets = ctx.prices.pct_change().iloc[1:]
+    bench = BenchmarkData("60/40", "test", 0.6 * rets["SPY"] + 0.4 * rets["AGG"], False, [])
+    c = replace(ctx, benchmark=bench, ips=None, settings={**ctx.settings, "optimise_lab": {}})
+    uni = UniverseData(
+        prices=ctx.prices,
+        tags=tags,
+        eligible=tickers,
+        excluded={},
+        groups=_groups(tickers, tags),
+        currencies=dict.fromkeys(tickers, "USD"),
+    )
+    return c, uni
+
+
+def test_run_build_reports_candidates_rule_and_securities(ctx) -> None:
+    from gpl.agent.tools import run_build
+    from gpl.construct import BuildSettings
+    from gpl.optimise import OptimisationSpec
+
+    c, uni = _universe_ctx(ctx)
+    settings = BuildSettings(tracking_error_max=0.06, n_min=4, n_max=6)
+    report, run = run_build(
+        c, uni, OptimisationSpec(max_weight=0.4), {"SPY": 0.6, "AGG": 0.4}, settings,
+        {"SPY": 0.6, "AGG": 0.4},
+    )  # fmt: skip
+    rows = report["walk_forward_after_costs"]
+    assert {"Max IR", "Diversified (IPS)", "Benchmark tracker", "Benchmark"} <= set(rows)
+    for key in ("excess_return_vs_benchmark", "information_ratio", "hit_rate_months",
+                "worst_relative_drawdown", "tracking_error", "turnover_per_year"):  # fmt: skip
+        assert key in rows["Max IR"], key
+    rec = report["recommendation"]
+    assert rec["status"] in {"recommended", "next_best", "closest_fails"}
+    assert "information ratio" in rec["rule"] and "survivorship" in report["caveats"]
+    if rec["choice"] in run.latest_weights.index:
+        chosen = run.latest_weights.loc[rec["choice"]]
+        assert chosen.sum() == pytest.approx(1.0)
+        assert set(report["securities_chosen"]) == set(chosen[chosen > 1e-9].index)
+    assert run.latest_weights.index[0] == "Current"
+    if rec["status"] == "recommended":
+        assert float(rows[rec["choice"]]["excess_return_vs_benchmark"].rstrip("%")) > 0
+
+
+def test_improve_caps_turnover_runs_swaps_and_lists_domicile_ideas(ctx) -> None:
+    from gpl.agent.tools import run_candidates
+    from gpl.construct import turnover
+    from gpl.optimise import OptimisationSpec
+
+    c, uni = _universe_ctx(ctx)
+    current = {"SPY": 0.5, "EFA": 0.3, "EEM": 0.2}  # no bonds: a diversifier is missing
+    report, run = run_candidates(
+        c, "max_risk_adjusted", OptimisationSpec(max_weight=0.6), current,
+        max_turnover=0.30, universe=uni,
+    )  # fmt: skip
+    assert report["mode"] == "improve" and report["max_turnover"] == "30.00%"
+    assert "Re-weight + swaps" in report["walk_forward_after_costs"]
+    assert any(sw["kind"] == "diversifier" for sw in report["swaps"])
+    now = pd.Series(current)
+    for name in run.latest_weights.index.drop("Current"):
+        assert turnover(now, run.latest_weights.loc[name]) <= 0.30 + 1e-6, name
+    dom = report["domicile_suggestions_information_not_tax_advice"]
+    assert any(d["sell"] == "SPY" and d["buy"] == "CSPX.L" for d in dom)

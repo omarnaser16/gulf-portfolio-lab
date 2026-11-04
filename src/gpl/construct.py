@@ -422,14 +422,23 @@ def build_strategy(
     return strategy
 
 
-def turnover_limited(strategy, start: Mapping[str, float], max_turnover: float):
+def turnover_limited(
+    strategy,
+    start: Mapping[str, float],
+    max_turnover: float,
+    spec: OptimisationSpec | None = None,
+):
     """Wrap a walk-forward strategy so each rebalance moves at most ``max_turnover`` from the
-    previous target, starting from the client's current weights (``limit_turnover``)."""
+    previous target, starting from the client's current weights. With ``spec``, the limits
+    come first (``limit_turnover_within``): a move never stops short of them."""
     state = {"last": pd.Series(start, dtype=float)}
 
     def limited(window: pd.DataFrame) -> pd.Series:
         target = strategy(window)
-        w, _ = limit_turnover(state["last"], target, max_turnover)
+        if spec is None:
+            w, _ = limit_turnover(state["last"], target, max_turnover)
+        else:
+            w, _, _ = limit_turnover_within(state["last"], target, max_turnover, spec)
         w = w / w.sum()
         state["last"] = w
         return w
@@ -600,9 +609,9 @@ def improve_strategy(
         mu = win.mean() * periods_per_year
         cov, _ = ledoit_wolf_cov(win, periods_per_year)
         result = optimise(mu, cov, spec_for(holdings), _annual_rf_at(rf, window.index[-1]))
+        strategy.latest_swaps = swaps  # the ideas, even in a month the limits can't be met
         if result.feasible:
             target = result.weights
-            strategy.latest_swaps = swaps
         else:
             strategy.infeasible_dates.append(window.index[-1])
             target = state["last"]
@@ -615,3 +624,48 @@ def improve_strategy(
     strategy.infeasible_dates = []
     strategy.latest_swaps = []
     return strategy
+
+
+def _linear_rows(
+    spec: OptimisationSpec, tickers: list[str]
+) -> list[tuple[pd.Series, float | None, float | None]]:
+    """The spec's linear limits as (coefficients, minimum, maximum) rows over ``tickers``."""
+    rows = []
+    for t in tickers:
+        lo, hi = spec.asset_bounds.get(t, (None, None))
+        cap = spec.max_weight if hi is None else min(hi, spec.max_weight)
+        rows.append((pd.Series({t: 1.0}), lo, cap))
+    for group, (lo, hi) in spec.group_bounds.items():
+        members = [t for t in tickers if spec.groups.get(t) == group]
+        rows.append((pd.Series(1.0, index=members), lo, hi))
+    for members, lo, hi in spec.sets.values():
+        rows.append((pd.Series(1.0, index=[t for t in tickers if t in members]), lo, hi))
+    return rows
+
+
+def limit_turnover_within(
+    current: pd.Series, target: pd.Series, max_turnover: float, spec: OptimisationSpec
+) -> tuple[pd.Series, float, float]:
+    """``limit_turnover``, but the limits come first: if the turnover limit would leave a
+    linear limit broken (e.g. a holding still above the cap), move just far enough to meet
+    every one. Returns (weights, share of the move taken, smallest share the limits need).
+
+    Along the line from ``current`` (s = 0) to a ``target`` that meets the limits (s = 1),
+    each linear limit holds from some s onwards; the largest of those is the least the
+    limits need. E.g. 50% in one holding, a 40% cap and a target of 30%: s >= 0.5.
+    """
+    idx = current.index.union(target.index)
+    w0 = current.reindex(idx, fill_value=0.0)
+    w1 = target.reindex(idx, fill_value=0.0)
+    need = 0.0
+    for coef, lo, hi in _linear_rows(spec, list(idx)):
+        g0 = float(coef.reindex(idx, fill_value=0.0) @ w0)
+        g1 = float(coef.reindex(idx, fill_value=0.0) @ w1)
+        if hi is not None and g0 > hi + 1e-12 and g0 > g1:
+            need = max(need, (g0 - hi) / (g0 - g1))
+        if lo is not None and g0 < lo - 1e-12 and g1 > g0:
+            need = max(need, (lo - g0) / (g1 - g0))
+    _, share = limit_turnover(w0, w1, max_turnover)
+    share = min(1.0, max(share, need))
+    w = w0 + share * (w1 - w0)
+    return w[w.abs() > 1e-12], share, need

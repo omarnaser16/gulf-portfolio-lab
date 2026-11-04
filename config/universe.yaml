@@ -104,6 +104,15 @@ optimise_lab:
   volatility_tolerance: 0.005      # 0.50 pp: "about the same" / "on target" volatility
   held_up_ratio: 0.50              # keeps >= 50% of its in-sample Sharpe out of sample
   min_sharpe_gain: 0.05            # a change must beat the current Sharpe by this much
+  # "Build a portfolio for me" and "Improve my current portfolio" (gpl/construct.py)
+  tracking_error_max: 0.04         # build: at most 4% a year away from the benchmark
+  build_holdings: [8, 15]          # build: 8-15 holdings
+  build_min_weight: 0.02           # build: each holding at least 2%
+  tilt_min: 0.25                   # build: at least 25% in a tilt's top-scored names
+  build_min_history_years: 10      # build: securities with 10+ years of prices
+  build_min_history_years_sharia: 6  # Sharia funds start 2019: shorter, and labelled
+  max_turnover: 0.30               # improve: at most 30% of the portfolio traded
+  max_swaps: 3                     # improve: at most 3 swaps
 
 # Historical stress episodes (Analyst stress test). Returns run from the close on `start` to the
 # close on `end`.

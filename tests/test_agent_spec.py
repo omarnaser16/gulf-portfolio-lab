@@ -327,3 +327,13 @@ def test_active_limits_name_their_source() -> None:
     }
     assert by["Cash need (BIL)"]["value"] == "at least 20.00%"
     assert active_limits(OptimisationSpec(), None, OptimisationSpec()) == []
+
+
+def test_turnover_and_tracking_error_limits_are_checked_against_the_text() -> None:
+    from gpl.agent.spec import numbers_not_in_goals, spec_tool
+
+    props = spec_tool(["SPY"], ["Global equity"])["input_schema"]["properties"]
+    assert "max_turnover_pct" in props and "tracking_error_max_pct" in props
+    draft = {"max_turnover_pct": 20, "tracking_error_max_pct": 3}
+    assert numbers_not_in_goals(draft, "trade at most 20%, tracking error under 3%") == []
+    assert numbers_not_in_goals(draft, "trade at most 20%") == ["3%"]

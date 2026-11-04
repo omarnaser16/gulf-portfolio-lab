@@ -18,6 +18,7 @@ from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent.charts import CHART_TYPES
 from gpl.client import effective_regulator
+from gpl.construct import limit_turnover_within, turnover, turnover_limited
 from gpl.data import (
     BenchmarkData,
     clean_prices,
@@ -562,6 +563,28 @@ def diagnose_portfolio(ctx: AnalystContext, current: Mapping[str, float]) -> dic
 
 
 @dataclass
+class UniverseData:
+    """The curated universe loaded for Build / Improve: prices in USD on common dates.
+
+    ``tags``: ticker -> universe tags (``config/investable_universe.yaml``); ``eligible``:
+    after the IPS screen; ``excluded``: ticker -> reason; ``groups``: ticker -> holding group
+    for the IPS limits ("GCC" or the asset class); ``currencies``: ticker -> quote currency.
+    """
+
+    prices: pd.DataFrame
+    tags: Mapping[str, Mapping]
+    eligible: list[str]
+    excluded: Mapping[str, str]
+    groups: Mapping[str, str]
+    currencies: Mapping[str, str]
+    periods_per_year: int = PERIODS_PER_YEAR
+
+    @property
+    def returns(self) -> pd.DataFrame:
+        return to_returns(self.prices)
+
+
+@dataclass
 class CandidateRun:
     """What the Optimise tab draws besides the report: equity curves and latest weights."""
 
@@ -577,8 +600,19 @@ def run_candidates(
     limits: OptimisationSpec,
     current: Mapping[str, float],
     target: float | None = None,
+    max_turnover: float | None = None,
+    universe: UniverseData | None = None,
+    max_swaps: int = 3,
 ) -> tuple[dict, CandidateRun]:
     """Run every candidate method within ``limits``, walk-forward after costs, and recommend one.
+
+    "Improve my current portfolio": with ``max_turnover``, every method moves at most that much
+    from the previous target each month, starting from the current weights, and today's
+    suggested change is capped against the current portfolio too. With ``universe``, a
+    "Re-weight + swaps" candidate also runs: each month the swap rules (``gpl.construct.
+    swap_ideas``: duplicates out, a missing diversifier in, at most ``max_swaps``) run on the
+    trailing window only. UCITS domicile changes are listed separately (information, not part
+    of the recommendation rule).
 
     Covariances use Ledoit-Wolf shrinkage (each month on that month's window only). Expected
     returns are window means. The recommendation is made by ``gpl.recommend.recommend``, a
@@ -630,8 +664,28 @@ def run_candidates(
             fallback=current,
             cov_method="ledoit_wolf",
         )
+        if max_turnover is not None:
+            walk = turnover_limited(walk, current, max_turnover, spec)
         results[name] = bt.run_backtest(prices, walk, **run)
         infeasible_months[name] = len(walk.infeasible_dates)
+
+    swaps_run, swap_name, swaps_infeasible = None, "Re-weight + swaps", None
+    if universe is not None:
+        swaps_run = _swap_candidate(
+            ctx, goal, specs, current, universe, max_turnover, max_swaps, run
+        )
+        months_run = len(swaps_run["result"].weights) if swaps_run is not None else 0
+        swaps_infeasible = None
+        if swaps_run is not None and swaps_run["infeasible"] >= months_run:
+            swaps_infeasible = [
+                "After the swaps, the holdings can't meet your limits in any month."
+            ]
+            swaps_run = None
+        elif swaps_run is not None:
+            results[swap_name] = swaps_run["result"]
+            feasible[swap_name], reasons[swap_name] = True, []
+            in_sample[swap_name] = swaps_run["in_sample"]
+            infeasible_months[swap_name] = swaps_run["infeasible"]
 
     # from the first full day held, as on the Benchmark tab (day one only buys, paying costs)
     frame = pd.DataFrame({n: r.returns.iloc[1:] for n, r in results.items()})
@@ -655,11 +709,26 @@ def run_candidates(
     ]
     table["feasible"] = [n in feasible and feasible[n] for n in table.index]
 
-    latest = pd.DataFrame(
-        {n: r.weights.iloc[-1] for n, r in results.items() if n != CURRENT}
-    ).T.reindex(columns=holdings)
-    latest.loc[CURRENT] = w_now.reindex(holdings)
+    columns = list(dict.fromkeys(
+        [*holdings, *[t for n, r in results.items() for t in r.weights.columns
+                      if r.weights[t].iloc[-1] > 1e-9]]
+    ))  # fmt: skip
+    latest = (
+        pd.DataFrame({n: r.weights.iloc[-1] for n, r in results.items() if n != CURRENT})
+        .T.reindex(columns=columns)
+        .fillna(0.0)
+    )
+    latest.loc[CURRENT] = w_now.reindex(columns).fillna(0.0)
     latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
+    move_share, over_limit = {}, {}
+    if max_turnover is not None:  # today's change, from the actual current weights
+        for name in latest.index.drop(CURRENT):
+            target_w = latest.loc[name]
+            w, move_share[name], need = limit_turnover_within(w_now, target_w, max_turnover, limits)
+            w = (w / w.sum()).reindex(columns).fillna(0.0)
+            if need > 0 and turnover(w_now, w) > max_turnover + 1e-9:
+                over_limit[name] = pct(turnover(w_now, w))
+            latest.loc[name] = w
 
     # identical methods are shown once (e.g. min variance and risk parity at the same cap)
     same_as, same_weights = duplicate_candidates(latest, table)
@@ -670,7 +739,7 @@ def run_candidates(
     ips_checks = {}
     if ctx.ips is not None:
         for name in latest.index:
-            ips_checks[name] = _ips_checks(ctx, latest.loc[name].fillna(0.0))
+            ips_checks[name] = _ips_checks(ctx, latest.loc[name].fillna(0.0), universe)
         table["ips_fails"] = [
             closeness(ips_checks[n])[0] if n in ips_checks else 0 for n in table.index
         ]
@@ -685,6 +754,7 @@ def run_candidates(
         tolerance=lab.get("volatility_tolerance", 0.005),
         held_up_ratio=lab.get("held_up_ratio", 0.5),
         min_sharpe_gain=lab.get("min_sharpe_gain", 0.05),
+        extra=(swap_name,) if swaps_run is not None else (),
     )
 
     months = len(results[CURRENT].weights)
@@ -698,7 +768,7 @@ def run_candidates(
         }
         if name in results:
             row["turnover_per_year"] = times(results[name].turnover.iloc[1:].mean() * 12)
-        if name in CANDIDATES:
+        if name in CANDIDATES or name == swap_name:
             row["in_sample_sharpe"] = num(in_sample[name])
             row["held_up_out_of_sample"] = "yes" if rec.held_up.get(name) else "no"
             row["months_limits_unmet_previous_weights_kept"] = (
@@ -718,7 +788,8 @@ def run_candidates(
         "re-estimated each month on the trailing window only)",
         "walk_forward_after_costs": rows,
         "backtest_period": f"{frame.index[0].date()} to {frame.index[-1].date()}",
-        "infeasible_candidates": {n: reasons[n] for n in specs if not feasible[n]},
+        "infeasible_candidates": {n: reasons[n] for n in specs if not feasible[n]}
+        | ({swap_name: swaps_infeasible} if universe is not None and swaps_infeasible else {}),
         "identical_methods_shown_once": {
             n: f"same weights and results as {first}" for n, first in same_as.items()
         },
@@ -752,17 +823,371 @@ def run_candidates(
             "means no portfolio passed: the closest one is shown for discussion and is NOT "
             "suitable as it stands.",
         }
+    if max_turnover is not None:
+        report["mode"] = "improve"
+        report["max_turnover"] = pct(max_turnover)
+        report["share_of_full_move_taken"] = {n: pct(v) for n, v in move_share.items()}
+        report["trades_more_than_the_turnover_limit_to_meet_the_limits"] = over_limit
+    if swaps_run is not None:
+        report["swaps"] = [
+            {"kind": sw.kind, "sell": sw.remove, "buy": sw.add, "why": sw.reason}
+            for sw in swaps_run["swaps"]
+        ]
+    if universe is not None:
+        from gpl.construct import domicile_suggestions
+
+        us_person = bool(ctx.ips and ctx.ips.client.us_person)
+        report["domicile_suggestions_information_not_tax_advice"] = [
+            {"sell": sw.remove, "buy": sw.add, "why": sw.reason}
+            for sw in domicile_suggestions(w_now, universe.tags, us_person)
+        ]
     if rec.choice != KEEP:
+        w_now_all = w_now.reindex(latest.columns).fillna(0.0)
         report["recommended_latest_weights"] = {
             t: {
-                "current": pct(w_now[t]),
+                "current": pct(w_now_all[t]),
                 "recommended": pct(latest.loc[rec.choice, t]),
-                "change": f"{(latest.loc[rec.choice, t] - w_now[t]) * 100:+.2f} pp",
+                "change": f"{(latest.loc[rec.choice, t] - w_now_all[t]) * 100:+.2f} pp",
             }
-            for t in holdings
+            for t in latest.columns
+            if latest.loc[rec.choice, t] > 1e-9 or w_now_all[t] > 1e-9
         }
     equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns if n not in same_as})
     return report, CandidateRun(equity, latest, rec, ips_checks)
+
+
+LEAD_METHOD = {  # the goal's own method, used for "Re-weight + swaps"
+    "max_risk_adjusted": "Max Sharpe",
+    "reduce_risk": "Min variance",
+    "target_return": "Min variance",
+    "target_volatility": "Target volatility",
+    "beat_benchmark_less_risk": "Max Sharpe",
+}
+GROUP_CLASS = {"Bonds": "Bonds", "Cash & short-term": "Cash", "Gold": "Gold"}
+
+
+def _swap_candidate(ctx, goal, specs, current, universe, max_turnover, max_swaps, run):
+    """Walk-forward "Re-weight + swaps" for ``run_candidates`` (None if it can't run)."""
+    from dataclasses import replace as dc_replace
+
+    from gpl.client import ips_constraints, tighter
+    from gpl.construct import improve_strategy
+
+    held = pd.Series(current, dtype=float)
+    if not set(held.index) <= set(universe.prices.columns):
+        return None
+    lead = specs.get(LEAD_METHOD.get(goal, "Max Sharpe"))
+    if lead is None:
+        return None
+    groups_all = {**universe.groups, **(ctx.holding_groups or {})}
+    classes = {
+        t: GROUP_CLASS.get(groups_all.get(t, ""), universe.tags.get(t, {}).get(
+            "asset_class", "Equity"))
+        for t in held.index
+    }  # fmt: skip
+    cash_cfg = set(ctx.settings.get("cash_like", []))
+    sharia = bool(ctx.ips and ctx.ips.client.sharia_only)
+
+    def spec_for(names: list[str]) -> OptimisationSpec:
+        g = {t: groups_all.get(t, "Other") for t in names}
+        base = dc_replace(
+            lead,
+            asset_bounds={t: b for t, b in lead.asset_bounds.items() if t in names},
+            groups=g,
+            sets={k: (frozenset(m & set(names)), lo, hi) for k, (m, lo, hi) in lead.sets.items()},
+        )
+        if ctx.ips is None:
+            return base
+        cash = [t for t in names if t in cash_cfg or g.get(t) == "Cash & short-term"
+                or universe.tags.get(t, {}).get("asset_class") == "Cash"]  # fmt: skip
+        regions = {t: universe.tags.get(t, {}).get("region", "") for t in names}
+        attrs = {t: {"sharia": universe.tags[t]["sharia"]} for t in names if t in universe.tags}
+        ips_spec, _ = ips_constraints(ctx.ips, names, g, attrs, cash, regions)
+        return dc_replace(tighter(base, ips_spec), objective=lead.objective)
+
+    strategy = improve_strategy(
+        held, list(universe.eligible), universe.tags, classes, spec_for, ctx.rf, max_swaps,
+        max_turnover, universe.periods_per_year,
+        ("Sukuk",) if sharia else ("Bonds", "Sukuk"),
+    )  # fmt: skip
+    result = bt.run_backtest(universe.prices, strategy, **run)
+    final = list(result.weights.columns[result.weights.iloc[-1] > 1e-9])
+    rets = universe.returns[final]
+    mu = rets.mean() * universe.periods_per_year
+    cov, _ = ledoit_wolf_cov(rets, universe.periods_per_year)
+    full = optimise(mu, cov, spec_for(final), _rf_annual(ctx, rets.index[0]))
+    return {
+        "result": result,
+        "swaps": strategy.latest_swaps,
+        "infeasible": len(strategy.infeasible_dates),
+        "in_sample": full.sharpe if full.feasible else float("nan"),
+    }
+
+
+BUILD_CANDIDATES = {  # name -> (objective, tilt)
+    "Max IR": ("max_information_ratio", "none"),
+    "Max IR · low-vol tilt": ("max_information_ratio", "low_vol"),
+    "Max IR · momentum tilt": ("max_information_ratio", "momentum"),
+    "Max IR · quality tilt": ("max_information_ratio", "quality"),
+    "Diversified (IPS)": ("max_diversification", "none"),
+}
+SURVIVORSHIP = (
+    "The universe is today's funds: a backtest over it can't include funds that closed "
+    "(survivorship bias)."
+)
+
+
+def _relative_rows(frame: pd.DataFrame, bench: pd.Series, periods: int) -> pd.DataFrame:
+    from gpl.metrics import relative_summary
+
+    return pd.DataFrame({n: relative_summary(frame[n], bench, periods) for n in frame.columns}).T
+
+
+def run_build(
+    ctx: AnalystContext,
+    universe: UniverseData,
+    limits: OptimisationSpec,
+    current: Mapping[str, float],
+    settings: Any,
+    benchmark_weights: Mapping[str, float],
+) -> tuple[dict, CandidateRun]:
+    """ "Build a portfolio for me": candidates from the curated universe, walk-forward after
+    costs, and a recommendation by ``gpl.recommend.recommend_build`` (a fixed, tested rule).
+
+    Candidates: highest information ratio against the benchmark (with no tilt, and with a
+    low-volatility, momentum or quality tilt), a diversified IPS portfolio, and a benchmark
+    tracker (the benchmark's own funds, Irish UCITS equivalents for a non-US person where
+    available). Each built candidate re-chooses its securities and weights every month from
+    the trailing window only (``gpl.construct.build_strategy``).
+    """
+    from dataclasses import replace as dc_replace
+
+    from gpl.construct import benchmark_core, build_once, build_strategy
+    from gpl.recommend import BENCHMARK, CURRENT, TRACKER, recommend_build
+    from gpl.suitability import breach_text, closeness, failures
+
+    bench = ctx.benchmark
+    if bench is None or bench.is_cash:
+        raise ToolError("Build needs a market benchmark (not cash) to aim to beat")
+    lab = ctx.settings.get("optimise_lab", {})
+    run = _run_settings(ctx)
+    prices = universe.prices
+    rets = universe.returns
+    periods = universe.periods_per_year
+    settings = dc_replace(settings, periods_per_year=periods)
+    bench_r = bench.returns.reindex(rets.index).dropna()
+    rets_b = rets.loc[bench_r.index]
+    us_person = bool(ctx.ips and ctx.ips.client.us_person)
+    eligible = [t for t in universe.eligible if t in prices.columns]
+    core = benchmark_core(benchmark_weights, universe.tags, eligible)
+    cash_like = tuple(ctx.settings.get("cash_like", []))
+    rf_annual = _rf_annual(ctx, rets.index[0])
+
+    results, latest_built, in_sample, infeasible = {}, {}, {}, {}
+    w_held = pd.Series(current, dtype=float)
+    if len(w_held) and set(w_held.index) <= set(
+        prices.columns
+    ):  # today's portfolio, for comparison
+        results[CURRENT] = bt.run_backtest(
+            prices[list(w_held.index)], bt.fixed_weights(dict(w_held)), **run
+        )
+        held_r = rets_b[list(w_held.index)]
+        ret, vol = portfolio_performance(w_held, held_r.mean() * periods, held_r.cov() * periods)
+        in_sample[CURRENT] = (ret - rf_annual) / vol if vol > 0 else float("nan")
+        infeasible[CURRENT] = 0
+    for name, (objective, tilt) in BUILD_CANDIDATES.items():
+        s = dc_replace(settings, tilt=tilt)
+        strategy = build_strategy(
+            eligible, universe.tags, bench_r, ctx.ips, limits, s, ctx.rf, objective,
+            cash_like, None, core,
+        )  # fmt: skip
+        results[name] = bt.run_backtest(prices, strategy, **run)
+        infeasible[name] = len(strategy.infeasible_dates)
+        latest_built[name] = strategy.latest
+        full = build_once(rets_b, bench_r, eligible, universe.tags, ctx.ips, limits, s,
+                          rf_annual, objective, cash_like, core)  # fmt: skip
+        if full.feasible:
+            w = full.weights
+            mu = rets_b[w.index].mean() * periods
+            cov = rets_b[w.index].cov() * periods
+            ret, vol = portfolio_performance(w, mu, cov)
+            in_sample[name] = (ret - rf_annual) / vol if vol > 0 else float("nan")
+        else:
+            in_sample[name] = float("nan")
+    # benchmark tracker: the benchmark's funds (UCITS twins for a non-US person if eligible)
+    ucits = {r["ucits_of"]: t for t, r in universe.tags.items() if r.get("ucits_of")}
+    tracker = {}
+    for t, w in benchmark_weights.items():
+        alt = ucits.get(t)
+        use = alt if (not us_person and alt in prices.columns) else t
+        if use in prices.columns:
+            tracker[use] = tracker.get(use, 0.0) + w
+    if tracker:
+        results[TRACKER] = bt.run_backtest(prices[list(tracker)], bt.fixed_weights(tracker), **run)
+        in_sample[TRACKER] = float("nan")
+        infeasible[TRACKER] = 0
+
+    frame = pd.DataFrame({n: r.returns.iloc[1:] for n, r in results.items()})
+    frame[BENCHMARK] = bench_r
+    frame = frame.dropna()
+    metrics = summary_table(frame, rf=ctx.rf, periods_per_year=periods)
+    table = pd.DataFrame(
+        {
+            "cagr": metrics["cagr"],
+            "volatility": metrics["ann_vol"],
+            "sharpe": metrics["sharpe"],
+            "max_drawdown": metrics["max_drawdown"],
+        }
+    )
+    rel = _relative_rows(frame.drop(columns=[BENCHMARK]), frame[BENCHMARK], periods)
+    table = table.join(rel)
+    table.loc[BENCHMARK, ["excess_return", "tracking_error"]] = 0.0
+    table["in_sample_sharpe"] = pd.Series(in_sample)
+    if TRACKER in table.index:  # a fixed portfolio: its "in-sample" is its own history
+        table.loc[TRACKER, "in_sample_sharpe"] = table.loc[TRACKER, "sharpe"]
+    months = len(results[next(iter(results))].weights)
+    table["feasible"] = [infeasible.get(n, 0) < months for n in table.index]
+
+    latest = pd.DataFrame({n: r.weights.iloc[-1] for n, r in results.items()}).T.fillna(0.0)
+    latest = latest.loc[:, (latest > 1e-9).any()]
+    w_now = pd.Series(current, dtype=float)
+    latest.loc[CURRENT] = w_now.reindex(latest.columns).fillna(0.0)
+    for t in w_now.index.difference(latest.columns):
+        latest[t] = 0.0
+        latest.loc[CURRENT, t] = w_now[t]
+    latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
+
+    ips_checks = {}
+    if ctx.ips is not None:
+        for name in latest.index:
+            ips_checks[name] = _ips_checks(ctx, latest.loc[name], universe)
+        table["ips_fails"] = [
+            closeness(ips_checks[n])[0] if n in ips_checks else 0 for n in table.index
+        ]
+        table["ips_breach"] = [
+            closeness(ips_checks[n])[1] if n in ips_checks else 0.0 for n in table.index
+        ]
+        table["passes_ips"] = [n in ips_checks and not failures(ips_checks[n]) for n in table.index]
+    rec = recommend_build(
+        table,
+        settings.tracking_error_max,
+        tolerance=lab.get("volatility_tolerance", 0.005),
+        held_up_ratio=lab.get("held_up_ratio", 0.5),
+    )
+
+    rows = {}
+    for name in table.index:
+        r = table.loc[name]
+        row = {
+            "cagr": pct(r["cagr"]),
+            "annual_volatility": pct(r["volatility"]),
+            "sharpe": num(r["sharpe"]),
+            "max_drawdown": pct(r["max_drawdown"]),
+        }
+        if name != BENCHMARK and name in results:
+            row |= {
+                "excess_return_vs_benchmark": pct(r["excess_return"]),
+                "information_ratio": num(r["information_ratio"]),
+                "tracking_error": pct(r["tracking_error"]),
+                "hit_rate_months": pct(r["hit_rate"]),
+                "worst_relative_drawdown": pct(r["worst_relative_drawdown"]),
+                "turnover_per_year": times(results[name].turnover.iloc[1:].mean() * 12),
+            }
+        if name in BUILD_CANDIDATES:
+            row["in_sample_sharpe"] = num(in_sample[name])
+            row["held_up_out_of_sample"] = "yes" if rec.held_up.get(name) else "no"
+            row["months_limits_unmet_previous_weights_kept"] = f"{infeasible[name]} of {months}"
+        if name in ips_checks:
+            failed = failures(ips_checks[name])
+            row["passes_ips"] = "yes" if not failed else "no: " + ", ".join(c.rule for c in failed)
+        rows[name] = row
+
+    chosen = rec.choice if rec.choice in latest.index else None
+    securities = {}
+    if chosen is not None:
+        why = (latest_built.get(chosen).reasons if latest_built.get(chosen) else {}) or {}
+        for t, w in (
+            latest.loc[chosen][latest.loc[chosen] > 1e-9].sort_values(ascending=False).items()
+        ):
+            tags = universe.tags.get(t, {})
+            securities[t] = {
+                "weight": pct(w),
+                "name": tags.get("name", t),
+                "asset_class": tags.get("asset_class", ""),
+                "region": tags.get("region", ""),
+                "domicile": tags.get("domicile", ""),
+                "sharia": tags.get("sharia", "unknown"),
+                "why": why.get(t, "in the benchmark tracker" if chosen == TRACKER else ""),
+            }
+    report: dict[str, Any] = {
+        "mode": "build",
+        "goal": f"Aim to beat {bench.name} on a risk-adjusted basis (highest information "
+        f"ratio), volatility at most the benchmark's, tracking error at most "
+        f"{pct(settings.tracking_error_max)}",
+        "limits": describe_limits_build(limits, settings),
+        "candidates": {
+            n: ("tilt: " + t if t != "none" else o) for n, (o, t) in BUILD_CANDIDATES.items()
+        }
+        | ({TRACKER: "fixed benchmark weights"} if tracker else {}),  # fmt: skip
+        "universe": {
+            "eligible": len(eligible),
+            "excluded": dict(universe.excluded),
+            "benchmark_funds_held_as_core": list(core),
+        },
+        "walk_forward_after_costs": rows,
+        "backtest_period": f"{frame.index[0].date()} to {frame.index[-1].date()}",
+        "recommendation": {
+            "choice": rec.choice,
+            "status": rec.status,
+            "rule": rec.rule,
+            "reasons": rec.reasons,
+            "ranking_under_the_rule": rec.ranking,
+        },
+        "securities_chosen": securities,
+        "caveats": (
+            "Walk-forward results choose securities and weights each month using only data "
+            "available at the time, after trading costs. They are historical and "
+            "risk-adjusted, not a forecast or a promise of beating the benchmark. Choosing the "
+            "best of several candidates on the same period is itself a mild form of hindsight. "
+            + SURVIVORSHIP
+        ),
+        "benchmark": {"name": bench.name, "represents": bench.represents},
+    }
+    if ips_checks:
+        report["suitability_gate"] = {
+            "client": ctx.ips.client.name or ctx.ips.client.reference or "(no name)",
+            "current_passes_ips": None,
+            "failed_rules": {
+                n: [breach_text(c) for c in failures(ips_checks[n])] for n in latest.index
+            },
+            "note": "Only portfolios that pass every IPS rule can be recommended.",
+        }
+    if chosen is not None:
+        report["recommended_latest_weights"] = {
+            t: {
+                "current": pct(latest.loc[CURRENT, t]),
+                "recommended": pct(latest.loc[chosen, t]),
+                "change": f"{(latest.loc[chosen, t] - latest.loc[CURRENT, t]) * 100:+.2f} pp",
+            }
+            for t in latest.columns
+            if latest.loc[chosen, t] > 1e-9 or latest.loc[CURRENT, t] > 1e-9
+        }
+    equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns})
+    return report, CandidateRun(equity, latest, rec, ips_checks)
+
+
+def describe_limits_build(limits: OptimisationSpec, settings: Any) -> str:
+    """The Build limits in words (the IPS's own limits are added on top)."""
+    parts = [
+        f"at most {limits.max_weight:.2%} in one holding",
+        f"{settings.n_min}-{settings.n_max} holdings, each at least {settings.min_weight:.2%}",
+        f"tracking error at most {settings.tracking_error_max:.2%}",
+    ]
+    if limits.max_volatility is not None:
+        parts.append(f"volatility at most {limits.max_volatility:.2%}")
+    from gpl.construct import TILTS
+
+    return "; ".join(parts) + "; tilts: " + "; ".join(v for k, v in TILTS.items() if k != "none")
 
 
 def duplicate_candidates(
@@ -796,25 +1221,40 @@ def duplicate_candidates(
     return same_as, same_weights
 
 
-def _ips_checks(ctx: AnalystContext, weights: pd.Series) -> list:
-    """``check_suitability`` of ``weights`` against the client's IPS (ctx.ips must be set)."""
+def _ips_checks(
+    ctx: AnalystContext,
+    weights: pd.Series,
+    universe: UniverseData | None = None,
+) -> list:
+    """``check_suitability`` of ``weights`` against the client's IPS (ctx.ips must be set).
+
+    With ``universe`` (Build / Improve with swaps), returns, groups, currencies, Sharia status
+    and regions also cover securities from the curated universe that aren't held today.
+    """
     from gpl.scenarios import classify_holdings
     from gpl.suitability import check_suitability
 
     currencies = ctx.asset_notes["currency"].to_dict() if ctx.asset_notes is not None else {}
-    classes = classify_holdings(
-        list(weights.index),
-        ctx.settings.get("exposure_meta", {}),
-        ctx.holding_groups or {},
-        currencies,
-    )
+    returns, attributes, groups = ctx.all_returns, dict(ctx.attributes or {}), ctx.holding_groups
+    meta = dict(ctx.settings.get("exposure_meta", {}))
+    held = list(weights[weights > 0].index)
+    if universe is not None:
+        if set(held) <= set(universe.returns.columns):
+            returns = universe.returns  # one calendar for every holding checked
+        currencies = {**universe.currencies, **currencies}
+        groups = {**universe.groups, **(ctx.holding_groups or {})}
+        for t, tags in universe.tags.items():
+            attributes[t] = {**attributes.get(t, {}), "sharia": tags["sharia"]}
+            meta.setdefault(t, {"region": tags["region"], "asset_type": tags["asset_class"]})
+    weights = weights[weights > 0]
+    classes = classify_holdings(list(weights.index), meta, groups or {}, currencies)
     return check_suitability(
         weights,
-        ctx.all_returns,
+        returns,
         ctx.ips,
-        ctx.attributes or {},
+        attributes,
         currencies,
-        ctx.holding_groups or {},
+        groups or {},
         ctx.periods,
         ctx.settings.get("stress_episodes", []),
         ctx.portfolio_value or ctx.ips.client.portfolio_value_usd,

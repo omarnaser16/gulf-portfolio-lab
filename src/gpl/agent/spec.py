@@ -34,6 +34,9 @@ unmapped_requests rather than converting it.
 - max_weight_pct: a limit that applies to every single asset ("no single asset over 25%").
 - asset_limits: limits on named holdings (use the ticker). group_limits: limits on groups \
 (GCC, Global equity, Bonds, Gold, Other) such as "at least 20% GCC".
+- max_turnover_pct: a limit on how much of the portfolio may be traded ("don't trade more \
+than 20%"). tracking_error_max_pct: how far the portfolio may stray from the benchmark \
+("tracking error under 3%").
 - Use null for anything the user did not state. Never add limits they did not ask for.
 - unmapped_requests: anything you could not express with the goal or these fields (e.g. \
 "avoid oil companies", "keep dividends high"), in the user's words. Never list the goal \
@@ -83,6 +86,8 @@ def spec_tool(tickers: Sequence[str], groups: Sequence[str]) -> dict:
                 },
                 "max_volatility_pct": pct,
                 "min_return_pct": pct,
+                "max_turnover_pct": pct,
+                "tracking_error_max_pct": pct,
                 "unmapped_requests": {"type": "array", "items": {"type": "string"}},
                 "summary": {"type": "string"},
             },
@@ -93,6 +98,8 @@ def spec_tool(tickers: Sequence[str], groups: Sequence[str]) -> dict:
                 "group_limits",
                 "max_volatility_pct",
                 "min_return_pct",
+                "max_turnover_pct",
+                "tracking_error_max_pct",
                 "unmapped_requests",
                 "summary",
             ],  # fmt: skip
@@ -118,6 +125,8 @@ def _pct_numbers(draft: Mapping[str, Any]) -> list[float]:
         draft.get("max_weight_pct"),
         draft.get("max_volatility_pct"),
         draft.get("min_return_pct"),
+        draft.get("max_turnover_pct"),
+        draft.get("tracking_error_max_pct"),
     ]
     for row in [*draft.get("asset_limits", []), *draft.get("group_limits", [])]:
         values += [row.get("min_pct"), row.get("max_pct")]
