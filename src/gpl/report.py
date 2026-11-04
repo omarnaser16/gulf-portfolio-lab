@@ -981,17 +981,20 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
         story += record_story(inputs.suitability_record, inputs.record_edited)
     # domicile
     if inputs.domicile is not None:
-        story.append(para("Where your funds are domiciled (information, not tax advice)", "h2"))
-        story.append(para(inputs.domicile["label"], "small"))
+        block = [
+            para("Where your funds are domiciled (information, not tax advice)", "h2"),
+            para(inputs.domicile["label"], "small"),
+        ]
         rows = inputs.domicile["rows"]
         if rows:
             cols = list(rows[0])
-            story.append(
+            block.append(
                 table(
                     [cols, *[[r[c] for c in cols] for r in rows]],
                     widths=[20 * mm, 18 * mm, 24 * mm, 18 * mm, 94 * mm],
                 )
             )
+        story.append(KeepTogether(block))  # heading, note and table on one page
         story += _bullets(inputs.domicile["summary"])
     # commentary
     story.append(para("Your adviser's commentary", "h2"))

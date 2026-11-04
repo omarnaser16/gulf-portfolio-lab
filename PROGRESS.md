@@ -537,3 +537,7 @@ days; the work itself was done in a series of sessions.
 - **Read:** every page of the Improve report and the Build "keep" report. The Build report
   shows "keep", no trades, and the reasons.
 - **Status:** 935 tests passing.
+- **Follow-up (same day):** I regenerated the Build "keep" report on the corrected code
+  and read all 9 pages. It recommends keeping the current portfolio (Sharpe 0.67 vs the
+  fallback's 0.52; the earlier version understated both, 0.54 vs 0.41) with no trades. The
+  domicile heading, note and table now stay on one page. 935 tests passing.
