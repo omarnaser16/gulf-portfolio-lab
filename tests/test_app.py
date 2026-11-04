@@ -1296,8 +1296,8 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     app.button(key="client_load_example").click().run()
     html = " ".join(m.value for m in app.markdown)
-    assert "<b>Client</b> EX-DXB" in html and "<b>Risk score</b> 3 / 5" in html
-    assert "<b>IPS</b> Draft" in html  # the example's fact-find is incomplete
+    assert "<b>Client</b> Example client (Dubai)" in html and "<b>Risk score</b> 3 / 5" in html
+    assert "<b>IPS</b> Ready" in html  # the example's fact-find is complete
     # the suitability step isn't marked done while today's weights fail (e.g. the 50% SPY)
     assert re.search(r"Suitability</b><small>Current: \d+ rules? fail", html)
     assert any(e.label == "Advanced settings" for e in app.expander)

@@ -425,3 +425,20 @@ def test_ips_shows_the_required_return_and_flags_a_gap() -> None:
     no_value = build_ips(profile(annual_income_need_usd=96_000), CFG, today=TODAY)
     assert "enter the portfolio value" in no_value.sections["Return"]
     assert build_ips(profile(), CFG).limits["required_return"] is None
+
+
+def test_example_clients_have_complete_fact_finds_and_unchanged_limits() -> None:
+    from gpl.factfind import consistency_warnings, ips_missing
+
+    expected = {  # (score, max volatility, max drawdown, max weight): as before the fact-find
+        "Dubai, moderate, 10 years": (3, 0.12, 0.20, 0.30),
+        "Riyadh, conservative, 5 years, Sharia": (2, 0.09, 0.15, 0.25),
+        "Doha, aggressive, 20 years": (5, 0.20, 0.40, 0.40),
+    }
+    for name, data in EXAMPLE_CLIENTS.items():
+        p = ClientProfile.from_dict(data)
+        assert ips_missing(p, date(2026, 11, 4)) == [], name
+        assert consistency_warnings(p, date(2026, 11, 4)) == [], name
+        lim = build_ips(p, CFG, date(2026, 11, 4)).limits
+        got = (risk_profile(p).score, lim["max_volatility"], lim["max_drawdown"], lim["max_weight"])
+        assert got == expected[name], name
