@@ -296,3 +296,32 @@ def test_sample_limiters_hand_case() -> None:
     )
     close = history.assign(first_date=pd.to_datetime(["2015-09-17", "2010-01-04", "2016-03-01"]))
     assert sample_limiters(close) == []  # under a year: not worth flagging
+
+
+def test_one_day_unit_glitches_are_repaired_and_reported() -> None:
+    from gpl.data import fix_unit_glitches, to_usd
+
+    idx = pd.bdate_range("2017-08-28", periods=6)
+    prices = pd.Series([0.88, 0.879, 0.00088, 0.886, 0.889, 0.905], index=idx)  # 1000x too low
+    fixed, dates = fix_unit_glitches(prices)
+    assert dates == [idx[2]] and fixed[idx[2]] == pytest.approx(0.88)
+    big = pd.Series([150.0, 151.0, 15100.0, 152.0], index=idx[:4])  # pence quoted 100x too high
+    fixed, dates = fix_unit_glitches(big)
+    assert dates == [idx[2]] and fixed[idx[2]] == pytest.approx(151.0)
+    crash = pd.Series([100.0, 50.0, 49.0, 48.0], index=idx[:4])  # a real fall: not touched
+    assert fix_unit_glitches(crash)[1] == []
+    usd, notes = to_usd(prices.to_frame("NBK.KW") * 1000, {"NBK.KW": "KWF"},
+                        {"KWD": pd.Series(0.3, index=idx)})  # fmt: skip
+    assert "1 one-day unit glitch(es) repaired (2017-08-30)" in notes["NBK.KW"]
+    assert usd["NBK.KW"].pct_change().abs().max() < 0.05
+
+
+def test_a_two_day_unit_glitch_is_repaired() -> None:
+    from gpl.data import fix_unit_glitches
+
+    idx = pd.bdate_range("2017-08-28", periods=6)
+    raw = pd.Series([264.8, 264.3, 0.2639, 0.2639, 264.8, 266.6], index=idx)  # as on Yahoo
+    fixed, dates = fix_unit_glitches(raw)
+    assert dates == [idx[2], idx[3]] and fixed[idx[2]] == pytest.approx(263.9)
+    long = pd.Series([1.0] + [0.001] * 7 + [1.0], index=pd.bdate_range("2020-01-01", periods=9))
+    assert fix_unit_glitches(long)[1] == []  # longer than 5 days: not assumed to be a glitch

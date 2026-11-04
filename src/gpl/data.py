@@ -479,6 +479,48 @@ def security_attributes(
     return out
 
 
+UNIT_FACTORS = (100, 1000)  # pence and fils: the size of a units mix-up in a quote
+
+
+def fix_unit_glitches(
+    prices: pd.Series, factors: Sequence[int] = UNIT_FACTORS, tol: float = 0.2, max_days: int = 5
+) -> tuple[pd.Series, list[pd.Timestamp]]:
+    """Repair short runs of quotes off by a sub-unit factor (e.g. fils quoted as dinars).
+
+    A run of up to ``max_days`` prices that starts with a jump by ``f`` (``f`` in
+    ``factors``, within ``tol``) and ends with the opposite jump back is rescaled by ``f``.
+    Real moves never jump 100x or 1000x and come straight back. Returns the repaired series
+    and the dates repaired (logged by the caller, never silent).
+    """
+    s = prices.copy()
+    valid = s.dropna()
+    values = valid.to_numpy(dtype=float, copy=True)
+    fixed: list[pd.Timestamp] = []
+    i = 1
+    while i < len(values) - 1:
+        repaired = False
+        before = values[i - 1]
+        for f in factors:
+            for scale in (f, 1 / f):  # the run is f times too small, or f times too large
+                if before <= 0 or values[i] <= 0 or abs(before / values[i] / scale - 1) >= tol:
+                    continue
+                for j in range(i, min(i + max_days, len(values) - 1)):
+                    after = values[j + 1]
+                    if after > 0 and abs(after / values[j] / scale - 1) < tol:
+                        values[i : j + 1] *= scale
+                        fixed += list(valid.index[i : j + 1])
+                        i, repaired = j + 1, True
+                        break
+                if repaired:
+                    break
+            if repaired:
+                break
+        if not repaired:
+            i += 1
+    s.loc[valid.index] = values
+    return s, fixed
+
+
 def to_usd(
     local: pd.DataFrame, currencies: dict[str, str], fx: dict[str, pd.Series]
 ) -> tuple[pd.DataFrame, dict[str, str]]:
@@ -522,6 +564,18 @@ def to_usd(
             rate = rate.reindex(rate.index.union(prices.index)).ffill(limit=5).reindex(prices.index)
             prices = prices / rate
             notes[ticker] = f"{base} market rate ({base}=X){unit}"
+        prices, fixed = fix_unit_glitches(prices)
+        if fixed:
+            logger.warning(
+                "%s: repaired %d one-day unit glitch(es) on %s",
+                ticker,
+                len(fixed),
+                ", ".join(str(d.date()) for d in fixed),
+            )
+            notes[ticker] += (
+                f"; {len(fixed)} one-day unit glitch(es) repaired "
+                f"({', '.join(str(d.date()) for d in fixed)})"
+            )
         usd[ticker] = prices
     return usd, notes
 
