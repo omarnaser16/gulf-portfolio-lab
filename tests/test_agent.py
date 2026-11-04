@@ -413,3 +413,31 @@ def test_calculate_result_can_be_quoted_in_the_memo(ctx) -> None:
     reply = Analyst(ctx, client, model="m").ask("How much cash must I keep?")
     assert [c.name for c in reply.tool_calls] == ["get_client_profile", "calculate"]
     assert not reply.tool_calls[1].is_error and reply.unverified == []
+
+
+def test_suitability_tool_includes_the_knowledge_check(ctx) -> None:
+    from dataclasses import replace
+    from datetime import date
+
+    from gpl.client import build_ips
+
+    ctx = _client_ctx(ctx)
+    before = (ctx.user_portfolio, ctx.product_types, ctx.ips)
+    try:
+        ctx.user_portfolio = {"SPY": 0.5, "AGG": 0.3, "GLD": 0.1, "KSA": 0.1}
+        client = replace(ctx.ips.client, years_investing=10, products_used=["ETFs"])
+        ctx.ips = build_ips(client, CFG, today=date(2026, 10, 25))
+        ctx.product_types = {"SPY": "ETFs", "AGG": "ETFs", "GLD": "ETFs", "KSA": "Derivatives"}
+        rules = {
+            r["rule"]: r
+            for r in execute_tool(ctx, "check_suitability", {})["portfolios"]["Current"]
+        }
+        knowledge = rules["Knowledge & experience"]
+        assert knowledge["status"] == "review" and knowledge["reason"].startswith(
+            "Derivatives: complex"
+        )
+        ctx.product_types = {t: "ETFs" for t in ctx.user_portfolio}
+        rules = execute_tool(ctx, "check_suitability", {})["portfolios"]["Current"]
+        assert next(r for r in rules if r["rule"] == "Knowledge & experience")["status"] == "pass"
+    finally:
+        ctx.user_portfolio, ctx.product_types, ctx.ips = before

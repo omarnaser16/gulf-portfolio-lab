@@ -97,6 +97,7 @@ class AnalystContext:
     ips: Any = None  # gpl.client.IPS of the client on the Client tab, if any
     attributes: Mapping[str, Mapping[str, str]] | None = None  # Sharia status, sector
     portfolio_value: float | None = None  # USD, for the liquidity rule
+    product_types: Mapping[str, str] | None = None  # ticker -> "ETFs", "Equities", ... (K&E)
     rebalance: dict | None = None  # latest drift monitor and trade list (set by the app)
     # every tool result and user message this conversation (set by the Analyst); `calculate`
     # only accepts numbers that appear in them
@@ -820,6 +821,7 @@ def _ips_checks(ctx: AnalystContext, weights: pd.Series) -> list:
         ctx.settings.get("liquid_max_volatility", 0.03),
         ctx.settings.get("cash_like", []),
         {t: c["region"] for t, c in classes.items()},
+        product_types=ctx.product_types,
     )
 
 
