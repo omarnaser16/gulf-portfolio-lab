@@ -1026,3 +1026,29 @@ def example_holdings(name: str, value: float) -> list[dict]:
         {"ticker": h["ticker"], "group": h["group"], "value": value * h["weight_pct"] / 100}
         for h in EXAMPLE_HOLDINGS[name]
     ]
+
+
+CLOSEST_MIX_LABEL = "No portfolio meets every rule: closest mix shown, with the reasons."
+# examples whose own portfolio is the closest feasible mix rather than a passing one
+CLOSEST_MIX_EXAMPLES = {"Riyadh, conservative, 5 years, Sharia"}
+
+
+def closest_mix_reason(ips: IPS) -> str:
+    """Why no mix of the Riyadh example's funds meets its IPS, from the IPS's own limits.
+
+    With Sharia-compliant funds only, SPSK (sukuk) is the only low-risk holding in the list
+    (T-bill funds pay interest), and the per-holding cap limits it; the rest must be equity or
+    gold, and at least the GCC minimum must be in GCC stocks. A 5% grid search over the listed
+    funds (Nov 2026 data) found no mix within the volatility and drawdown limits together.
+    """
+    lim = ips.limits
+    return (
+        f"The IPS allows at most {lim['max_weight']:.2%} in one holding, needs at least "
+        f"{lim['home_bias_gcc'] or 0:.2%} in GCC holdings, and allows Sharia-compliant funds "
+        "only. "
+        "SPSK (sukuk) is the only low-risk Sharia fund in the list (T-bill funds pay "
+        "interest), so the rest must be equities or gold, and no mix of the listed funds keeps "
+        f"volatility within {lim['max_volatility']:.2%} and the largest fall within "
+        f"{lim['max_drawdown']:.2%} at the same time. The IPS is not changed: the adviser "
+        "decides whether to add holdings or review the policy with the client."
+    )

@@ -17,6 +17,8 @@ import workstation as ws
 
 from gpl.agent.profile import apply_proposal, propose_profile
 from gpl.client import (
+    CLOSEST_MIX_EXAMPLES,
+    CLOSEST_MIX_LABEL,
     EXAMPLE_CLIENTS,
     JURISDICTIONS,
     QUESTIONS,
@@ -26,6 +28,7 @@ from gpl.client import (
     ClientProfile,
     age_on,
     build_ips,
+    closest_mix_reason,
     default_regulator,
     effective_regulator,
     example_holdings,
@@ -56,6 +59,7 @@ from gpl.factfind import (
 from gpl.report import ips_pdf
 
 CLIENT, VERSION = "client", "client_v"
+EXAMPLE = "client_example_loaded"  # the example whose own portfolio was loaded
 SECTOR_CHOICES = [
     "Tobacco",
     "Alcohol",
@@ -93,6 +97,7 @@ def _load_example() -> None:
         profile = ClientProfile.from_dict(EXAMPLE_CLIENTS[name])
         ws.set_holdings(example_holdings(name, profile.portfolio_value_usd))  # its own portfolio
         _set_profile(profile)
+        st.session_state[EXAMPLE] = name
         for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails"):
             st.session_state.pop(key, None)
 
@@ -104,6 +109,7 @@ def _load_json() -> None:
     try:
         _set_profile(ClientProfile.from_dict(json.loads(upload.getvalue())))
         st.session_state.pop("client_error", None)
+        st.session_state.pop(EXAMPLE, None)
     except (ValueError, TypeError) as e:  # bad JSON or bad values
         st.session_state.client_error = f"Couldn't read that profile: {e}"
 
@@ -120,6 +126,7 @@ def fill_demo(seed: int | None = None) -> None:
     demo = demo_client(seed)
     ws.set_holdings(demo.holdings)
     _set_profile(demo.profile)
+    st.session_state.pop(EXAMPLE, None)
     st.session_state["demo_seed"] = seed
     for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails", "ctx_key"):
         st.session_state.pop(key, None)
@@ -128,6 +135,28 @@ def fill_demo(seed: int | None = None) -> None:
 
 def _new_client() -> None:
     _set_profile(ClientProfile())
+    st.session_state.pop(EXAMPLE, None)
+
+
+def closest_mix_note(ips) -> str | None:
+    """The Riyadh-style label and reason while that example's own portfolio is loaded.
+
+    None once another client is loaded or the holdings are changed: then the label would no
+    longer describe what is on screen.
+    """
+    name = st.session_state.get(EXAMPLE)
+    if name not in CLOSEST_MIX_EXAMPLES or ips is None:
+        return None
+    value = ws.portfolio_value()
+    rows = {r["ticker"]: round(r["value"], 2) for r in st.session_state.get(ws.ROWS, [])}
+    own = {h["ticker"]: round(h["value"], 2) for h in example_holdings(name, value or 0)}
+    if rows != own:
+        return None
+    return closest_mix_reason(ips)
+
+
+def _example_label(name: str) -> str:
+    return f"{name} · closest mix" if name in CLOSEST_MIX_EXAMPLES else name
 
 
 def _interpret(make_client: Callable, model: str) -> None:
@@ -706,7 +735,12 @@ def render_client_tab(
     )
     c1, c2, c3 = st.columns([3, 3, 2])
     with c1:
-        st.selectbox("Example client", list(EXAMPLE_CLIENTS), key="client_example")
+        st.selectbox(
+            "Example client",
+            list(EXAMPLE_CLIENTS),
+            key="client_example",
+            format_func=_example_label,
+        )
         st.button("Load example", key="client_load_example", on_click=_load_example)
     c2.file_uploader(
         "Load a saved profile (JSON)", type=["json"], key="client_upload", on_change=_load_json
@@ -750,6 +784,11 @@ def render_client_tab(
     if profile is None:
         st.info("Load an example, a saved profile, or start a new blank client.")
         return
+    note = closest_mix_note(build_ips(profile, cfg))
+    if note:
+        st.warning(
+            f"**{CLOSEST_MIX_LABEL}** {note} The measured figures are on step 5 (Suitability)."
+        )
     if profile.demo:
         st.info(f"**{DEMO_LABEL}.**")
     bar = st.container()

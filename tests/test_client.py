@@ -481,3 +481,17 @@ def test_example_portfolios_hold_cash_and_goals_need_a_real_return() -> None:
     sharia = EXAMPLE_HOLDINGS["Riyadh, conservative, 5 years, Sharia"]
     attrs = CFG["security_attributes"]
     assert all(attrs[h["ticker"]]["sharia"] != "not_compliant" for h in sharia)
+
+
+def test_closest_mix_label_and_reason_come_from_the_ips() -> None:
+    from gpl.client import CLOSEST_MIX_EXAMPLES, CLOSEST_MIX_LABEL, closest_mix_reason
+
+    assert (
+        CLOSEST_MIX_LABEL == "No portfolio meets every rule: closest mix shown, with the reasons."
+    )
+    assert CLOSEST_MIX_EXAMPLES == {"Riyadh, conservative, 5 years, Sharia"}
+    riyadh = ClientProfile.from_dict(EXAMPLE_CLIENTS["Riyadh, conservative, 5 years, Sharia"])
+    text = closest_mix_reason(build_ips(riyadh, CFG, date(2026, 11, 4)))
+    for part in ("at most 25.00% in one holding", "at least 30.00% in GCC", "within 9.00%",
+                 "within 15.00%", "The IPS is not changed"):  # fmt: skip
+        assert part in text, part

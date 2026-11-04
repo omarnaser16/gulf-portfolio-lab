@@ -32,7 +32,14 @@ from gpl.agent.spec import (
     spec_from_draft,
 )
 from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
-from gpl.client import build_ips, cash_like_holdings, ips_constraints, month_text, tighter
+from gpl.client import (
+    CLOSEST_MIX_LABEL,
+    build_ips,
+    cash_like_holdings,
+    ips_constraints,
+    month_text,
+    tighter,
+)
 from gpl.data import (
     AssetData,
     BenchmarkData,
@@ -100,7 +107,7 @@ from gpl.scenarios import (
     trade_list,
     trades_covering_cash_need,
 )
-from gpl.suitability import check_suitability, rationale, suitability_table
+from gpl.suitability import breach_text, check_suitability, rationale, suitability_table
 
 CFG = load_universe()
 COST_BY_SUFFIX = CFG.get("trading_costs", {}).get("by_suffix", {})  # market rates, bps
@@ -1134,7 +1141,11 @@ def generated_record(results: dict) -> tuple[str, str]:
     opt = st.session_state.get("ws_opt")
     if opt and opt["report"]["recommendation"].get("choice") == name:
         reasons = list(opt["report"]["recommendation"]["reasons"])
-    lines = rationale(client_ips(), name, results[name], reasons)
+    ips = client_ips()
+    lines = rationale(ips, name, results[name], reasons)
+    note = client_ui.closest_mix_note(ips)
+    if note:  # the example's own portfolio is the closest mix, not a passing one
+        lines.insert(1, f"{CLOSEST_MIX_LABEL} {note}")
     return name, "\n".join(f"- {line}" for line in lines)
 
 
@@ -1176,6 +1187,10 @@ def render_suitability(portfolios: dict[str, pd.Series], key: str, record: bool 
     ips = client_ips()
     last = list(results)[-1]
     st.session_state["suit_fails"] = (last, [c.rule for c in results[last] if c.status == "fail"])
+    note = client_ui.closest_mix_note(ips)
+    if note and record:
+        fails = [breach_text(c) for c in results["Current"] if c.status == "fail"]
+        st.warning(f"**{CLOSEST_MIX_LABEL}** {note}" + "".join(f"\n- {line}" for line in fails))
     table = suitability_table(results)
     for col in table.columns:
         statuses = {c.rule: c.status for c in results[col]}

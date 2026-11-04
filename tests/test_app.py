@@ -1043,6 +1043,26 @@ def test_example_clients_load_their_own_portfolio(app: AppTest) -> None:
     assert "% a year pays every goal" in goal and "0.00% a year" not in goal
 
 
+def test_riyadh_example_is_labelled_closest_mix_with_reasons(app: AppTest) -> None:
+    from gpl.client import CLOSEST_MIX_LABEL
+
+    riyadh = "Riyadh, conservative, 5 years, Sharia"
+    assert app.selectbox(key="client_example").format_func(riyadh) == f"{riyadh} · closest mix"
+    app.selectbox(key="client_example").set_value(riyadh)
+    app.button(key="client_load_example").click().run()
+    assert not app.exception, app.exception
+    labelled = [w.value for w in app.warning if CLOSEST_MIX_LABEL in w.value]
+    assert len(labelled) == 2  # the Client step and the Suitability step
+    assert all("The IPS is not changed" in w for w in labelled)
+    record = next(t.value for t in app.text_area if t.key.startswith("suit_record_"))
+    assert CLOSEST_MIX_LABEL in record  # in the suitability record, so in the report too
+    _set_holdings(app, OLD_DEFAULT)  # no longer the example's own portfolio: no label
+    assert not any(CLOSEST_MIX_LABEL in w.value for w in app.warning)
+    app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    app.button(key="client_load_example").click().run()
+    assert not any(CLOSEST_MIX_LABEL in w.value for w in app.warning)  # Dubai passes
+
+
 def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
