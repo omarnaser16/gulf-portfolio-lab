@@ -501,3 +501,39 @@ days; the work itself was done in a series of sessions.
   - Why did the script and the app differ on Dubai's Max IR feasibility?
 - **Status:** 928 tests passing.
 - **Next:** have a practitioner review the universe and thresholds.
+
+## Calendar bug, policy benchmark, re-runs — 2026-11-04
+- **Decided:**
+  - keep the 0.10 information-ratio threshold;
+  - Build suggests a benchmark that itself passes the IPS, with 60/40 still selectable;
+  - find the cause of the script/app gap first.
+- **Root cause (a bug), fixed and tested:**
+  - The app's benchmark is daily on the holdings' US calendar. Dubai's Build universe (with
+    Gulf stocks) keeps only the dates every market traded, 181 a year.
+  - The daily benchmark was dropped onto those dates, so one day of benchmark was compared
+    with several days of portfolio. SPY vs 60/40 showed 10.98% tracking error instead of
+    7.04%, and Max IR missed the limits in 39 of 39 quarters (now 0 of 39).
+  - The fix compounds returns onto common dates (`metrics.compound_to`), in Build, in
+    Improve with swaps and in the charts.
+- **Found by reading the reports, fixed and tested:**
+  - Improve tables on the universe's dates were annualised as 252 a year: the current
+    portfolio showed 10.81% CAGR instead of 7.77%.
+  - My first fix compounded the risk-free rate as well, which the metrics already scale,
+    so interest was charged twice: Sharpe 0.57 instead of 0.67. I removed it; the test
+    fails with the double charge and passes without.
+  - Domicile ideas claimed dividend withholding savings for gold and T-bill funds.
+  - Headings could sit alone at the foot of a page.
+- **Policy benchmark:**
+  - Dubai: 45% equity, 10% GCC, 35% bonds, 10% cash (volatility 9.19%, largest fall
+    −19.57%).
+  - Doha: 80% equity, 20% bonds.
+  - Riyadh: none, because SPSK, the only Sharia bond fund, can't exceed the 25% cap.
+- **Re-runs:**
+  - Dubai Build: keep the current portfolio against both 60/40 and the policy benchmark
+    (Sharpe 0.67 vs the fallback's 0.52 and 0.46).
+  - Dubai Improve (app): Target volatility, Sharpe 0.74 vs 0.66, about 30% traded.
+  - Riyadh: closest only; it fails volatility in both modes.
+  - Doha: Build next best is the tracker (vs 60/40) or keep (vs policy); Improve is keep.
+- **Read:** every page of the Improve report and the Build "keep" report. The Build report
+  shows "keep", no trades, and the reasons.
+- **Status:** 935 tests passing.
