@@ -38,6 +38,7 @@ class HeaderInfo:
     value: str  # formatted portfolio value, or "not set"
     ips_status: str  # "Ready", "Draft" or "–"
     demo: bool = False
+    seed: int | None = None  # the demo's seed, to reproduce it
 
 
 def go_to(step: str, report_tab: str | None = None) -> None:
@@ -64,7 +65,8 @@ def render_header(container, info: HeaderInfo) -> None:
         for label, value, cls in chips
     )
     if info.demo:
-        html += '<span class="gpl-chip demo">DEMO DATA</span>'
+        seed = f" · seed {info.seed}" if info.seed is not None else ""
+        html += f'<span class="gpl-chip demo">DEMO DATA{seed}</span>'
     container.markdown(f'<div class="gpl-chips">{html}</div>', unsafe_allow_html=True)
 
 

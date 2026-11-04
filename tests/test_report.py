@@ -316,3 +316,30 @@ def test_ips_pdf_has_fact_find_record_and_demo_marks() -> None:
         "do not enter real client data",
     ):
         assert snippet in text, snippet
+
+
+def test_client_report_has_record_fact_find_and_demo_marks(ctx) -> None:
+    from dataclasses import replace
+
+    from gpl.report import client_report
+
+    base = _inputs(ctx, memo=None)
+    demo = replace(base.client, demo=True, nationality="Saudi")
+    inputs = replace(
+        base,
+        client=demo,
+        ips=build_ips(demo, CFG, today=date(2026, 10, 25)),
+        suitability_record="- Client: risk score 3.\n- Conclusion: Current is not suitable.",
+        record_edited=False,
+    )
+    text = _text(client_report(inputs, compress=False))
+    for snippet in (
+        "Your portfolio review \\(DEMO DATA\\)",  # PDF strings escape brackets
+        "Suitability record",
+        "Conclusion: Current is not suitable.",
+        "Generated from the IPS rules and the suitability checks.",
+        "Client fact-find",  # in the IPS appendix
+        "Saudi",
+        "do not enter real client data",
+    ):
+        assert snippet in text, snippet

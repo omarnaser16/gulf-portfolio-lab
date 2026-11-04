@@ -6,6 +6,7 @@ redraws the form. Every number shown comes from ``gpl.client`` (tested rules).
 """
 
 import json
+import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import date
@@ -31,6 +32,7 @@ from gpl.client import (
     liquidity_need_score,
     parse_month,
 )
+from gpl.demo import demo_client
 from gpl.factfind import (
     ASSET_TYPES,
     DEMO_LABEL,
@@ -99,6 +101,24 @@ def _load_json() -> None:
         st.session_state.pop("client_error", None)
     except (ValueError, TypeError) as e:  # bad JSON or bad values
         st.session_state.client_error = f"Couldn't read that profile: {e}"
+
+
+def fill_demo(seed: int | None = None) -> None:
+    """Callback: a seeded demo client and portfolio (no AI), then open the Analyse step.
+
+    ``seed`` None takes the one typed in ⚙ Settings › Demo seed, else a new random one; the
+    seed is shown in the header so the same demo can be reproduced.
+    """
+    if seed is None:
+        typed = st.session_state.get("demo_seed_input")
+        seed = int(typed) if typed is not None else secrets.randbelow(100_000)
+    demo = demo_client(seed)
+    ws.set_holdings(demo.holdings)
+    _set_profile(demo.profile)
+    st.session_state["demo_seed"] = seed
+    for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails", "ctx_key"):
+        st.session_state.pop(key, None)
+    st.session_state["main_tab"] = "3 Analyse"
 
 
 def _new_client() -> None:

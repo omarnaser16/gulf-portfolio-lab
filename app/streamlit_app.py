@@ -351,8 +351,17 @@ st.set_page_config(
 )
 st.markdown(NUMBERS_CSS + LAYOUT_CSS, unsafe_allow_html=True)
 header = st.container(key="gpl_header")
-head_title, head_chips, head_bench, head_actions, head_settings = header.columns(
-    [2.2, 4.6, 2.2, 1.6, 1.1], vertical_alignment="center"
+head_title, head_chips, head_bench, head_demo, head_actions, head_settings = header.columns(
+    [2.0, 4.2, 2.0, 1.7, 1.6, 0.7], vertical_alignment="center"
+)
+head_demo.button(
+    "🎲 Fill demo client",
+    key="fill_demo",
+    on_click=client_ui.fill_demo,
+    width="stretch",
+    help="Fills every field with a random, realistic GCC client and a 5-8 holding portfolio "
+    "of real tickers (no AI), then opens the analysis. Marked DEMO DATA everywhere; the seed "
+    "in the header reproduces it (⚙ Settings › Demo seed).",
 )
 head_title.markdown("### Gulf Portfolio Lab")
 stepper = st.container()  # drawn at the end of the run, when every status is known
@@ -386,6 +395,20 @@ with head_settings.popover("⚙", width="stretch", help="Settings"):
         5.0,
         help="Local exchanges cost more to trade; their rates are set in config "
         "(trading_costs) and listed under Holdings.",
+    )
+    demo_box = st.expander("Demo seed")
+    demo_box.number_input(
+        "Seed (blank: random)",
+        0,
+        99_999,
+        None,
+        1,
+        key="demo_seed_input",
+        placeholder="random",
+        help="The same seed always fills the same demo client and portfolio.",
+    )
+    demo_box.button(
+        "Fill demo client with this seed", key="fill_demo_seed", on_click=client_ui.fill_demo
     )
     advanced = st.expander("Advanced settings")
     lookback = advanced.select_slider(
@@ -2141,8 +2164,18 @@ def render_report_button() -> None:
     """Build the client report on request (charts take a moment), then offer the PDF."""
     st.markdown("**Client report**")
     a1, a2 = st.columns(2)
-    a1.text_input("Adviser name", key="rep_adviser")
-    a2.text_input("Licence / registration number", key="rep_licence")
+    on_file = client_ui.current_profile()
+    a1.text_input(
+        "Adviser name",
+        key="rep_adviser",
+        placeholder=(on_file and on_file.adviser_name) or "",
+        help="Blank: the adviser on the client's fact-find (Service & review).",
+    )
+    a2.text_input(
+        "Licence / registration number",
+        key="rep_licence",
+        placeholder=(on_file and on_file.adviser_licence) or "",
+    )
     if st.button("Prepare client report (PDF)", key="prepare_report"):
         with st.spinner("Building the report…"):
             ctx = shared_context()
@@ -2420,6 +2453,7 @@ layout.render_header(
         value=f"USD {portfolio_value():,.0f}" if portfolio_value() else "not set",
         ips_status="–" if profile_now is None else "Draft" if ips_missing(profile_now) else "Ready",
         demo=bool(profile_now and profile_now.demo),
+        seed=st.session_state.get("demo_seed") if profile_now and profile_now.demo else None,
     ),
 )
 

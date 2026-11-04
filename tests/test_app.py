@@ -1303,6 +1303,31 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     assert any(e.label == "Advanced settings" for e in app.expander)
 
 
+def test_fill_demo_client_fills_everything_and_opens_the_analysis(app: AppTest) -> None:
+    from gpl.demo import demo_client
+
+    app.number_input(key="demo_seed_input").set_value(7)
+    app.button(key="fill_demo_seed").click().run()
+    assert not app.exception, app.exception
+    demo = demo_client(7)
+    assert app.session_state["main_tab"] == "3 Analyse"
+    assert app.session_state["ws_rows"] == demo.holdings and app.session_state["ws_mode"] == (
+        "USD amount"
+    )
+    assert app.session_state["client"]["reference"] == "DEMO-7"
+    assert app.session_state["client"]["demo"] is True
+    html = " ".join(m.value for m in app.markdown)
+    assert "DEMO DATA · seed 7" in html and "<b>IPS</b> Ready" in html
+    assert any("DEMO DATA" in i.value for i in app.info)  # the Client step says so too
+    final = next(d for d in app.get("download_button") if d.proto.label == "Download IPS (PDF)")
+    assert not final.proto.disabled  # every required field is filled
+    # the random button gives a new seed each time, shown in the header
+    app.number_input(key="demo_seed_input").set_value(None)
+    app.button(key="fill_demo").click().run()
+    assert not app.exception, app.exception
+    assert app.session_state["client"]["reference"] == f"DEMO-{app.session_state['demo_seed']}"
+
+
 def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
     assert app.session_state["main_tab"] == "1 Client"
     app.session_state["main_tab"] = "6 Report & trades"

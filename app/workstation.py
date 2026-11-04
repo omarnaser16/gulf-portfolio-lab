@@ -455,6 +455,15 @@ def _import_list(quote: Callable[[str], object], config_groups, has_data=None) -
     _bump()
 
 
+def set_holdings(rows: list[dict]) -> None:
+    """Replace the holdings with USD amounts (they define the portfolio value)."""
+    st.session_state[ROWS] = [dict(r) for r in rows]
+    st.session_state[MODE] = USD
+    st.session_state["ws_mode_prev"] = USD
+    set_portfolio_value(sum(r["value"] for r in rows))
+    _bump()
+
+
 def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
     by = st.radio("Show allocation by", ["Holding", "Group"], key="ws_alloc_by", horizontal=True)
     shown = weights if by == "Holding" else weights.groupby(lambda t: groups.get(t, "Other")).sum()
