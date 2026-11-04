@@ -450,3 +450,54 @@ days; the work itself was done in a series of sessions.
 - **Checked on live data:** the Suitability step shows "Volatility: 9.35%, 0.35 pp beyond
   the 9.00% limit" under the label.
 - **Status:** 893 tests passing.
+
+## Two Optimise modes: Build and Improve — 2026-11-04
+- **Directed:** two modes on one engine, run walk-forward after costs with a tested rule,
+  and the AI only explaining:
+  - "Build a portfolio for me": 8–15 holdings from a curated universe, aiming to beat the
+    benchmark on a risk-adjusted basis.
+  - "Improve my current portfolio": re-weight within a turnover limit, plus explained
+    swaps.
+- **I decided:**
+  - momentum and low-vol tilts are scored from prices; the quality tilt uses
+    quality-factor ETFs;
+  - UCITS swaps are shown separately, as information outside the 0.05 Sharpe rule;
+  - defaults are a 4% tracking-error limit and a 30% turnover limit;
+  - GCC blue chips join only when the IPS asks for GCC exposure.
+- **Built by Claude Code:**
+  - A curated universe of 62 securities. Every one was verified on Yahoo (2026-11-04).
+  - Max information ratio and a tracking-error limit in the optimiser, plus hit rate and a
+    relative summary.
+  - `construct.py`: screen, shortlist, de-duplication, builds of 8–15 holdings, swaps and
+    turnover limits.
+  - `recommend_build`, the tools, the app modes and the report sections.
+- **Found on live data and fixed:**
+  - Yahoo quotes NBK.KW and KFH.KW about 1000x too low on 31 Aug and 3 Sep 2017, which gave
+    a +100,000% daily return. Short unit glitches are now repaired and logged. This affected
+    any portfolio holding Kuwaiti stocks.
+  - Builds used one year of risk while the IPS judges the full history. Risk now uses all
+    history up to each date, and a build whose past fall breaks the IPS is rebuilt with
+    less risk.
+  - "Beats the benchmark" now needs an information ratio of at least 0.10, not just above 0.
+    Doha's low-vol tilt had 0.02 (+0.09% a year), which is noise.
+  - The fallback could recommend a portfolio worse than the client's own. The current
+    portfolio is now kept when it passes the IPS with at least the fallback's Sharpe.
+    Dubai: keep, 0.67 against 0.51.
+  - The tracker splits SPY with its UCITS twin to respect the cap.
+  - Builds re-choose quarterly: 38 s instead of 122 s.
+- **Results (Nov 2026 data, walk-forward after costs):**
+  - Dubai: no build beat 60/40 within the IPS. The 4% tracking-error limit can't be met
+    alongside the GCC minimum and cash need (the lowest possible was 5.12–5.71% for two
+    tilts). Keep the current portfolio.
+  - Doha (script run): next best was the benchmark tracker, and the current portfolio's IR
+    (0.12) was higher than any build's.
+  - My script and the app gave different feasibility for Dubai's Max IR; I didn't find why.
+- **Learned:** with a 60/40 benchmark whose own worst fall (−21.72%) breaks a 20% IPS
+  limit, "beat the benchmark within the IPS" is often impossible. The honest answer is
+  "keep", or a labelled next best.
+- **Open questions:**
+  - Should the 0.10 information-ratio threshold stay?
+  - Should Build use a benchmark that fits the IPS?
+  - Why did the script and the app differ on Dubai's Max IR feasibility?
+- **Status:** 928 tests passing.
+- **Next:** have a practitioner review the universe and thresholds.
