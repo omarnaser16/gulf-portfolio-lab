@@ -353,3 +353,50 @@ def test_clean_memo_drops_chart_markers_and_keeps_citation_notes() -> None:
         "SPY dominates risk [get_portfolio_diagnosis].\n[show_chart: money_vs_risk]\nEnd."
     )
     assert clean_memo(memo) == ("Sharpe 0.73 (the windows differ).\nSPY dominates risk.\nEnd.")
+
+
+def test_build_recommendation_in_the_report_has_securities_and_relative_metrics() -> None:
+    from gpl.report import recommendation_section
+
+    report = {
+        "mode": "build",
+        "recommendation": {
+            "choice": "Max IR",
+            "status": "recommended",
+            "rule": "r",
+            "reasons": ["Max IR ranks first."],
+        },  # fmt: skip
+        "walk_forward_after_costs": {
+            "Current": {"cagr": "8.00%", "sharpe": "0.60"},
+            "Max IR": {
+                "cagr": "9.00%",
+                "sharpe": "0.70",
+                "excess_return_vs_benchmark": "1.00%",
+                "information_ratio": "0.30",
+                "hit_rate_months": "55.00%",
+                "worst_relative_drawdown": "-6.00%",
+            },  # fmt: skip
+            "Benchmark": {"cagr": "8.50%", "sharpe": "0.65"},
+        },
+        "securities_chosen": {
+            "SPY": {
+                "weight": "30.00%",
+                "name": "SPDR S&P 500 ETF",
+                "asset_class": "Equity",
+                "region": "United States",
+                "why": "in the benchmark",
+            },  # fmt: skip
+        },
+        "swaps": [{"why": "Sell X: duplicate of Y."}],
+        "domicile_suggestions_information_not_tax_advice": [{"why": "SPY -> CSPX.L."}],
+    }
+    latest = pd.DataFrame({"SPY": [0.5, 0.3], "AGG": [0.5, 0.0], "QUAL": [0.0, 0.7]},
+                          index=["Current", "Max IR"])  # fmt: skip
+    rec = recommendation_section(report, latest)
+    labels = [row[0] for row in rec["metrics"]]
+    assert "Months ahead of the benchmark" in labels
+    assert rec["securities"][1][:3] == ["SPY", "SPDR S&P 500 ETF (Equity, United States)",
+                                         "30.00%"]  # fmt: skip
+    assert rec["swaps"] == ["Sell X: duplicate of Y."] and rec["domicile"] == ["SPY -> CSPX.L."]
+    next_best = {**report, "recommendation": {**report["recommendation"], "status": "next_best"}}
+    assert "does not aim to beat" in recommendation_section(next_best, latest)["headline"]

@@ -31,7 +31,14 @@ from gpl.agent.spec import (
     propose_spec,
     spec_from_draft,
 )
-from gpl.agent.tools import AnalystContext, diagnose_portfolio, run_candidates
+from gpl.agent.tools import (
+    AnalystContext,
+    ToolError,
+    UniverseData,
+    diagnose_portfolio,
+    run_build,
+    run_candidates,
+)
 from gpl.client import (
     CLOSEST_MIX_LABEL,
     build_ips,
@@ -40,6 +47,7 @@ from gpl.client import (
     month_text,
     tighter,
 )
+from gpl.construct import BuildSettings, _groups, screen_universe
 from gpl.data import (
     AssetData,
     BenchmarkData,
@@ -51,6 +59,7 @@ from gpl.data import (
     latest_quote,
     load_assets,
     load_benchmark,
+    load_investable,
     load_universe,
     sample_limiters,
     search_securities,
@@ -80,6 +89,7 @@ from gpl.montecarlo import (
     to_real,
 )
 from gpl.optimise import (
+    OptimisationSpec,
     efficient_frontier,
     max_sharpe,
     min_variance,
@@ -94,6 +104,7 @@ from gpl.plots import (
     equity_chart,
     fan_chart,
     frontier_chart,
+    lines_chart,
     paired_bars_chart,
     regime_chart,
     risk_contribution_chart,
@@ -678,7 +689,49 @@ CANDIDATE_TABLE_COLUMNS = {
     "in_sample_sharpe": "In-sample Sharpe",
     "held_up_out_of_sample": "Held up?",
     "months_limits_unmet_previous_weights_kept": "Months limits unmet (weights kept)",
+    "excess_return_vs_benchmark": "Excess vs benchmark (a year)",
+    "information_ratio": "Information ratio",
+    "tracking_error": "Tracking error",
+    "hit_rate_months": "Hit rate (months)",
+    "worst_relative_drawdown": "Worst relative drawdown",
 }
+IMPROVE, BUILD = "Improve my current portfolio", "Build a portfolio for me"
+UNIVERSE_TAGS = load_investable()
+LAB = CFG.get("optimise_lab", {})
+
+
+def universe_data(include_holdings: bool = True) -> UniverseData:
+    """The curated universe screened by the client's IPS, loaded in USD on common dates.
+
+    Securities with a short history are left out (10 years; 6 for a Sharia-only client, whose
+    funds start in 2019). The holdings and the benchmark's funds are loaded alongside.
+    """
+    ips = client_ips()
+    years = (
+        LAB.get("build_min_history_years_sharia", 6)
+        if ips is not None and ips.limits["sharia_only"]
+        else LAB.get("build_min_history_years", 10)
+    )
+    screen = screen_universe(
+        UNIVERSE_TAGS, ips, date.today(), years, CFG.get("security_attributes", {})
+    )
+    bench_funds = list(bench_choices.get(bench_name, {}).get("weights", {}))
+    wanted = [*screen.eligible, *(list(my_weights) if include_holdings else []), *bench_funds]
+    loaded_u = load_data(tuple(dict.fromkeys(wanted)), start, end, lookback, day)
+    prices = loaded_u.prices
+    tagged = [t for t in prices.columns if t in UNIVERSE_TAGS]
+    return UniverseData(
+        prices=prices,
+        tags=UNIVERSE_TAGS,
+        eligible=[t for t in screen.eligible if t in prices.columns],
+        excluded={
+            **screen.excluded,
+            **{t: f"no prices: {why}" for t, why in loaded_u.invalid.items()},
+        },
+        groups=_groups(tagged, UNIVERSE_TAGS),
+        currencies=loaded_u.history["currency"].to_dict(),
+        periods_per_year=loaded_u.periods_per_year,
+    )
 
 
 def _limits_table(rows: list[dict], key_name: str, names: list[str]) -> pd.DataFrame:
@@ -726,6 +779,12 @@ def _interpret(holding_groups: dict[str, str]) -> None:
     cap = proposal.draft.get("max_weight_pct")
     if cap is not None:
         st.session_state["max_weight"] = min(max(float(cap) / 100, 0.10), 1.0)
+    turnover_cap = proposal.draft.get("max_turnover_pct")
+    if turnover_cap is not None:
+        st.session_state["opt_turnover"] = min(max(float(turnover_cap), 5.0), 200.0)
+    te_cap = proposal.draft.get("tracking_error_max_pct")
+    if te_cap is not None:
+        st.session_state["build_te"] = min(max(float(te_cap), 0.5), 20.0)
     st.session_state.pop("ws_opt", None)
 
 
@@ -1252,9 +1311,20 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         )
     elif rec["choice"] == KEEP:
         st.info(f"**Keep your current portfolio.**\n\n{reasons}")
+    elif rec["status"] == "next_best":
+        st.info(
+            f"**Next best option: {rec['choice']}.** No built portfolio beat the benchmark "
+            f"out of sample after costs within the IPS, so this does not beat it.\n\n{reasons}"
+        )
     else:
-        st.success(f"**Recommended method: {rec['choice']}**\n\n{reasons}")
-    if gate and not gate["current_passes_ips"] and rec["status"] != "closest_fails":
+        label = "Recommended portfolio" if report.get("mode") == "build" else "Recommended method"
+        st.success(f"**{label}: {rec['choice']}**\n\n{reasons}")
+    if (
+        gate
+        and gate["current_passes_ips"] is False
+        and rec["status"] != "closest_fails"
+        and "Current" in gate["failed_rules"]
+    ):
         st.caption(
             "Your current portfolio fails the IPS: "
             + "; ".join(gate["failed_rules"]["Current"])
@@ -1268,25 +1338,72 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         columns["passes_ips"] = "Passes IPS?"
     rows = rows.reindex(columns=list(columns)).rename(columns=columns)
     rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
-    rows.index = [("★ " if n == rec["choice"] else "") + n for n in rows.index]
+    mark = "≈ " if rec["status"] == "closest_fails" else "★ "  # ≈: closest, still fails
+    rows.index = [(mark if n == rec["choice"] else "") + n for n in rows.index]
     st.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
     st.table(rows)
+    build = report.get("mode") == "build"
     st.caption(
-        "Each method is re-optimised every month on the trailing window only (Ledoit-Wolf "
-        "covariance), within your limits, then held to the next month, after trading costs. "
-        "'Held up?': it kept at least half of its in-sample Sharpe ratio out of sample. "
+        (
+            "Each candidate re-chooses its securities and weights every month from the trailing "
+            "window only, within the IPS and your limits, then holds them to the next month, "
+            "after trading costs. "
+            if build
+            else "Each method is re-optimised every month on the trailing window only "
+            "(Ledoit-Wolf covariance), within your limits, then held to the next month, after "
+            "trading costs. "
+        )
+        + "'Held up?': it kept at least half of its in-sample Sharpe ratio out of sample. "
         "'Months limits unmet': months when the limits couldn't be met with the data then "
-        "available, so the previous weights were kept (no limit was broken). The "
-        "target-volatility method aims at "
-        f"{report['volatility_target_for_target_volatility_candidate']} a year."
+        "available, so the previous weights were kept (no limit was broken). Hit rate: the "
+        "share of months it beat the benchmark."
+        + (
+            " The target-volatility method aims at "
+            f"{report['volatility_target_for_target_volatility_candidate']} a year."
+            if "volatility_target_for_target_volatility_candidate" in report
+            else ""
+        )
     )
-    for name, why in report["infeasible_candidates"].items():
+    for name, why in report.get("infeasible_candidates", {}).items():
         st.warning(f"**{name}** can't meet your limits, so it wasn't run: " + " ".join(why))
     for name, why in {
-        **report["identical_methods_shown_once"],
-        **report["same_latest_weights_different_history"],
+        **report.get("identical_methods_shown_once", {}),
+        **report.get("same_latest_weights_different_history", {}),
     }.items():
         st.caption(f"{name}: {why}.")
+    chosen = report.get("securities_chosen")
+    if chosen:
+        st.markdown(f"**Securities chosen and why** ({rec['choice']})")
+        st.table(
+            pd.DataFrame(chosen).T.rename(
+                columns={
+                    "weight": "Weight",
+                    "name": "Name",
+                    "asset_class": "Asset class",
+                    "region": "Region",
+                    "domicile": "Domicile",
+                    "sharia": "Sharia",
+                    "why": "Why",
+                }
+            )
+        )
+    for swap in report.get("swaps", []):
+        st.markdown(f"🔁 **Swap ({swap['kind']})**: {swap['why']}")
+    for idea in report.get("domicile_suggestions_information_not_tax_advice", []):
+        st.caption(f"🏛 **Domicile (information, not tax advice):** {idea['why']}")
+    if report.get("mode") == "improve":
+        st.caption(
+            f"Turnover limit {report['max_turnover']} of the portfolio: each month's move, and "
+            "today's suggested change from your current weights, stay within it unless your "
+            "limits need more."
+        )
+        for name, traded in report.get(
+            "trades_more_than_the_turnover_limit_to_meet_the_limits", {}
+        ).items():
+            st.warning(
+                f"**{name}** trades {traded} of the portfolio, above the "
+                f"{report['max_turnover']} turnover limit, because meeting your limits needs it."
+            )
     if len(run.latest_weights) > 1:
         st.markdown("**Latest weights of each method** (what it would hold now)")
         st.table(run.latest_weights.map(pct))
@@ -1301,6 +1418,17 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                 width="stretch",
             )
     plot(equity_chart(run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"))
+    if "Benchmark" in run.equity and rec["choice"] in run.equity:
+        daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
+        rel = relative_drawdown(daily[rec["choice"]], daily["Benchmark"]).rename(rec["choice"])
+        plot(
+            lines_chart(
+                rel.to_frame(),
+                f"{rec['choice']}: drawdown relative to the benchmark",
+                "Relative drawdown",
+            ),
+            width="stretch",
+        )
     st.info(report["caveats"])
     candidates = {"Current": run.latest_weights.loc["Current"]}
     if rec["choice"] != KEEP:
@@ -1331,6 +1459,85 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                 render_reply(memo["reply"])
 
 
+def render_build(ctx, ai_ok: bool) -> None:
+    """ "Build a portfolio for me": screen the universe, build candidates, recommend by rule."""
+    st.markdown("**Build a portfolio for me**")
+    st.caption(
+        f"From a curated universe of {len(UNIVERSE_TAGS)} liquid securities (ETFs, GCC blue chips "
+        "when the IPS asks for GCC exposure, bonds and sukuk, gold, cash), screened by the "
+        "client's IPS. Candidates of 8-15 holdings aim for the highest information ratio "
+        "against the benchmark, with volatility at most the benchmark's and a tracking-error "
+        "limit; with a low-volatility, momentum or quality tilt; a diversified IPS portfolio; "
+        "and a benchmark tracker. Judged walk-forward after costs."
+    )
+    if bench is None or bench.is_cash:
+        st.warning("Choose a market benchmark (not cash) in the header: Build aims to beat it.")
+        return
+    c1, c2 = st.columns(2)
+    te = c1.number_input(
+        "Tracking-error limit (% a year)",
+        0.5,
+        20.0,
+        float(LAB.get("tracking_error_max", 0.04) * 100),
+        0.5,
+        key="build_te",
+        help="How far the portfolio may stray from the benchmark: the annualised volatility of "
+        "its return minus the benchmark's.",
+    )
+    c2.caption(
+        f"At most {pct(max_weight)} in one holding (slider above); the client's IPS limits "
+        "apply on top. Tilts: low volatility and momentum are scored from prices; quality "
+        "uses quality-factor ETFs."
+    )
+    lo, hi = LAB.get("build_holdings", [8, 15])
+    settings = BuildSettings(
+        tracking_error_max=te / 100,
+        n_min=int(lo),
+        n_max=int(hi),
+        min_weight=float(LAB.get("build_min_weight", 0.02)),
+        tilt_min=float(LAB.get("tilt_min", 0.25)),
+    )
+    limits = OptimisationSpec(max_weight=max_weight)
+    profile = client_ui.current_profile()
+    client_key = None if profile is None else json.dumps(profile.to_dict(), sort_keys=True)
+    run_key = ("build", settings_key, bench_name, te, max_weight, client_key, portfolio_value())
+    if st.button("Build the candidate portfolios", key="ws_run_build", type="primary"):
+        with st.spinner("Loading the universe, then choosing securities month by month…"):
+            uni = universe_data(True)
+            try:
+                report, run = run_build(
+                    ctx, uni, limits, my_weights, settings,
+                    bench_choices.get(bench_name, {}).get("weights", {}),
+                )  # fmt: skip
+            except ToolError as e:
+                st.error(str(e))
+                return
+        ctx.optimisation = report
+        choice = run.recommendation.choice
+        if choice in run.latest_weights.index:
+            w = run.latest_weights.loc[choice]
+            fails = run.recommendation.status == "closest_fails"
+            ctx.proposed = {
+                "name": f"{choice} ({'closest, fails the IPS' if fails else 'recommended'})",
+                "weights": w[w > 0].to_dict(),
+                "source": "Build (closest; fails the IPS)" if fails else "Build recommendation",
+            }
+        st.session_state.ws_opt = {
+            "report": report, "run": run, "memo": None, "key": run_key, "universe": uni.excluded,
+        }  # fmt: skip
+    result = st.session_state.get("ws_opt")
+    if result and result["key"] == run_key:
+        with st.expander(
+            f"Universe after the IPS screen: {result['report']['universe']['eligible']} eligible"
+        ):
+            out = result["report"]["universe"]["excluded"]
+            if out:
+                st.table(pd.DataFrame({"Left out because": out}))
+        _results_section(result, ai_ok)
+    elif result and result["key"][0] == "build":
+        st.caption("The limits, client or benchmark changed: build the candidates again.")
+
+
 def render_optimise() -> None:
     """Diagnose -> goal and limits -> candidate methods walk-forward -> recommendation -> memo."""
     # Default set through session state only: the AI's interpretation may also set it.
@@ -1355,6 +1562,18 @@ def render_optimise() -> None:
     ctx.benchmark = bench
     holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
     ai_ok = agent.has_credentials()
+    mode = st.radio(
+        "What should Optimise do?",
+        [IMPROVE, BUILD],
+        key="opt_mode",
+        horizontal=True,
+        help="Improve: start from your holdings, re-weight within a turnover limit, then try a "
+        "few explained swaps. Build: choose 8-15 securities from a curated universe that aim to "
+        "beat the benchmark on a risk-adjusted basis.",
+    )
+    if mode == BUILD:
+        render_build(ctx, ai_ok)
+        return
     _diagnosis_section(ctx)
     chosen = _goal_section(holding_groups, ai_ok)
     if chosen is None:
@@ -1368,12 +1587,45 @@ def render_optimise() -> None:
         "Max Sharpe, min variance, risk parity, max diversification and target volatility, each "
         "within your limits, judged on how they did out of sample after costs."
     )
+    c1, c2, c3 = st.columns(3)
+    max_turnover = c1.number_input(
+        "Max turnover (% of the portfolio)",
+        5.0,
+        200.0,
+        float(LAB.get("max_turnover", 0.30) * 100),
+        5.0,
+        key="opt_turnover",
+        help="Buys plus sells as a share of the portfolio: 30% = e.g. selling 15% of one "
+        "holding and buying 15% of another. Applied to each month's move and to today's change.",
+    )
+    use_swaps = c2.toggle(
+        "Also try swaps from the curated universe",
+        value=True,
+        key="opt_swaps",
+        help="Sell a near-duplicate holding, or add a missing bond / sukuk diversifier: rules "
+        "applied each month to the data available then.",
+    )
+    max_swaps = c3.number_input(
+        "Max swaps", 1, 5, int(LAB.get("max_swaps", 3)), 1, key="opt_max_swaps"
+    )
     profile = client_ui.current_profile()
     client_key = None if profile is None else json.dumps(profile.to_dict(), sort_keys=True)
-    run_key = (settings_key, bench_name, goal, target, repr(limits), client_key, portfolio_value())
+    run_key = (
+        settings_key, bench_name, goal, target, repr(limits), client_key, portfolio_value(),
+        max_turnover, use_swaps, max_swaps,
+    )  # fmt: skip
     if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
         with st.spinner("Re-optimising each method month by month and backtesting…"):
-            report, run = run_candidates(ctx, goal, limits, my_weights, target)
+            report, run = run_candidates(
+                ctx,
+                goal,
+                limits,
+                my_weights,
+                target,
+                max_turnover=max_turnover / 100,
+                universe=universe_data(True) if use_swaps else None,
+                max_swaps=int(max_swaps),
+            )
         ctx.optimisation = report
         choice = run.recommendation.choice
         if choice != KEEP:  # charts on the Analyst page compare current with this
@@ -2135,6 +2387,11 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
         return None, None
     report, run = opt["report"], opt["run"]
     rec = recommendation_section(report, run.latest_weights)
+    if rec["choice"] in run.equity and "Benchmark" in run.equity:
+        daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
+        rec["relative_drawdown"] = relative_drawdown(
+            daily[rec["choice"]], daily["Benchmark"]
+        ).rename(rec["choice"])
     value = portfolio_value()
     if rec["choice"] is None or rec["status"] == "closest_fails" or not value:
         return rec, None

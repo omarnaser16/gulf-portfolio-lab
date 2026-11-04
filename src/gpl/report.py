@@ -419,13 +419,19 @@ def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
             )
             + "; it is shown for discussion with your adviser, not as a recommendation."
         )
+    elif rec["status"] == "next_best":
+        headline = (
+            "No portfolio we built beat the benchmark after costs within your investment "
+            f"policy, so the next best option is the {choice}. It does not aim to beat the "
+            "benchmark."
+        )
     elif keep:
         headline = "We recommend keeping your current portfolio."
     else:
         headline = f"We recommend moving to the {choice} portfolio."
     rows = report["walk_forward_after_costs"]
     shown = [
-        "Current",
+        *(["Current"] if "Current" in rows else []),
         *([] if keep else [choice]),
         *(["Benchmark"] if "Benchmark" in rows else []),
     ]
@@ -435,13 +441,23 @@ def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
         ("annual_volatility", "Typical yearly swing (volatility)"),
         ("sharpe", "Return per unit of risk (Sharpe)"),
         ("max_drawdown", "Largest fall from a peak"),
+        ("excess_return_vs_benchmark", "Ahead of (+) or behind (-) the benchmark, a year"),
+        ("information_ratio", "Extra return per unit of difference (information ratio)"),
+        ("hit_rate_months", "Months ahead of the benchmark"),
+        ("worst_relative_drawdown", "Largest fall behind the benchmark"),
     ]:
-        metrics.append([label, *[str(rows[n].get(key, "–")) for n in shown]])
+        if any(key in rows[n] for n in shown):
+            metrics.append([label, *[str(rows[n].get(key, "–")) for n in shown]])
     weights = [["Holding", "Today", "Recommended" if not keep else "Today (kept)", "Change"]]
     target = latest.loc["Current"] if keep else latest.loc[choice]
     for t in latest.columns:
         now, new = float(latest.loc["Current", t]), float(target[t])
-        weights.append([str(t), f"{now:.2%}", f"{new:.2%}", f"{(new - now) * 100:+.2f} pp"])
+        if now > 1e-9 or new > 1e-9:
+            weights.append([str(t), f"{now:.2%}", f"{new:.2%}", f"{(new - now) * 100:+.2f} pp"])
+    securities = [["Security", "What it is", "Weight", "Why it was chosen"]] + [
+        [t, f"{v['name']} ({v['asset_class']}, {v['region']})", v["weight"], v["why"]]
+        for t, v in report.get("securities_chosen", {}).items()
+    ]
     return {
         "status": rec["status"],
         "choice": choice,
@@ -452,6 +468,12 @@ def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
         "weights": weights,
         "metrics": metrics,
         "failed": list(failed),
+        "securities": securities if len(securities) > 1 else None,
+        "swaps": [sw["why"] for sw in report.get("swaps", [])],
+        "domicile": [
+            d["why"] for d in report.get("domicile_suggestions_information_not_tax_advice", [])
+        ],
+        "relative_drawdown": None,  # set by the app from the walk-forward equity curves
     }
 
 
@@ -878,8 +900,23 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
             story += _bullets(rec["failed"])
         story.append(para("Why", "h3"))
         story += _bullets(rec["reasons"])
+        if rec.get("swaps"):
+            story.append(para("Changes to your holdings", "h3"))
+            story += _bullets(rec["swaps"])
+        if rec.get("securities"):
+            story.append(para("Securities chosen and why", "h3"))
+            story.append(table(rec["securities"], widths=[20 * mm, 52 * mm, 18 * mm, 84 * mm]))
         story += [Spacer(1, 4), table(rec["weights"], widths=[44 * mm, 40 * mm, 50 * mm, 40 * mm])]
         story += [Spacer(1, 6), table(rec["metrics"])]
+        rel = rec.get("relative_drawdown")
+        if rel is not None and len(rel):
+            story += [
+                Spacer(1, 6),
+                _line_chart(rel.to_frame(), "Falls behind the benchmark", None, percent=True),
+            ]
+        if rec.get("domicile"):
+            story.append(para("Fund domicile ideas (information, not tax advice)", "h3"))
+            story += _bullets(rec["domicile"])
         story.append(
             para(
                 f"Tested month by month on past data ({rec['period']}), after costs. "

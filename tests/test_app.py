@@ -79,6 +79,28 @@ class FakeTicker:
         self.fast_info = {"currency": FAKE_CURRENCY.get(suffix, "USD")}
 
 
+SMALL_UNIVERSE = ["SPY", "EFA", "EEM", "KSA", "QUAL", "USMV", "AGG", "TLT", "BIL", "GLD",
+                  "CSPX.L", "SPSK"]  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def small_universe(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:
+    """A 12-security investable universe, so Build and swaps stay fast and offline."""
+    import yaml
+
+    full = gpl.data.load_investable()
+    folder = tmp_path_factory.mktemp("universe")
+    securities = {
+        t: {k: v for k, v in full[t].items() if k not in ("history_from", "verified")}
+        for t in SMALL_UNIVERSE
+    }
+    history = {t: {"history_from": "2010-01-04", "verified": "2026-11-04"} for t in SMALL_UNIVERSE}
+    (folder / "u.yaml").write_text(yaml.safe_dump({"securities": securities}))
+    (folder / "h.yaml").write_text(yaml.safe_dump({"history": history}))
+    monkeypatch.setattr(gpl.data, "INVESTABLE", folder / "u.yaml")
+    monkeypatch.setattr(gpl.data, "INVESTABLE_HISTORY", folder / "h.yaml")
+
+
 @pytest.fixture
 def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
     monkeypatch.setattr(yf, "download", synthetic_download)
@@ -1533,3 +1555,50 @@ def test_a_new_listing_that_shortens_the_sample_can_be_excluded(app: AppTest) ->
     app.button(key="ws_exclude_NEWCO").click().run()
     assert [r["ticker"] for r in app.session_state[ws.ROWS]] == ["SPY", "AGG"]
     assert not any("shortens the common sample" in w.value for w in app.warning)
+
+
+def test_build_mode_screens_builds_and_recommends_by_rule(optimise_app) -> None:
+    at, _ = optimise_app([])
+    at.radio(key="opt_mode").set_value("Build a portfolio for me").run()
+    assert not at.exception, at.exception
+    assert at.number_input(key="build_te").value == 4.0  # the 4% default
+    at.button(key="ws_run_build").click().run()
+    assert not at.exception, at.exception
+    report = at.session_state["ws_opt"]["report"]
+    assert report["mode"] == "build"
+    rec = report["recommendation"]
+    assert rec["status"] in {"recommended", "next_best", "closest_fails"}
+    table = _candidates(at)
+    assert {"Max IR", "Benchmark tracker", "Benchmark"} <= {n.lstrip("★≈ ") for n in table.index}
+    assert "Information ratio" in table.columns and "Hit rate (months)" in table.columns
+    shown = " ".join(b.value for b in [*at.success, *at.info, *at.warning])
+    assert rec["choice"] in shown
+    if rec["status"] != "closest_fails":
+        securities = next(t.value for t in at.table if "Why" in t.value.columns)
+        assert set(securities.index) == set(report["securities_chosen"])
+    assert any(e.label.startswith("Universe after the IPS screen") for e in at.expander)
+    assert "survivorship" in " ".join(i.value for i in at.info)
+
+
+def test_improve_mode_caps_turnover_and_explains_swaps(optimise_app) -> None:
+    from gpl.construct import turnover
+
+    at, _ = optimise_app([])
+    at.number_input(key="opt_turnover").set_value(20.0)
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    result = at.session_state["ws_opt"]
+    report, run = result["report"], result["run"]
+    assert report["mode"] == "improve" and report["max_turnover"] == "20.00%"
+    now = run.latest_weights.loc["Current"]
+    over = report["trades_more_than_the_turnover_limit_to_meet_the_limits"]
+    for name in run.latest_weights.index.drop("Current"):
+        traded = turnover(now, run.latest_weights.loc[name])
+        # within the limit, unless meeting the limits needs more (SPY 50% vs a 40% cap)
+        assert traded <= 0.20 + 1e-6 or name in over, name
+    assert any("Turnover limit 20.00%" in c.value for c in at.caption)
+    for name in over:
+        assert any(name in w.value and "meeting your limits needs it" in w.value
+                   for w in at.warning)  # fmt: skip
+    # default holdings SPY/AGG/GLD/KSA: SPY has an Irish twin in the universe
+    assert any("Domicile (information, not tax advice)" in c.value for c in at.caption)
