@@ -28,6 +28,7 @@ from gpl.client import (
     build_ips,
     default_regulator,
     effective_regulator,
+    example_holdings,
     ips_constraints,
     liquidity_need_score,
     parse_month,
@@ -89,7 +90,11 @@ def _set_profile(profile: ClientProfile) -> None:
 def _load_example() -> None:
     name = st.session_state.get("client_example")
     if name in EXAMPLE_CLIENTS:
-        _set_profile(ClientProfile.from_dict(EXAMPLE_CLIENTS[name]))
+        profile = ClientProfile.from_dict(EXAMPLE_CLIENTS[name])
+        ws.set_holdings(example_holdings(name, profile.portfolio_value_usd))  # its own portfolio
+        _set_profile(profile)
+        for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails"):
+            st.session_state.pop(key, None)
 
 
 def _load_json() -> None:

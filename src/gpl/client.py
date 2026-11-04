@@ -891,7 +891,7 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         booking_location="DIFC (Dubai)",
         age=45,
         home_bias_gcc_pct=10,
-        goals=[{"description": "Grow capital", "multiple": 1.5, "years": 10}],
+        goals=[{"description": "Retirement fund", "amount_usd": 1_100_000, "years": 10}],
         name="Example client (Dubai)",
         nationality="British",
         tax_residencies=["UAE"],
@@ -925,7 +925,7 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         age=58,
         sharia_only=True,
         home_bias_gcc_pct=30,
-        goals=[{"description": "Preserve capital", "years": 5}],
+        goals=[{"description": "Capital for retirement", "amount_usd": 1_100_000, "years": 5}],
         name="Example client (Riyadh)",
         nationality="Saudi",
         tax_residencies=["Saudi Arabia"],
@@ -961,7 +961,7 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         residency="Qatar",
         booking_location="QFC (Qatar)",
         age=34,
-        goals=[{"description": "Long-term growth", "multiple": 3, "years": 20}],
+        goals=[{"description": "Financial independence", "amount_usd": 2_500_000, "years": 20}],
         name="Example client (Doha)",
         nationality="Qatari",
         tax_residencies=["Qatar"],
@@ -983,3 +983,46 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         will_status="No will",
     ),
 }
+
+
+# Each example's starting portfolio (weights in %), loaded with the example so the workflow
+# works out of the box: a cash-like holding (BIL; SPSK sukuk for the Sharia client) covers
+# the cash needs due soon, and the mixes were checked against each IPS on real data
+# (Nov 2026): Dubai and Doha pass every rule. Riyadh passes all but volatility (9.35% against
+# 9.00%): with a 25% cap, at least 30% in GCC and SPSK the only low-risk Sharia fund in the
+# list, no mix of these holdings meets band 2; GLD's Sharia status is unknown (review).
+EXAMPLE_HOLDINGS: dict[str, list[dict]] = {
+    "Dubai, moderate, 10 years": [
+        {"ticker": "SPY", "group": "Global equity", "weight_pct": 30.0},
+        {"ticker": "AGG", "group": "Bonds", "weight_pct": 25.0},
+        {"ticker": "GLD", "group": "Gold", "weight_pct": 10.0},
+        {"ticker": "KSA", "group": "GCC", "weight_pct": 10.0},
+        {"ticker": "UAE", "group": "GCC", "weight_pct": 5.0},
+        {"ticker": "BIL", "group": CASH_GROUP, "weight_pct": 20.0},
+    ],
+    "Riyadh, conservative, 5 years, Sharia": [
+        {"ticker": "SPUS", "group": "Global equity", "weight_pct": 10.0},
+        {"ticker": "HLAL", "group": "Global equity", "weight_pct": 5.0},
+        {"ticker": "SPSK", "group": CASH_GROUP, "weight_pct": 25.0},
+        {"ticker": "2222.SR", "group": "GCC", "weight_pct": 25.0},
+        {"ticker": "1120.SR", "group": "GCC", "weight_pct": 10.0},
+        {"ticker": "GLD", "group": "Gold", "weight_pct": 25.0},
+    ],
+    "Doha, aggressive, 20 years": [
+        {"ticker": "SPY", "group": "Global equity", "weight_pct": 35.0},
+        {"ticker": "EFA", "group": "Global equity", "weight_pct": 15.0},
+        {"ticker": "EEM", "group": "Global equity", "weight_pct": 10.0},
+        {"ticker": "QAT", "group": "GCC", "weight_pct": 15.0},
+        {"ticker": "KSA", "group": "GCC", "weight_pct": 10.0},
+        {"ticker": "GLD", "group": "Gold", "weight_pct": 10.0},
+        {"ticker": "BIL", "group": CASH_GROUP, "weight_pct": 5.0},
+    ],
+}
+
+
+def example_holdings(name: str, value: float) -> list[dict]:
+    """An example's holdings as USD amounts of ``value`` ({"ticker", "group", "value"})."""
+    return [
+        {"ticker": h["ticker"], "group": h["group"], "value": value * h["weight_pct"] / 100}
+        for h in EXAMPLE_HOLDINGS[name]
+    ]

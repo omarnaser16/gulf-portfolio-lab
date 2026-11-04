@@ -442,3 +442,42 @@ def test_example_clients_have_complete_fact_finds_and_unchanged_limits() -> None
         lim = build_ips(p, CFG, date(2026, 11, 4)).limits
         got = (risk_profile(p).score, lim["max_volatility"], lim["max_drawdown"], lim["max_weight"])
         assert got == expected[name], name
+
+
+def test_example_portfolios_hold_cash_and_goals_need_a_real_return() -> None:
+    from gpl.client import EXAMPLE_HOLDINGS, example_holdings
+    from gpl.factfind import goals_required_return
+
+    today = date(2026, 11, 4)
+    expected = {  # the solver's rates; checked below by discounting the flows at that rate
+        "Dubai, moderate, 10 years": 0.0484,
+        "Riyadh, conservative, 5 years, Sharia": 0.0406,
+        "Doha, aggressive, 20 years": 0.0670,
+    }
+    for name, data in EXAMPLE_CLIENTS.items():
+        p = ClientProfile.from_dict(data)
+        holdings = EXAMPLE_HOLDINGS[name]
+        assert sum(h["weight_pct"] for h in holdings) == 100.0, name
+        assert (
+            max(h["weight_pct"] for h in holdings)
+            <= build_ips(p, CFG, today).limits["max_weight"] * 100
+        ), name
+        cash = sum(h["weight_pct"] for h in holdings if h["ticker"] in CFG["cash_like"]) / 100
+        assert (
+            cash * p.portfolio_value_usd >= build_ips(p, CFG, today).limits["liquidity_reserve_usd"]
+        ), name  # the cash needs due soon are held in cash-like funds
+        assert cash > 0, name
+        rows = example_holdings(name, p.portfolio_value_usd)
+        assert sum(r["value"] for r in rows) == pytest.approx(p.portfolio_value_usd)
+        need = goals_required_return(
+            p.portfolio_value_usd, p.goals, p.liquidity_needs, p.annual_contribution_usd, today
+        )
+        assert round(need.rate, 4) == expected[name], (name, need.rate)
+        # independent check: at that rate, today's value + PV(additions) = PV(payments)
+        r, last = need.rate, max(y for _, y, _ in need.flows)
+        adds = sum(p.annual_contribution_usd / (1 + r) ** t for t in range(1, int(last) + 1))
+        payments = sum(a / (1 + r) ** y for _, y, a in need.flows)
+        assert p.portfolio_value_usd + adds == pytest.approx(payments, rel=1e-6), name
+    sharia = EXAMPLE_HOLDINGS["Riyadh, conservative, 5 years, Sharia"]
+    attrs = CFG["security_attributes"]
+    assert all(attrs[h["ticker"]]["sharia"] != "not_compliant" for h in sharia)

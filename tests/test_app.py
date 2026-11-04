@@ -1014,9 +1014,39 @@ def test_domicile_asks_for_the_value_when_missing(app: AppTest) -> None:
     assert "pf_value_suitability_1" not in keys  # the value is known now: no box
 
 
+OLD_DEFAULT = [  # the app's starting holdings: SPY 50%, AGG 30%, GLD 10%, KSA 10%
+    {"ticker": "SPY", "group": "Global equity", "value": 50.0},
+    {"ticker": "AGG", "group": "Bonds", "value": 30.0},
+    {"ticker": "GLD", "group": "Gold", "value": 10.0},
+    {"ticker": "KSA", "group": "GCC", "value": 10.0},
+]
+
+
+def test_example_clients_load_their_own_portfolio(app: AppTest) -> None:
+    from gpl.client import EXAMPLE_HOLDINGS
+
+    app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
+    app.button(key="client_load_example").click().run()
+    assert not app.exception, app.exception
+    rows = {r["ticker"]: (r["group"], r["value"]) for r in app.session_state[ws.ROWS]}
+    expected = EXAMPLE_HOLDINGS["Riyadh, conservative, 5 years, Sharia"]
+    assert rows == {h["ticker"]: (h["group"], h["weight_pct"] * 10_000) for h in expected}
+    assert app.session_state[ws.MODE] == "USD amount" and _metric(app, "Portfolio value") == (
+        "$1.00m"
+    )
+    table = next(t.value for t in app.table if "Exclusions" in t.value.index)
+    assert table.loc["Liquidity", "Current"].startswith("✅ Pass")  # SPSK holds the cash need
+    assert table.loc["Exclusions", "Current"].startswith("⚠️ Review")  # GLD: status unknown
+    notes = " ".join(c.value for c in app.caption)
+    assert "Cash need: at least 10.00% (USD 100,000) in cash-like holdings (SPSK)" in notes
+    goal = next(m.value for m in app.markdown if "Return needed to meet the goals" in m.value)
+    assert "% a year pays every goal" in goal and "0.00% a year" not in goal
+
+
 def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
+    _set_holdings(app, OLD_DEFAULT)  # not the example's own portfolio: SPY and AGG excluded
     plan = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
     # band 2: volatility at most 9%; home bias 30% GCC; SPY and AGG not Sharia-compliant
     limits = _limits(app)
@@ -1050,6 +1080,7 @@ def test_suitability_panels_need_a_client_then_show_reasons(app: AppTest) -> Non
     assert any("Load or create a client on step 1 (Client)" in i.value for i in app.info)
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
+    _set_holdings(app, OLD_DEFAULT)  # SPY 50% and AGG instead of the example's Sharia funds
     assert not app.exception, app.exception
     table = next(t.value for t in app.table if "Exclusions" in t.value.index)
     assert table.loc["Exclusions", "Current"].startswith("❌ Fail")  # SPY, AGG not compliant
@@ -1076,6 +1107,7 @@ def test_optimise_never_recommends_a_portfolio_that_fails_the_ips(optimise_app) 
     # Riyadh: Sharia-only excludes SPY and AGG, GCC at least 30%, band 2 (9% volatility)
     at.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     at.button(key="client_load_example").click().run()
+    _set_holdings(at, OLD_DEFAULT)  # a portfolio that fails the IPS, to test the gate
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
     table = _candidates(at)
@@ -1095,6 +1127,8 @@ def test_cash_need_is_a_hard_optimiser_limit(app: AppTest) -> None:
     # Dubai: USD 50,000 due Oct 2027 on USD 500,000 -> at least 10% in cash-like holdings
     app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     app.button(key="client_load_example").click().run()
+    assert "Cash need (BIL)" in _limits(app)  # the example's own portfolio holds BIL
+    _set_holdings(app, OLD_DEFAULT)  # without a cash-like holding
     notes = " ".join(c.value for c in app.caption)
     assert "can't be met: no holding is cash, short-term bonds or sukuk" in notes  # AGG isn't
     app.button(key="ws_add_cash").click().run()
@@ -1185,11 +1219,10 @@ def test_one_portfolio_value_everywhere(app: AppTest) -> None:
     assert _metric(app, "Portfolio value") == "$1.00m"
     reasons = " ".join(m.value for m in app.markdown)
     assert "the client needs USD 100,000 held now" in reasons  # suitability uses the value
-    # switching to USD keeps the weights and turns them into amounts of that value
-    app.radio(key="ws_mode").set_value("USD amount").run()
+    # the example's portfolio arrives as USD amounts of that value
     amounts = {r["ticker"]: r["value"] for r in app.session_state[ws.ROWS]}
-    assert amounts == {"SPY": 500_000.0, "AGG": 300_000.0, "GLD": 100_000.0, "KSA": 100_000.0}
-    # editing the value on the Client tab changes it everywhere
+    assert sum(amounts.values()) == 1_000_000.0 and amounts["SPSK"] == 250_000.0
+    # in weights, editing the value on the Client step changes it everywhere
     app.radio(key="ws_mode").set_value("Weight (%)").run()
     v = app.session_state[ws.PF_VERSION]
     app.number_input(key=f"pf_value_client_{v}").set_value(750_000.0).run()
@@ -1298,7 +1331,10 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     html = " ".join(m.value for m in app.markdown)
     assert "<b>Client</b> Example client (Dubai)" in html and "<b>Risk score</b> 3 / 5" in html
     assert "<b>IPS</b> Ready" in html  # the example's fact-find is complete
-    # the suitability step isn't marked done while today's weights fail (e.g. the 50% SPY)
+    # the example's own portfolio passes; with 50% in SPY the step isn't marked done
+    assert "Suitability</b><small>Current: passes every rule" in html
+    _set_holdings(app, OLD_DEFAULT)
+    html = " ".join(m.value for m in app.markdown)
     assert re.search(r"Suitability</b><small>Current: \d+ rules? fail", html)
     assert any(e.label == "Advanced settings" for e in app.expander)
 
