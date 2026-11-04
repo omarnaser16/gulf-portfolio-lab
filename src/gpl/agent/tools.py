@@ -920,7 +920,7 @@ def suitability_checks(ctx: AnalystContext) -> dict[str, list]:
     from gpl.agent.charts import _portfolios
 
     if ctx.ips is None:
-        raise ToolError("no client profile: the adviser hasn't completed the Client tab")
+        raise ToolError("no client profile: the adviser hasn't completed the Client step")
     if not ctx.user_portfolio:
         raise ToolError("the user has not entered a portfolio on the Portfolio tab")
     return {name: _ips_checks(ctx, w) for name, w in _portfolios(ctx).items()}
@@ -970,7 +970,7 @@ def check_domicile(ctx: AnalystContext) -> dict:
 def get_drift_and_trades(ctx: AnalystContext) -> dict:
     """The drift monitor and trade list from the Rebalance section (computed by tested code)."""
     if not ctx.rebalance:
-        raise ToolError("no rebalance check yet: open Portfolio › Rebalance")
+        raise ToolError("no rebalance check yet: open Report & trades › Trades")
     return {
         **ctx.rebalance,
         "note": "Trades bring every holding back to its target, costs paid "
@@ -986,7 +986,7 @@ def get_portfolio_diagnosis(ctx: AnalystContext) -> dict:
 
 def get_optimisation_result(ctx: AnalystContext) -> dict:
     if not ctx.optimisation:
-        raise ToolError("no optimisation has been run yet on the Portfolio tab")
+        raise ToolError("no optimisation has been run yet on the Optimise step")
     return ctx.optimisation
 
 
@@ -1114,7 +1114,7 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
         ),
         tool(
             "get_optimisation_result",
-            "The candidate methods run on the Portfolio tab for the user's goal and limits: "
+            "The candidate methods run on the Optimise step for the user's goal and limits: "
             "each method's walk-forward results after costs vs the current portfolio and the "
             "benchmark, whether it held up out of sample, the recommendation chosen by a fixed "
             "rule (with the rule and reasons), the recommended weights vs current, and caveats.",
@@ -1169,7 +1169,7 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             "get_drift_and_trades",
             "Current vs target weights, which holdings drifted outside the band, and the "
             "rebalancing trade list (buy/sell, USD amounts, estimated units and costs) from "
-            "Portfolio › Rebalance.",
+            "Report & trades › Trades.",
             {},
         ),
         tool(
@@ -1213,7 +1213,7 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
 def get_client_profile(ctx: AnalystContext) -> dict:
     """The client's profile and IPS results, all from ``gpl.client`` (tested rules)."""
     if ctx.ips is None:
-        raise ToolError("no client profile: the adviser hasn't completed the Client tab")
+        raise ToolError("no client profile: the adviser hasn't completed the Client step")
     ips, c, lim = ctx.ips, ctx.ips.client, ctx.ips.limits
 
     def p(x) -> str:

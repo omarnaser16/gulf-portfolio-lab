@@ -12,11 +12,13 @@ from datetime import date
 
 import anthropic
 import client_ui
+import layout
 import numpy as np
 import pandas as pd
 import streamlit as st
 import workstation as ws
 from inputs import asset_groups, combine_tickers
+from layout import LAYOUT_CSS
 
 from formatting import NUMBERS_CSS, pct, plot, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
@@ -49,7 +51,13 @@ from gpl.data import (
     to_returns,
 )
 from gpl.domicile import domicile_report, format_domicile
-from gpl.factfind import product_type
+from gpl.factfind import (
+    SECTION_BY_KEY,
+    completeness,
+    ips_missing,
+    overall_completeness,
+    product_type,
+)
 from gpl.metrics import (
     drawdown_series,
     kpi_table,
@@ -341,10 +349,22 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-st.markdown(NUMBERS_CSS, unsafe_allow_html=True)
-head_title, head_bench, head_settings = st.columns([5, 3, 1.2], vertical_alignment="bottom")
-head_title.markdown("## Gulf Portfolio Lab")
-with head_settings.popover("⚙ Settings", width="stretch"):
+st.markdown(NUMBERS_CSS + LAYOUT_CSS, unsafe_allow_html=True)
+header = st.container(key="gpl_header")
+head_title, head_chips, head_bench, head_actions, head_settings = header.columns(
+    [2.2, 4.6, 2.2, 1.6, 1.1], vertical_alignment="center"
+)
+head_title.markdown("### Gulf Portfolio Lab")
+stepper = st.container()  # drawn at the end of the run, when every status is known
+head_actions.button(
+    "💬 Ask the analyst",
+    key="ask_analyst",
+    on_click=layout.go_to,
+    args=(layout.STEPS[-1], "AI analyst"),
+    width="stretch",
+    help="Open the AI analyst (Report & trades step) with this client and portfolio.",
+)
+with head_settings.popover("⚙", width="stretch", help="Settings"):
     period = st.radio(
         "Data period",
         [LATEST, README_MODE],
@@ -367,27 +387,27 @@ with head_settings.popover("⚙ Settings", width="stretch"):
         help="Local exchanges cost more to trade; their rates are set in config "
         "(trading_costs) and listed under Holdings.",
     )
-    lookback = st.select_slider(
+    advanced = st.expander("Advanced settings")
+    lookback = advanced.select_slider(
         "Estimation window (observations)", [126, 252, 504], value=D["lookback"]
     )
-    st.divider()
-    names = st.multiselect(
+    names = advanced.multiselect(
         "Strategies to show",
         STRATEGY_NAMES + BENCHMARK_NAMES,
         default=STRATEGY_NAMES + BENCHMARK_NAMES,
     )
-    use_regime = st.toggle(
+    use_regime = advanced.toggle(
         "Add regime-aware versions",
         key="use_regime",
         value=False,
         help="Switch to min variance when the model forecasts a stressed month.",
     )
-    threshold = st.slider(
+    threshold = advanced.slider(
         "De-risk when P(stressed) ≥", 0.2, 0.9, float(R["threshold"]), 0.05, disabled=not use_regime
     )
 
 end = None if period == LATEST else date.fromisoformat(D["end"])
-# Set on Portfolio › Optimise; read here so every tab uses the current value.
+# Set on step 4 (Optimise); read here so every tab uses the current value.
 max_weight = float(st.session_state.get("max_weight", D["max_weight"]))
 day = date.today() if end is None else None
 ws.init_state(CFG["groups"], CFG.get("cash_like", []))
@@ -421,12 +441,12 @@ CAP_SETTING = "Max weight per asset (optimiser limit)"
 if len(universe) < 2:
     universe_issue = (
         "Every tab analyses your holdings. Add at least two holdings with price history on "
-        "Portfolio › Holdings to compare strategies."
+        "step 2 (Portfolio › Holdings) to compare strategies."
     )
 elif max_weight * len(universe) < 1:
     universe_issue = (
         f"A {pct(max_weight)} cap can't hold {len(universe)} holdings fully invested. Raise "
-        f"'{CAP_SETTING}' on Portfolio › Optimise, or add holdings."
+        f"'{CAP_SETTING}' on step 4 (Optimise), or add holdings."
     )
 else:
     universe_issue = None
@@ -517,7 +537,7 @@ settings_key = (tickers, loaded, start, end, day, max_weight, cost_bps, lookback
 
 
 def shared_context() -> AnalystContext:
-    """One agent context per settings, shared by the Analyst tab and the optimiser."""
+    """One agent context per settings, shared by the AI analyst and the optimiser."""
     if st.session_state.get("ctx_key") != settings_key:
         regime_data = load_regime(end, day)
         ctx = AnalystContext(
@@ -784,7 +804,7 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
             on_click=_interpret,
             args=(holding_groups,),
             disabled=not ai_ok,
-            help=None if ai_ok else "Needs an API key (see the Analyst tab).",
+            help=None if ai_ok else "Needs an API key (see Report & trades › AI analyst).",
         )
         if st.session_state.get("ws_interpret_error"):
             st.warning(st.session_state.ws_interpret_error)
@@ -1011,7 +1031,7 @@ def render_domicile(where: str = "domicile") -> None:
     st.markdown("**Fund domicile check (GCC clients)**")
     result = domicile_section()
     if result is None:
-        st.info("Add holdings on the Portfolio tab to check their domicile.")
+        st.info("Add holdings on step 2 (Portfolio) to check their domicile.")
         return
     st.info(result["label"])
     if portfolio_value() is None:
@@ -1127,9 +1147,11 @@ def render_suitability(portfolios: dict[str, pd.Series], key: str, record: bool 
     st.markdown("**Suitability against the client's IPS**")
     results = suitability_results(portfolios)
     if results is None:
-        st.info("Load or create a client on the Client tab to check suitability.")
+        st.info("Load or create a client on step 1 (Client) to check suitability.")
         return
     ips = client_ips()
+    last = list(results)[-1]
+    st.session_state["suit_fails"] = (last, [c.rule for c in results[last] if c.status == "fail"])
     table = suitability_table(results)
     for col in table.columns:
         statuses = {c.rule: c.status for c in results[col]}
@@ -1352,6 +1374,7 @@ bench_choices = {
 bench_name = head_bench.selectbox(
     "Benchmark",
     list(bench_choices),
+    label_visibility="collapsed",
     key="ws_benchmark",
     help="What your portfolio is compared with across the dashboard. Total-return ETF "
     "proxies, so dividends count as they do in your portfolio.",
@@ -1365,22 +1388,27 @@ except (ValueError, DataUnavailable) as e:
     bench = None
     st.warning(f"Couldn't load the benchmark: {e} Choose another one.")
 
-tab_client, tab_mine, tab_assets, tab_frontier, tab_backtest, tab_mc, tab_regime, tab_agent = (
-    st.tabs(
-        [
-            "Client",
-            "Portfolio",
-            "Assets",
-            "Frontier",
-            "Backtest",
-            "Monte Carlo",
-            "Regime",
-            "Analyst",
-        ],
-        key="main_tab",  # tracked, so a rerun (e.g. a holdings edit) keeps the selected tab
+tab_client, step_portfolio, step_analyse, step_optimise, step_suitability, step_report = st.tabs(
+    layout.STEPS,
+    key=layout.STEP_KEY,  # tracked, so a rerun keeps the step and "Next" can move to one
+    on_change="rerun",
+)
+with step_analyse:
+    st.subheader("Analyse the current portfolio")
+    kpi_slot = st.container()  # filled once the KPI helpers are defined below
+    sec_analyse, sec_bench, tab_assets, tab_mc, tab_regime = st.tabs(
+        ["Performance & backtest", "Benchmark", "Assets", "Monte Carlo", "Regime"],
+        key="analyse_tab",
         on_change="rerun",
     )
-)
+with step_optimise:
+    sec_opt, tab_frontier, tab_backtest = st.tabs(
+        ["Optimise", "Frontier", "Strategy backtests"], key="optimise_tab", on_change="rerun"
+    )
+with step_report:
+    sec_rebal, sec_reports, tab_agent = st.tabs(
+        layout.REPORT_TABS, key=layout.REPORT_KEY, on_change="rerun"
+    )
 
 with tab_client:
     client_ui.render_client_tab(
@@ -1395,9 +1423,6 @@ with tab_client:
         holding_regions() if portfolio_ok else {},
         holding_products(tuple(my_weights)),
     )
-    if client_ui.current_profile() is not None:
-        st.divider()
-        render_domicile()
 
 with tab_assets:
     st.subheader("Risk and return by asset")
@@ -1426,7 +1451,7 @@ with tab_frontier:
         )
         st.caption(
             f"Every portfolio here is long-only with at most **{pct(max_weight)}** per asset "
-            f"('{CAP_SETTING}' on Portfolio › Optimise)."
+            f"('{CAP_SETTING}' on step 4 (Optimise))."
         )
         mu, cov = returns.mean() * periods, returns.cov() * periods
         rf_annual = float(
@@ -1487,7 +1512,7 @@ with tab_backtest:
             )
             st.caption(
                 f"Strategies choose among your holdings, at most **{pct(max_weight)}** each "
-                f"('{CAP_SETTING}' on Portfolio › Optimise). Benchmarks are "
+                f"('{CAP_SETTING}' on step 4 (Optimise)). Benchmarks are "
                 f"fixed by definition: {SIXTY_FORTY} holds "
                 + " and ".join(f"{pct(w)} {t}" for t, w in CFG["benchmarks"]["sixty_forty"].items())
                 + f"; SPY holds {pct(CFG['benchmarks']['spy']['SPY'])}."
@@ -1533,14 +1558,12 @@ def render_portfolio_kpis() -> None:
         )
 
 
-with tab_mine:
-    st.subheader("My portfolio")
+with kpi_slot:
     render_portfolio_kpis()
-    sec_hold, sec_screen, sec_analyse, sec_bench, sec_opt, sec_rebal = st.tabs(
-        ["Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise", "Rebalance"],
-        key="portfolio_tab",
-        on_change="rerun",
-    )
+
+with step_portfolio:
+    st.subheader("Current portfolio")
+    sec_hold, sec_screen = st.tabs(["Holdings", "Screen"], key="portfolio_tab", on_change="rerun")
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 
     with sec_hold:
@@ -1998,7 +2021,7 @@ def render_portfolio_overview() -> None:
     """KPI cards, holdings (weight, share of risk, volatility) and the allocation chart."""
     render_portfolio_kpis()
     if not portfolio_ok:
-        st.info("Add holdings with price history on the Portfolio tab.")
+        st.info("Add holdings with price history on step 2 (Portfolio).")
         return
     w = pd.Series(my_weights)
     rets = all_returns[list(w.index)]
@@ -2016,13 +2039,15 @@ def render_portfolio_overview() -> None:
     left.table(holdings)
     with right:
         plot(allocation_chart(w, "Allocation by holding"), key="analyst_allocation")
-    ports = {"Current": w}
+
+
+def current_ports() -> dict[str, pd.Series]:
+    """Today's weights and, after Optimise, the proposed portfolio."""
+    ports = {"Current": pd.Series(my_weights)}
     proposed = st.session_state.get("ctx") and st.session_state.ctx.proposed
     if proposed:
         ports[proposed["name"]] = pd.Series(proposed["weights"], dtype=float)
-    render_suitability(ports, "analyst", record=True)
-    render_domicile("overview")
-    render_report_button(holdings, ports)
+    return ports
 
 
 def latest_memo() -> tuple[str | None, list[str]]:
@@ -2112,7 +2137,7 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
     return rec, section
 
 
-def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) -> None:
+def render_report_button() -> None:
     """Build the client report on request (charts take a moment), then offer the PDF."""
     st.markdown("**Client report**")
     a1, a2 = st.columns(2)
@@ -2249,7 +2274,7 @@ with tab_agent:
                 disabled=not shared_context().optimisation,
                 help=None
                 if shared_context().optimisation
-                else "Run the candidate methods on Portfolio › Optimise first.",
+                else "Run the candidate methods on step 4 (Optimise) first.",
             ),
             "stress": b3.button(
                 "Stress test my portfolio", key="stress_memo", disabled=not portfolio_ok
@@ -2296,6 +2321,107 @@ with tab_agent:
         if follow_up:
             ask(follow_up)
             st.rerun()
+
+with step_suitability:
+    st.subheader("Suitability")
+    if not portfolio_ok:
+        st.info("Add holdings with price history on step 2 (Portfolio) to check suitability.")
+    else:
+        render_suitability(current_ports(), "suitability", record=True)
+        st.divider()
+        render_domicile("suitability")
+
+with sec_reports:
+    st.subheader("IPS and client report")
+    profile = client_ui.current_profile()
+    if profile is None:
+        st.info("Load or create a client on step 1 (Client) to issue the IPS.")
+    else:
+        client_ui.render_ips_downloads(profile, client_ips(), "rep")
+        st.divider()
+    if portfolio_ok:
+        render_report_button()
+
+
+# ------------------------------------------------------------- workflow status and header
+def step_statuses() -> list[layout.StepStatus]:
+    """What each step has and still needs, from the app's own state (no new figures)."""
+    profile = client_ui.current_profile()
+    value = portfolio_value()
+    if profile is None:
+        client = layout.StepStatus(False, "no client loaded", ["load or create a client"])
+    else:
+        parts = completeness(profile)
+        share = overall_completeness(parts)
+        todo = [SECTION_BY_KEY[k].title for k, c in parts.items() if c.missing]
+        client = layout.StepStatus(share == 1, f"fact-find {share:.0%} complete", todo)
+    todo = []
+    if not portfolio_ok:
+        todo.append("holdings with price history")
+    if value is None:
+        todo.append("the portfolio value")
+    portfolio = layout.StepStatus(
+        not todo,
+        f"{len(my_weights)} holdings" + (f" · USD {value:,.0f}" if value else ""),
+        todo,
+    )
+    analyse = layout.StepStatus(
+        portfolio_ok and not universe_issue,
+        "analysis ready" if portfolio_ok and not universe_issue else "needs two or more holdings",
+        [universe_issue] if universe_issue else [],
+    )
+    ran = bool(st.session_state.get("ws_opt"))
+    optimise = layout.StepStatus(
+        ran,
+        "recommendation ready" if ran else "not run yet",
+        [] if ran else ["choose a goal and run the candidate methods"],
+    )
+    suit_todo = (["a client"] if profile is None else []) + (
+        ["holdings"] if not portfolio_ok else []
+    )
+    checked, fails = st.session_state.get("suit_fails", ("", []))
+    if suit_todo:
+        suitability = layout.StepStatus(False, "needs a client and holdings", suit_todo)
+    elif fails:
+        suitability = layout.StepStatus(
+            False,
+            f"{checked}: {len(fails)} rule{'s' if len(fails) != 1 else ''} fail",
+            [f"{checked} fails " + ", ".join(fails).lower()],
+        )
+    else:
+        suitability = layout.StepStatus(True, f"{checked}: passes every rule", [])
+    prepared = bool(st.session_state.get("client_report"))
+    report = layout.StepStatus(
+        prepared,
+        "report prepared" if prepared else "report not prepared",
+        [] if prepared else ["prepare the client report (Reports tab)"],
+    )
+    return [client, portfolio, analyse, optimise, suitability, report]
+
+
+statuses = step_statuses()
+for container, step, status in zip(
+    (tab_client, step_portfolio, step_analyse, step_optimise, step_suitability, step_report),
+    layout.STEPS,
+    statuses,
+    strict=True,
+):
+    with container:
+        layout.step_footer(step, status)
+with stepper:
+    layout.render_stepper(statuses, st.session_state.get(layout.STEP_KEY))
+profile_now = client_ui.current_profile()
+ips_now = client_ips()
+layout.render_header(
+    head_chips,
+    layout.HeaderInfo(
+        client=(profile_now.name or profile_now.reference or "unnamed") if profile_now else None,
+        risk_score=ips_now.risk.score if ips_now else None,
+        value=f"USD {portfolio_value():,.0f}" if portfolio_value() else "not set",
+        ips_status="–" if profile_now is None else "Draft" if ips_missing(profile_now) else "Ready",
+        demo=bool(profile_now and profile_now.demo),
+    ),
+)
 
 st.divider()
 st.caption(DISCLAIMER)

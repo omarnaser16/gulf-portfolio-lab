@@ -93,17 +93,30 @@ def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppTest:
 
 def test_app_renders_every_tab(app: AppTest) -> None:
     assert not app.exception, app.exception
-    sections = {"Holdings", "Screen", "Analyse & backtest", "Benchmark", "Optimise", "Rebalance"}
-    assert [t.label for t in app.tabs if t.label not in sections] == [
-        "Client",
-        "Portfolio",
+    labels = [t.label for t in app.tabs]
+    assert [x for x in labels if x[0].isdigit()] == [
+        "1 Client",
+        "2 Portfolio",
+        "3 Analyse",
+        "4 Optimise",
+        "5 Suitability",
+        "6 Report & trades",
+    ]
+    assert {x for x in labels if not x[0].isdigit()} == {
+        "Holdings",
+        "Screen",
+        "Performance & backtest",
+        "Benchmark",
         "Assets",
-        "Frontier",
-        "Backtest",
         "Monte Carlo",
         "Regime",
-        "Analyst",
-    ]
+        "Optimise",
+        "Frontier",
+        "Strategy backtests",
+        "Trades",
+        "Reports",
+        "AI analyst",
+    }
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
     # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings,
     # domicile check, Optimise's active limits (the rebalance drift table needs a portfolio
@@ -992,13 +1005,13 @@ def test_final_ips_blocked_until_complete_draft_always_available(app: AppTest) -
 
 
 def test_domicile_asks_for_the_value_when_missing(app: AppTest) -> None:
-    box = app.number_input(key="pf_value_overview_0")  # the Analyst overview's domicile check
+    box = app.number_input(key="pf_value_suitability_0")  # the Suitability step's domicile check
     assert box.label.startswith("Portfolio value (USD) for the estate-tax")
     box.set_value(2_000_000.0).run()
     assert not app.exception, app.exception
     assert app.session_state["pf_value"] == 2_000_000.0
     keys = [n.key for n in app.number_input]
-    assert "pf_value_overview_1" not in keys  # the value is known now: no box
+    assert "pf_value_suitability_1" not in keys  # the value is known now: no box
 
 
 def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
@@ -1034,7 +1047,7 @@ def test_profile_json_round_trip_in_the_app(app: AppTest) -> None:
 
 
 def test_suitability_panels_need_a_client_then_show_reasons(app: AppTest) -> None:
-    assert any("Load or create a client on the Client tab" in i.value for i in app.info)
+    assert any("Load or create a client on step 1 (Client)" in i.value for i in app.info)
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
     assert not app.exception, app.exception
@@ -1271,15 +1284,34 @@ def test_blank_cell_in_the_app_warns_without_a_rerun_loop(app: AppTest) -> None:
     assert any("Enter a positive amount for AGG" in w.value for w in app.warning)
 
 
+def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
+    html = " ".join(m.value for m in app.markdown)
+    assert 'class="gpl-stepper"' in html and "no client loaded" in html
+    assert "<b>Client</b> none loaded" in html and "<b>IPS</b> –" in html
+    app.button(key="next_0").click().run()
+    assert app.session_state["main_tab"] == "2 Portfolio"
+    app.button(key="ask_analyst").click().run()
+    assert app.session_state["main_tab"] == "6 Report & trades"
+    assert app.session_state["report_tab"] == "AI analyst"
+    app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    app.button(key="client_load_example").click().run()
+    html = " ".join(m.value for m in app.markdown)
+    assert "<b>Client</b> EX-DXB" in html and "<b>Risk score</b> 3 / 5" in html
+    assert "<b>IPS</b> Draft" in html  # the example's fact-find is incomplete
+    # the suitability step isn't marked done while today's weights fail (e.g. the 50% SPY)
+    assert re.search(r"Suitability</b><small>Current: \d+ rules? fail", html)
+    assert any(e.label == "Advanced settings" for e in app.expander)
+
+
 def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
-    assert app.session_state["main_tab"] == "Client"
-    app.session_state["main_tab"] = "Portfolio"
-    app.session_state["portfolio_tab"] = "Rebalance"
+    assert app.session_state["main_tab"] == "1 Client"
+    app.session_state["main_tab"] = "6 Report & trades"
+    app.session_state["report_tab"] = "Trades"
     app.run()
     _set_holdings(app, [{"ticker": "SPY", "group": "Global equity", "value": 100.0}])
     assert not app.exception, app.exception
-    assert app.session_state["main_tab"] == "Portfolio"
-    assert app.session_state["portfolio_tab"] == "Rebalance"
+    assert app.session_state["main_tab"] == "6 Report & trades"
+    assert app.session_state["report_tab"] == "Trades"
 
 
 def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) -> None:

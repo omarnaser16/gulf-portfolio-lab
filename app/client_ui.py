@@ -1,4 +1,4 @@
-"""Client tab: profile form, risk questionnaire, IPS preview and downloads.
+"""Step 1 (Client): fact-find form, risk questionnaire, IPS preview and downloads.
 
 The profile lives in ``st.session_state["client"]`` (a dict, ``ClientProfile.to_dict()``).
 Widgets are keyed with a version number so loading a profile (example, JSON or AI notes)
@@ -704,7 +704,7 @@ def render_client_tab(
             on_click=_interpret,
             args=(make_client, model),
             disabled=not ai_ok,
-            help=None if ai_ok else "Needs an API key (see the Analyst tab).",
+            help=None if ai_ok else "Needs an API key (see Report & trades › AI analyst).",
         )
         proposal = st.session_state.get("client_proposal")
         if proposal:
@@ -770,12 +770,22 @@ def render_client_tab(
         )
         for note in notes:
             st.caption("• " + note)
+    render_ips_downloads(profile, ips, "client")
+
+
+def render_ips_downloads(profile: ClientProfile, ips, where: str) -> None:
+    """Final IPS (only when complete), a watermarked DRAFT, and the profile as JSON."""
     missing = ips_missing(profile)
     if missing:
+        sections = list(dict.fromkeys(m.split(":", 1)[0] for m in missing))
         st.warning(
-            "The final IPS can't be issued yet. Missing: " + "; ".join(missing) + ". "
-            "A watermarked DRAFT is available for discussion."
+            f"The final IPS can't be issued yet: {len(missing)} required "
+            f"item{'s are' if len(missing) != 1 else ' is'} missing in "
+            + ", ".join(sections)
+            + ". A watermarked DRAFT is available for discussion."
         )
+        with st.expander("What's missing"):
+            st.markdown("\n".join(f"- {m}" for m in missing))
     d1, d2, d3 = st.columns(3)
     ref = (profile.reference or "client").replace(" ", "_")
     d1.download_button(
@@ -783,7 +793,7 @@ def render_client_tab(
         b"" if missing else ips_pdf(ips),
         file_name=f"IPS_{ref}_{ips.created}.pdf",
         mime="application/pdf",
-        key="client_ips_pdf",
+        key=f"{where}_ips_pdf",
         type="primary",
         disabled=bool(missing),
     )
@@ -792,12 +802,12 @@ def render_client_tab(
         ips_pdf(ips, draft=True),
         file_name=f"IPS_DRAFT_{ref}_{ips.created}.pdf",
         mime="application/pdf",
-        key="client_ips_draft",
+        key=f"{where}_ips_draft",
     )
     d3.download_button(
         "Save profile (JSON)",
         json.dumps(profile.to_dict(), indent=2),
         file_name=f"client_{ref}.json",
         mime="application/json",
-        key="client_save_json",
+        key=f"{where}_save_json",
     )
