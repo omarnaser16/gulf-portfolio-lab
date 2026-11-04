@@ -341,3 +341,51 @@ days; the work itself was done in a series of sessions.
   IPS.
 - **Status:** 655 tests passing.
 - **Next:** practitioner review of the cost estimates, caps and Sharia list; deploy.
+
+## Professional upgrade (5 batches) — 2026-11-04
+- **Directed:** make the tool something a wealth manager could use day to day, in five
+  batches (visible bugs, full fact-find, step-by-step UX, light private-bank theme, a
+  "Fill demo client" button), tested and committed after each. I chose an azure accent and
+  the AI analyst as a step-6 sub-tab with an "Ask the analyst" button in the header.
+- **Built by Claude Code:**
+  - *Bugs:* the regulator defaults from booking location or residency (incl. CBB, CMA
+    Kuwait, Oman's FSA); the final IPS is blocked until complete, with a watermarked DRAFT;
+    domicile asks for the value in place; "cash needs in the next two years" is set from the
+    dated Cash needs table; experience moved out of willingness.
+  - *Fact-find:* `gpl/factfind.py`, one registry of nine sections that drives the form
+    cards, the completeness bar, the IPS gate and the PDFs. It calculates net worth,
+    investable assets, savings rate, emergency-fund months and the return needed to meet
+    the goals. It adds an adviser override that needs a reason, capacity for loss, a
+    knowledge & experience check, and an editable suitability record built from the rules.
+  - *UX:* six steps with a stepper, a sticky client header, and a Next button that lists
+    what is still to do. Advanced settings sit in an expander.
+  - *Theme:* off-white, white cards, navy and azure across the app, charts and PDFs.
+  - *Demo:* `gpl/demo.py` generates a seeded, consistent GCC client and 5–8 real tickers
+    without AI. Both are marked DEMO DATA, with the seed shown in the header.
+- **Finance changes (and their effect):**
+  - Willingness is now the mean of two answers. Doha example: 5/4/4 → 5/5/5 (band 5).
+  - The cash-need answer is set by rule from the Cash needs table. Dubai and Riyadh examples:
+    the answer falls from 4 and 3 to 2, but their scores don't move.
+  - "Can't lose more than X%" now tightens the drawdown limit (capacity for loss). Before,
+    it was an override that could loosen it.
+- **Checked:** pytest after each batch; live-data screenshots of the Client, Analyse,
+  Suitability and Report steps; a full demo run through to a prepared client report; the
+  demo IPS PDF rendered.
+- **Findings:**
+  - Navy and azure are too close to use as two chart series (ΔE 12.8), so "proposed" is
+    orange.
+  - Strict tools allow at most 16 nullable fields, so some new AI fields use "" or 0 for
+    "not stated".
+  - UMMA starts in 2022, so it was left out of the demo pool (it cut the sample to 4 years).
+  - Oman's CMA became the FSA in March 2024, not 2023 as I first said.
+- **Learned:** KYC (who the client is) and suitability (what suits them) are separate
+  records. Knowledge & experience decides which products are appropriate, not how much
+  risk to take.
+- **Open questions:**
+  - Should willingness round half down now that it has two answers? Half up tilts
+    towards more risk.
+  - The analyst's suitability tool doesn't run the knowledge check yet.
+  - The three example clients have incomplete fact-finds, so they only produce a DRAFT IPS.
+- **Status:** 884 tests passing (655 at the start of the session).
+- **Next:** a practitioner review of the fact-find fields and rules; deploy the public demo
+  with the "do not enter real client data" notice.
