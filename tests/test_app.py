@@ -1617,3 +1617,21 @@ def test_improve_mode_caps_turnover_and_explains_swaps(optimise_app) -> None:
                    for w in at.warning)  # fmt: skip
     # default holdings SPY/AGG/GLD/KSA: SPY has an Irish twin in the universe
     assert any("Domicile (information, not tax advice)" in c.value for c in at.caption)
+
+
+def test_build_suggests_a_policy_benchmark_that_fits_the_ips(optimise_app) -> None:
+    from gpl.construct import POLICY_NAME
+
+    at, _ = optimise_app([])
+    assert POLICY_NAME not in at.selectbox(key="ws_benchmark").options  # no client yet
+    at.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    at.button(key="client_load_example").click().run()
+    at.radio(key="opt_mode").set_value("Build a portfolio for me").run()
+    assert not at.exception, at.exception
+    options = at.selectbox(key="ws_benchmark").options
+    assert POLICY_NAME in options and "60/40 (SPY/AGG)" in options  # 60/40 stays selectable
+    assert any(f"Suggested benchmark for Build: {POLICY_NAME}" in i.value for i in at.info)
+    at.button(key="use_policy_bench").click().run()
+    assert not at.exception, at.exception
+    assert at.session_state["ws_benchmark"] == POLICY_NAME
+    assert any("itself passes the client's IPS" in c.value for c in at.caption)

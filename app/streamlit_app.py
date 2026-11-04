@@ -48,7 +48,14 @@ from gpl.client import (
     month_text,
     tighter,
 )
-from gpl.construct import BuildSettings, _groups, screen_universe
+from gpl.construct import (
+    POLICY_BLOCKS,
+    POLICY_NAME,
+    BuildSettings,
+    _groups,
+    policy_benchmark,
+    screen_universe,
+)
 from gpl.data import (
     AssetData,
     BenchmarkData,
@@ -1484,6 +1491,19 @@ def render_build(ctx, ai_ok: bool) -> None:
     if bench is None or bench.is_cash:
         st.warning("Choose a market benchmark (not cash) in the header: Build aims to beat it.")
         return
+    if POLICY and bench_name != POLICY_NAME:
+        st.info(
+            f"**Suggested benchmark for Build: {POLICY_NAME}.** {POLICY['represents']} The "
+            f"current benchmark, {bench_name}, may itself break the client's limits; it stays "
+            "selectable in the header."
+        )
+        st.button(
+            "Use the policy benchmark",
+            key="use_policy_bench",
+            on_click=lambda: st.session_state.update(ws_benchmark=POLICY_NAME),
+        )
+    elif not POLICY and POLICY_WHY:
+        st.caption(f"No IPS-fitting policy benchmark for this client: {POLICY_WHY}")
     c1, c2 = st.columns(2)
     te = c1.number_input(
         "Tracking-error limit (% a year)",
@@ -1666,8 +1686,31 @@ def time_key() -> int:
     return st.session_state["ws_spec_counter"]
 
 
+def policy_benchmark_choice() -> tuple[dict | None, str]:
+    """The client's policy benchmark (a simple mix that passes the IPS), or why there is none."""
+    ips = client_ips()
+    if ips is None:
+        return None, ""
+    blocks = POLICY_BLOCKS["sharia" if ips.limits["sharia_only"] else "conventional"]
+    tickers = tuple(sorted({t for funds in blocks.values() for t in funds}))
+    try:
+        blocks_data = load_data(tickers, start, end, lookback, day)
+    except (DataUnavailable, ValueError) as e:
+        return None, f"its funds couldn't be loaded ({e})"
+    policy = policy_benchmark(ips, to_returns(blocks_data.prices), blocks_data.periods_per_year)
+    if not policy.passes:
+        return None, policy.reasons[0]
+    return {
+        "weights": policy.weights,
+        "represents": f"A simple mix that itself passes the client's IPS: {policy.description}. "
+        + policy.reasons[0],
+    }, ""
+
+
+POLICY, POLICY_WHY = policy_benchmark_choice()
 bench_choices = {
     **CFG["benchmark_choices"],
+    **({POLICY_NAME: POLICY} if POLICY else {}),
     **{
         f"{t} (an asset in your data)": {
             "weights": {t: 1.0},
@@ -1676,6 +1719,8 @@ bench_choices = {
         for t in data.prices.columns
     },
 }
+if st.session_state.get("ws_benchmark") not in bench_choices:
+    st.session_state.pop("ws_benchmark", None)  # e.g. the policy benchmark of another client
 bench_name = head_bench.selectbox(
     "Benchmark",
     list(bench_choices),

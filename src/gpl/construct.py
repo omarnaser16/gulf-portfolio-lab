@@ -702,3 +702,108 @@ def limit_turnover_within(
     share = min(1.0, max(share, need))
     w = w0 + share * (w1 - w0)
     return w[w.abs() > 1e-12], share, need
+
+
+# ------------------------------------------------------------------------ policy benchmark
+
+POLICY_BLOCKS = {  # sleeve -> funds (a sleeve over the per-holding cap is split across them)
+    "conventional": {
+        "Equity": ("ACWI", "URTH"),
+        "GCC": ("KSA", "UAE", "QAT"),
+        "Bonds": ("AGG", "BNDX"),
+        "Cash": ("BIL", "SHV"),
+    },
+    "sharia": {
+        "Equity": ("SPUS", "HLAL"),
+        "GCC": ("2222.SR", "1120.SR"),
+        "Bonds": ("SPSK",),
+        "Cash": ("SPSK",),
+    },
+}
+POLICY_NAME = "Policy benchmark (fits the IPS)"
+
+
+@dataclass
+class PolicyBenchmark:
+    weights: dict[str, float]  # ticker -> weight
+    sleeves: dict[str, float]  # sleeve -> weight
+    passes: bool
+    description: str
+    reasons: list[str]  # why it passes, or what it can't meet
+
+
+def _split(sleeve_weight: float, funds: tuple[str, ...], cap: float) -> dict[str, float] | None:
+    """Spread a sleeve over as few of its funds as the cap allows (None if it can't fit)."""
+    if sleeve_weight <= 1e-12:
+        return {}
+    for n in range(1, len(funds) + 1):
+        if sleeve_weight / n <= cap + 1e-12:
+            return {f: sleeve_weight / n for f in funds[:n]}
+    return None
+
+
+def policy_benchmark(
+    ips: IPS, returns: pd.DataFrame, periods_per_year: int = 252, step: float = 0.05
+) -> PolicyBenchmark:
+    """A simple benchmark mix that itself passes the client's IPS limits.
+
+    Sleeves: global equity, GCC equity (country ETFs; Aramco and Al Rajhi for Sharia), bonds
+    (sukuk for Sharia) and cash. GCC is the IPS's GCC minimum, cash its cash need (as a share
+    of the portfolio); equity is the largest share, in ``step`` steps, whose mix keeps
+    volatility and the largest fall over ``returns`` (all history) within the IPS limits;
+    bonds take the rest. A sleeve above the per-holding cap is split across its funds.
+    Returns the mix and whether it passes (if no mix does, the most defensive one and why).
+    """
+    lim = ips.limits
+    blocks = POLICY_BLOCKS["sharia" if lim["sharia_only"] else "conventional"]
+    cap = lim["max_weight"] or 1.0
+    gcc = lim["home_bias_gcc"] or 0.0
+    cash = lim["liquidity_reserve"] or 0.0
+    vol_cap, dd_cap = lim["max_volatility"], lim["max_drawdown"]
+    best, last_fail = None, None
+    grid = np.arange(0.0, 1.0 - gcc - cash + 1e-9, step)
+    for equity in grid[::-1]:  # the most equity first: closest to a growth benchmark
+        bonds = max(0.0, 1.0 - gcc - cash - equity)
+        sleeves = {"Equity": equity, "GCC": gcc, "Bonds": bonds, "Cash": cash}
+        weights: dict[str, float] = {}
+        ok = True
+        for sleeve, w in sleeves.items():
+            part = _split(w, blocks[sleeve], cap)
+            if part is None:
+                ok, last_fail = False, f"{sleeve} at {w:.2%} can't stay within the {cap:.2%} cap"
+                break
+            for t, x in part.items():
+                weights[t] = weights.get(t, 0.0) + x
+        if not ok or any(x > cap + 1e-9 for x in weights.values()):
+            last_fail = last_fail or f"a fund would exceed the {cap:.2%} cap"
+            continue
+        if not set(weights) <= set(returns.columns):
+            missing = sorted(set(weights) - set(returns.columns))
+            return PolicyBenchmark({}, sleeves, False, "", [f"No prices for {', '.join(missing)}."])
+        w = pd.Series(weights)
+        port = returns[list(w.index)].dropna() @ w
+        vol = float(port.std() * np.sqrt(periods_per_year))
+        wealth = (1 + port).cumprod()
+        fall = float((wealth / wealth.cummax() - 1).min())
+        if (vol_cap is None or vol <= vol_cap) and (dd_cap is None or fall >= -dd_cap):
+            best = (weights, sleeves, vol, fall)
+            break
+        last_fail = f"volatility {vol:.2%}, largest fall {fall:.2%}"
+    if best is None:
+        return PolicyBenchmark({}, {}, False, "", [
+            "No mix of the policy funds meets every limit"
+            + (f" (the most defensive tried: {last_fail})." if last_fail else ".")
+        ])  # fmt: skip
+    weights, sleeves, vol, fall = best
+    parts = [f"{v:.0%} {k.lower()}" for k, v in sleeves.items() if v > 1e-9]
+    funds = ", ".join(f"{t} {x:.2%}" for t, x in weights.items())
+    return PolicyBenchmark(
+        weights,
+        sleeves,
+        True,
+        f"{', '.join(parts)} ({funds}); rebalanced daily",
+        [
+            f"Volatility {vol:.2%} and largest fall {fall:.2%} over the full history, within the "
+            f"IPS limits; GCC at least {gcc:.2%}, cash need {cash:.2%}, no fund over {cap:.2%}."
+        ],
+    )

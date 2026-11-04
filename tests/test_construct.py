@@ -257,3 +257,33 @@ def test_limits_come_before_the_turnover_limit_by_hand() -> None:
     within = pd.Series({"A": 0.4, "B": 0.35, "C": 0.25})  # already within the cap
     w, share, need = limit_turnover_within(within, target, 0.10, spec)
     assert need == 0.0 and turnover(within, w) == pytest.approx(0.10)
+
+
+def test_policy_benchmark_fits_the_ips_by_construction() -> None:
+    from gpl.construct import policy_benchmark
+
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2015-01-01", periods=1500)
+    vols = {"ACWI": 0.011, "URTH": 0.011, "KSA": 0.013, "UAE": 0.013, "QAT": 0.013,
+            "AGG": 0.003, "BNDX": 0.003, "BIL": 0.0002, "SHV": 0.0002}  # fmt: skip
+    mkt = rng.normal(0.0003, 1.0, len(idx))
+    rets = pd.DataFrame(
+        {t: v * (0.9 * mkt + 0.44 * rng.normal(0, 1, len(idx))) for t, v in vols.items()},
+        index=idx,
+    )
+    ips = _ips(home_bias_gcc_pct=10, portfolio_value_usd=1_000_000,
+               liquidity_needs=[{"description": "Fees", "amount_usd": 100_000,
+                                 "date": "2027-06"}])  # fmt: skip
+    p = policy_benchmark(ips, rets)
+    assert p.passes and abs(sum(p.weights.values()) - 1) < 1e-9
+    lim = ips.limits
+    w = pd.Series(p.weights)
+    assert (w <= lim["max_weight"] + 1e-9).all()
+    assert p.sleeves["GCC"] == pytest.approx(0.10) and p.sleeves["Cash"] == pytest.approx(0.10)
+    port = rets[list(w.index)] @ w
+    assert port.std() * np.sqrt(252) <= lim["max_volatility"] + 1e-9
+    wealth = (1 + port).cumprod()
+    assert (wealth / wealth.cummax() - 1).min() >= -lim["max_drawdown"] - 1e-9
+    # Sharia: SPSK is the only bond/cash fund, so a defensive mix can't stay within the cap
+    sharia = policy_benchmark(_ips(sharia_only=True), rets)
+    assert not sharia.passes and "can't stay within the 30.00% cap" in sharia.reasons[0]
