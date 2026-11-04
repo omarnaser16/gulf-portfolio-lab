@@ -1,13 +1,16 @@
-# Dark, terminal-style theme (amber accent). Charts use the matching plotly template in
-# src/gpl/plots.py ("gpl_dark"); the app passes theme=None so Streamlit doesn't override it.
+# Light private-bank theme: off-white page, white cards, deep navy and an azure accent. Charts
+# use the matching plotly template in src/gpl/plots.py ("gpl_light"); the app passes
+# theme=None so Streamlit doesn't override it. Green/red are kept for gains, losses, pass/fail.
 [theme]
-base = "dark"
-primaryColor = "#FFA028"
-backgroundColor = "#0B0B0C"
-secondaryBackgroundColor = "#15171B"
-textColor = "#E6E4DF"
+base = "light"
+primaryColor = "#2563EB"
+backgroundColor = "#F7F6F2"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#2B2B2B"
 font = "sans serif"
 codeFont = "monospace"
+borderColor = "#E3E1DA"
+showWidgetBorder = true
 
 [client]
 showSidebarNavigation = false

@@ -7,10 +7,10 @@ Presentation only: these functions take results from the finance modules and ret
 beyond reshaping (e.g. summing weights within an asset group).
 
 Colour follows the entity, not its rank: series get categorical slots in a fixed order.
-All charts share one dark plotly template, ``gpl_dark``, set on every figure (not only as
-plotly's default, which importing Streamlit replaces), matching the dashboard's terminal-style
-theme. A benchmark or other reference series is drawn as a neutral grey dashed line outside the
-categorical slots.
+All charts share one light plotly template, ``gpl_light``, set on every figure (not only as
+plotly's default, which importing Streamlit replaces), matching the dashboard's private-bank
+theme (white cards on an off-white page, navy and azure). A benchmark or other reference
+series is drawn as a neutral grey dashed line outside the categorical slots.
 """
 
 from collections.abc import Mapping, Sequence
@@ -20,31 +20,36 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-# Categorical palette for the dark surface, assigned in this order, never cycled. Checked with
-# the dataviz validator against #121316: lightness band, chroma, adjacent colour-blind
-# separation (worst 8.3) and normal-vision separation (worst 19.7) all pass. Slot 1 (amber) is
-# "current", slot 2 (cyan) "proposed".
+# Categorical palette for the light private-bank surface (white charts on an off-white page),
+# assigned in this order, never cycled. Checked with the dataviz validator against #FFFFFF:
+# lightness band and chroma pass; adjacent colour-blind separation worst 6.1 (slots 6-7, a
+# floor-band pair: legends and tables give the secondary encoding) and normal-vision worst
+# 19.6. Slot 1 (navy blue) is "current", slot 2 (orange) "proposed": the first three slots
+# pass on every pair, so scatter charts stay readable. Navy and the azure accent are too close
+# to tell apart as two series (normal-vision 12.8), so azure is slot 8 and otherwise reserved
+# for the interface. Green and red stay for gains, losses and pass/fail.
 SERIES_COLORS = [
-    "#c98500",  # amber
-    "#2a9fb5",  # cyan
-    "#d55181",  # magenta
-    "#008300",  # green
-    "#9085e9",  # violet
-    "#e66767",  # red
-    "#3987e5",  # blue
-    "#199e70",  # aqua
+    "#3d5a99",  # navy blue
+    "#eb6834",  # orange
+    "#0e8fa8",  # teal
+    "#eda100",  # amber
+    "#6250d6",  # violet
+    "#e87ba4",  # pink
+    "#1baf7a",  # aqua
+    "#2563eb",  # azure
 ]
-REFERENCE_COLOR = "#8e8e8a"  # benchmark / reference series: grey, dashed
-SHADE = "#30333a"  # background shading (e.g. stressed months), visible on the dark surface
-SURFACE = "#121316"
-TEXT_PRIMARY = "#e6e4df"
-TEXT_SECONDARY = "#a9a69f"
-GRID = "#26282d"
+REFERENCE_COLOR = "#8a8a85"  # benchmark / reference series: grey, dashed
+SHADE = "#e9edf5"  # background shading (e.g. stressed months), visible on white
+SURFACE = "#ffffff"
+TEXT_PRIMARY = "#2b2b2b"
+TEXT_SECONDARY = "#5f6368"
+GRID = "#ecebe6"
+HOVER = "#ffffff"
 PCT = ".2%"  # d3 format: 0.09 -> 9.00%
-SEQUENTIAL_BLUE = ["#16323f", "#1f5d6e", "#2a9fb5"]  # dark -> bright cyan, one hue
+SEQUENTIAL_BLUE = ["#dbe4f3", "#a9bce0", "#3d5a99"]  # light -> navy, one hue
 MONO = "SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
 
-pio.templates["gpl_dark"] = go.layout.Template(
+pio.templates["gpl_light"] = go.layout.Template(
     layout={
         "paper_bgcolor": SURFACE,
         "plot_bgcolor": SURFACE,
@@ -63,11 +68,15 @@ pio.templates["gpl_dark"] = go.layout.Template(
             "zerolinecolor": GRID,
             "tickfont": {"family": MONO},
         },
-        "hoverlabel": {"bgcolor": "#1d2025", "font": {"family": MONO, "color": TEXT_PRIMARY}},
+        "hoverlabel": {
+            "bgcolor": HOVER,
+            "bordercolor": GRID,
+            "font": {"family": MONO, "color": TEXT_PRIMARY},
+        },
         "legend": {"font": {"color": TEXT_SECONDARY}},
     }
 )
-pio.templates.default = "gpl_dark"
+pio.templates.default = "gpl_light"
 
 
 def series_styles(names: Sequence[str], reference: str | None = None) -> dict[str, dict]:
@@ -86,7 +95,7 @@ def _base_layout(fig: go.Figure, title: str, y_title: str, y_format: str) -> go.
     # A long legend wraps onto the title, so with many series it goes below the plot instead.
     below = len(fig.data) > 5
     fig.update_layout(
-        template="gpl_dark",
+        template="gpl_light",
         title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
@@ -414,7 +423,7 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
         )
     )
     fig.update_layout(
-        template="gpl_dark",
+        template="gpl_light",
         title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
         paper_bgcolor=SURFACE,
         font={"color": TEXT_SECONDARY, "size": 12},
@@ -425,7 +434,7 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
     return fig
 
 
-DIVERGING = ["#3987e5", "#383835", "#c98500"]  # -1 blue, 0 neutral grey, +1 amber
+DIVERGING = ["#3d5a99", "#e8e7e2", "#eb6834"]  # -1 navy, 0 neutral light grey, +1 orange
 
 
 def lines_chart(

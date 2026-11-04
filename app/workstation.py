@@ -38,7 +38,7 @@ CASH_LIKE = "ws_cash_like"  # configured cash-like funds (grouped as "Cash & sho
 USD, PCT = "USD amount", "Weight (%)"
 PF_VALUE, PF_VERSION = "pf_value", "pf_v"  # the one portfolio value (USD), entered once
 EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
-READ_ONLY = {"background-color": "#1b1d22", "color": "#8f8c85"}  # muted = can't edit
+READ_ONLY = {"background-color": "#F1F0EB", "color": "#6B6B6B"}  # muted = can't edit
 READ_ONLY_COLUMNS = ["Name", "Weight", "Price"]
 
 

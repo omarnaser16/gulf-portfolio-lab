@@ -142,13 +142,13 @@ def test_too_low_cap_explains_instead_of_stopping(app: AppTest) -> None:
     assert app.dataframe  # the Portfolio tab still works, so the cap or holdings can be fixed
 
 
-def test_no_sidebar_settings_in_a_popover_and_dark_charts(app: AppTest) -> None:
+def test_no_sidebar_settings_in_a_popover_and_light_charts(app: AppTest) -> None:
     assert len(app.sidebar.children) == 0  # nothing in the sidebar at all
     assert app.radio(key="data_period").label == "Data period"  # now in ⚙ Settings
     assert app.selectbox(key="ws_benchmark").label == "Benchmark"  # top bar
     charts = app.get("plotly_chart")
     assert charts and all(c.proto.theme == "" for c in charts)  # theme=None: our template
-    assert all(json.loads(c.proto.spec)["layout"]["paper_bgcolor"] == "#121316" for c in charts)
+    assert all(json.loads(c.proto.spec)["layout"]["paper_bgcolor"] == "#ffffff" for c in charts)
     before = _metric_tables(app)[1].loc["Max Sharpe", "CAGR"]
     app.number_input[0].set_value(100.0).run()  # costs (bps) in the settings popover
     assert not app.exception, app.exception

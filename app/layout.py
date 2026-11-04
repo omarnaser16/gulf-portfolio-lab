@@ -111,42 +111,42 @@ LAYOUT_CSS = """
 <style>
 .st-key-gpl_header {
   position: sticky; top: 0; z-index: 990; padding: 0.35rem 0 0.25rem 0;
-  background: var(--gpl-bg, #0B0B0C); border-bottom: 1px solid var(--gpl-border, #26282d);
+  background: var(--gpl-bg); border-bottom: 1px solid var(--gpl-border);
 }
-.st-key-gpl_header h3 { margin: 0; padding: 0; white-space: nowrap; }
+.st-key-gpl_header h3 { margin: 0; padding: 0; white-space: nowrap; color: var(--gpl-navy); }
 .gpl-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .gpl-chip {
   font-size: 0.8rem; padding: 0.2rem 0.6rem; border-radius: 999px;
-  border: 1px solid var(--gpl-border, #26282d); background: var(--gpl-card, #15171B);
+  border: 1px solid var(--gpl-border); background: var(--gpl-card);
   white-space: nowrap;
 }
 .gpl-chip b { font-weight: 600; opacity: 0.7; margin-right: 0.15rem; }
-.gpl-chip.ok { border-color: var(--gpl-pass, #2E7D4F); color: var(--gpl-pass, #2E7D4F); }
-.gpl-chip.warn { border-color: var(--gpl-warn, #A66A00); color: var(--gpl-warn, #A66A00); }
+.gpl-chip.ok { border-color: var(--gpl-pass); color: var(--gpl-pass); }
+.gpl-chip.warn { border-color: var(--gpl-warn); color: var(--gpl-warn); }
 .gpl-chip.muted { opacity: 0.65; }
 .gpl-chip.demo {
-  background: var(--gpl-accent, #2563EB); color: #fff; border-color: transparent;
+  background: var(--gpl-accent); color: #fff; border-color: transparent;
   font-weight: 700; letter-spacing: 0.04em;
 }
 .gpl-stepper { display: flex; gap: 0.5rem; margin: 0.6rem 0 0.2rem 0; }
 .gpl-step {
   flex: 1; display: flex; gap: 0.5rem; align-items: center; padding: 0.45rem 0.6rem;
-  border: 1px solid var(--gpl-border, #26282d); border-radius: 0.5rem;
-  background: var(--gpl-card, #15171B); min-width: 0;
+  border: 1px solid var(--gpl-border); border-radius: 0.5rem;
+  background: var(--gpl-card); min-width: 0;
 }
 .gpl-step.active {
-  border-color: var(--gpl-accent, #2563EB); box-shadow: 0 0 0 1px var(--gpl-accent, #2563EB);
+  border-color: var(--gpl-accent); box-shadow: 0 0 0 1px var(--gpl-accent);
 }
 .gpl-dot {
   flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%; display: flex;
   align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem;
-  border: 1.5px solid var(--gpl-muted, #8f8c85); color: var(--gpl-muted, #8f8c85);
+  border: 1.5px solid var(--gpl-muted); color: var(--gpl-muted);
 }
 .gpl-step.done .gpl-dot {
-  background: var(--gpl-pass, #2E7D4F); border-color: var(--gpl-pass, #2E7D4F); color: #fff;
+  background: var(--gpl-pass); border-color: var(--gpl-pass); color: #fff;
 }
 .gpl-step.active .gpl-dot {
-  border-color: var(--gpl-accent, #2563EB); color: var(--gpl-accent, #2563EB);
+  border-color: var(--gpl-accent); color: var(--gpl-accent);
 }
 .gpl-step.active.done .gpl-dot { color: #fff; }
 .gpl-step-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }

@@ -43,12 +43,15 @@ from gpl.factfind import (
     finances,
     goals_required_return,
 )
+from gpl.plots import REFERENCE_COLOR, SERIES_COLORS
 
 FOOTER = (
     "Decision support for a licensed adviser. Not investment, tax or legal advice. "
     "Figures are historical and come from tested code; they are not forecasts."
 )
-INK, MUTED, RULE, ACCENT = "#1a1a19", "#5f5d57", "#d9d7d0", "#b36f00"
+# the app's light private-bank palette (app/formatting.py THEME): navy headings, grey rules
+INK, MUTED, RULE, ACCENT = "#2B2B2B", "#6B6B6B", "#E3E1DA", "#1B2A4A"
+HEADER_FILL = "#F1F0EB"
 
 _base = getSampleStyleSheet()
 STYLES = {
@@ -121,7 +124,7 @@ def table(
     ]
     if header:
         style += [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1efe8")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(HEADER_FILL)),
             ("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.HexColor(MUTED)),
         ]
     t.setStyle(TableStyle(style))
@@ -140,11 +143,14 @@ def build_pdf(
     def footer(canvas, doc) -> None:
         canvas.saveState()
         if watermark:
-            canvas.setFont("Helvetica-Bold", 96)
+            # as large as fits along the page diagonal (at most 96 pt)
+            width = canvas.stringWidth(watermark, "Helvetica-Bold", 96)
+            size = min(96.0, 96.0 * 0.68 * (A4[0] ** 2 + A4[1] ** 2) ** 0.5 / width)
+            canvas.setFont("Helvetica-Bold", size)
             canvas.setFillColor(colors.HexColor(RULE))
             canvas.translate(A4[0] / 2, A4[1] / 2)
             canvas.rotate(45)
-            canvas.drawCentredString(0, -30, watermark)
+            canvas.drawCentredString(0, -size / 3, watermark)
             canvas.restoreState()
             canvas.saveState()
         canvas.setFont("Helvetica", 7)
@@ -345,8 +351,8 @@ def ips_pdf(ips: IPS, compress: bool = True, draft: bool = False) -> bytes:
 
 # ------------------------------------------------------------------------- client report
 
-PRINT_COLORS = ["#c98500", "#2a9fb5", "#d55181", "#008300", "#9085e9", "#e66767", "#3987e5"]
-REFERENCE = "#8e8e8a"
+PRINT_COLORS = SERIES_COLORS[:7]  # the same categorical order as the dashboard
+REFERENCE = REFERENCE_COLOR
 LIMITATIONS = [
     "All figures are historical, in US dollars, and come from tested code. They are not "
     "forecasts: past performance does not predict future results.",
@@ -510,7 +516,7 @@ def _png(fig) -> Image:
 def _style(ax, title: str, percent: bool = False) -> None:
     ax.set_title(title, loc="left", fontsize=10, color=INK)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="y", color="#e6e5e0", linewidth=0.6)
+    ax.grid(axis="y", color=RULE, linewidth=0.6)
     ax.tick_params(labelsize=8, colors=MUTED)
     if percent:
         # ticks on 1-2-5 steps, so a label never rounds (2.5% steps printed as "-2%, -5%, -7%")
@@ -583,7 +589,7 @@ def allocation_image(weights: pd.Series) -> Image:
     ax.set_xlim(0, float(w.max()) * 1.18)  # room for the largest label
     _style(ax, "Allocation by holding")
     ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
-    ax.grid(axis="x", color="#e6e5e0", linewidth=0.6)
+    ax.grid(axis="x", color=RULE, linewidth=0.6)
     ax.grid(axis="y", visible=False)
     return _png(fig)
 
@@ -611,7 +617,7 @@ def _md_table(lines: list[str]) -> Table:
         TableStyle(
             [
                 ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor(RULE)),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1efe8")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(HEADER_FILL)),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ]
         )
