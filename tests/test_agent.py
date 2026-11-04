@@ -546,3 +546,78 @@ def test_build_compounds_the_benchmark_onto_a_sparser_calendar(ctx) -> None:
     # the benchmark's own funds track it: 1.27% here is monthly-rebalancing drift; dropping
     # the daily benchmark onto the sparser dates instead measured about 4.6%
     assert tracker_te < 2.0
+
+
+def test_improve_with_swaps_annualises_on_the_universe_calendar(ctx) -> None:
+    """Regression: with swaps, the table moves to the universe's (sparser) dates; it must
+    annualise with that calendar's dates a year, or the same portfolio's CAGR jumps (Dubai:
+    7.77% shown as 10.81% when 181 dates a year were annualised as 252)."""
+    from dataclasses import replace
+
+    from gpl.agent.tools import UniverseData, run_candidates
+    from gpl.construct import _groups
+    from gpl.data import BenchmarkData, load_investable
+    from gpl.optimise import OptimisationSpec
+
+    tags = load_investable()
+    daily = ctx.prices.pct_change().iloc[1:]
+    bench = BenchmarkData("60/40", "t", 0.6 * daily["SPY"] + 0.4 * daily["AGG"], False, [])
+    sparse = ctx.prices[ctx.prices.index.day_of_week != 4]  # no Fridays: ~209 dates a year
+    tickers = list(sparse.columns)
+    per_year = round(len(sparse) / (len(ctx.prices) / 252))
+    uni = UniverseData(sparse, tags, tickers, {}, _groups(tickers, tags),
+                       dict.fromkeys(tickers, "USD"), per_year)  # fmt: skip
+    c = replace(ctx, benchmark=bench, ips=None, settings={**ctx.settings, "optimise_lab": {}})
+    current = {"SPY": 0.5, "EFA": 0.3, "EEM": 0.2}
+    spec = OptimisationSpec(max_weight=0.6)
+    plain, _ = run_candidates(c, "max_risk_adjusted", spec, current)
+    swapped, _ = run_candidates(c, "max_risk_adjusted", spec, current, universe=uni)
+    from gpl import backtest as bt
+    from gpl.metrics import cagr
+
+    first, last = swapped["backtest_period"].split(" to ")
+    held = bt.run_backtest(ctx.prices[list(current)], bt.fixed_weights(current),
+                           rebalance="ME", lookback=126, cost_bps=10.0).returns  # fmt: skip
+    expected = float(cagr(held.loc[first:last].iloc[1:], 252)) * 100  # daily, same period
+    shown = float(swapped["walk_forward_after_costs"]["Current"]["cagr"].rstrip("%"))
+    assert abs(shown - expected) < 0.3, (shown, expected)  # 252 a year would add ~3 pp
+    assert "Current" in plain["walk_forward_after_costs"]
+
+
+def test_mixed_calendar_sharpe_charges_interest_once(ctx) -> None:
+    """Regression: on a sparser calendar the daily risk-free rate is scaled by the metrics
+    (``_excess_returns``); compounding it onto the dates as well charged interest twice
+    (Dubai: Sharpe 0.57 instead of 0.67 for the same portfolio and period)."""
+    from dataclasses import replace
+
+    from gpl.agent.tools import UniverseData, run_candidates
+    from gpl.construct import _groups
+    from gpl.data import BenchmarkData, load_investable
+    from gpl.optimise import OptimisationSpec
+
+    tags = load_investable()
+    rf = pd.Series(0.0002, index=ctx.prices.index)  # ~5% a year: big enough to matter
+    daily = ctx.prices.pct_change().iloc[1:]
+    bench = BenchmarkData("60/40", "t", 0.6 * daily["SPY"] + 0.4 * daily["AGG"], False, [])
+    c = replace(ctx, rf=rf, benchmark=bench, ips=None,
+                settings={**ctx.settings, "optimise_lab": {}})  # fmt: skip
+    sparse = ctx.prices[ctx.prices.index.day_of_week != 4]
+    tickers = list(sparse.columns)
+    per_year = round(len(sparse) / (len(ctx.prices) / 252))
+    uni = UniverseData(sparse, tags, tickers, {}, _groups(tickers, tags),
+                       dict.fromkeys(tickers, "USD"), per_year)  # fmt: skip
+    current = {"SPY": 0.5, "EFA": 0.3, "EEM": 0.2}
+    spec = OptimisationSpec(max_weight=0.6)
+    swapped, _ = run_candidates(c, "max_risk_adjusted", spec, current, universe=uni)
+    from gpl import backtest as bt
+    from gpl.metrics import compound_to, sharpe_ratio
+
+    first, last = (pd.Timestamp(d) for d in swapped["backtest_period"].split(" to "))
+    daily_run = bt.run_backtest(ctx.prices[list(current)], bt.fixed_weights(current),
+                                rebalance="ME", lookback=126, cost_bps=10.0)  # fmt: skip
+    dates = sparse.index[(sparse.index <= last)]
+    dates = dates[dates.get_loc(first) - 1 :]  # the interval before the first row too
+    on_dates = compound_to(daily_run.returns.iloc[1:], dates).loc[first:last]
+    expected = float(sharpe_ratio(on_dates, rf, per_year))  # interest charged once
+    shown = float(swapped["walk_forward_after_costs"]["Current"]["sharpe"])
+    assert abs(shown - expected) < 0.02, (shown, expected)  # charged twice: ~0.09 lower

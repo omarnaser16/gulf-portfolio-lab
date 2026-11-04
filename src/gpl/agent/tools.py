@@ -696,12 +696,17 @@ def run_candidates(
         if bench is not None:
             series[BENCHMARK] = bench.returns
         frame = align_compounded(series).dropna()
+        # annualise on the universe's own count of dates a year (summary_table charges the
+        # daily risk-free rate for the days each observation spans)
+        table_periods = universe.periods_per_year
+        table_rf = ctx.rf
     else:
         frame = pd.DataFrame(series)
         if bench_returns is not None:
             frame[BENCHMARK] = bench_returns
         frame = frame.dropna()
-    metrics = summary_table(frame, rf=ctx.rf, periods_per_year=ctx.periods)
+        table_periods, table_rf = ctx.periods, ctx.rf
+    metrics = summary_table(frame, rf=table_rf, periods_per_year=table_periods)
     w_now = pd.Series(current, dtype=float)
     current_in_sample = portfolio_performance(w_now, mu, cov)
     table = pd.DataFrame(
@@ -1055,7 +1060,7 @@ def run_build(
     frame = pd.DataFrame({n: r.returns.iloc[1:] for n, r in results.items()})
     frame[BENCHMARK] = bench_r
     frame = frame.dropna()
-    metrics = summary_table(frame, rf=ctx.rf, periods_per_year=periods)
+    metrics = summary_table(frame, rf=ctx.rf, periods_per_year=periods)  # rf scaled inside
     table = pd.DataFrame(
         {
             "cagr": metrics["cagr"],
