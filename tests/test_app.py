@@ -1569,21 +1569,27 @@ def test_build_mode_screens_builds_and_recommends_by_rule(optimise_app) -> None:
     report = at.session_state["ws_opt"]["report"]
     assert report["mode"] == "build"
     rec = report["recommendation"]
-    assert rec["status"] in {"recommended", "next_best", "closest_fails"}
+    assert rec["status"] in {"recommended", "next_best", "keep", "closest_fails"}
     table = _candidates(at)
-    assert {"Max IR", "Benchmark tracker", "Benchmark"} <= {n.lstrip("★≈ ") for n in table.index}
+    shown_rows = {n.lstrip("★≈ ") for n in table.index}
+    assert {"Benchmark tracker", "Benchmark"} <= shown_rows
+    for name in ("Max IR", "Max IR · low-vol tilt", "Diversified (IPS)"):
+        # shown as a result, or listed (with the reason) as never buildable within the limits
+        assert name in shown_rows or name in report["infeasible_candidates"], name
+    for name in report["infeasible_candidates"]:
+        assert any(name in w.value and "can't meet your limits" in w.value for w in at.warning)
     assert "Information ratio" in table.columns and "Hit rate (months)" in table.columns
     shown = " ".join(b.value for b in [*at.success, *at.info, *at.warning])
     assert rec["choice"] in shown
-    if rec["status"] != "closest_fails":
+    if rec["status"] in ("recommended", "next_best"):  # keep: nothing to buy
         securities = next(t.value for t in at.table if "Why" in t.value.columns)
         assert set(securities.index) == set(report["securities_chosen"])
     assert any(e.label.startswith("Universe after the IPS screen") for e in at.expander)
     assert "survivorship" in " ".join(i.value for i in at.info)
     gate = report["suitability_gate"]
-    assert set(gate["failed_rules"]) >= {"Current", "Max IR"}
+    assert "Current" in gate["failed_rules"]
     table = next(t.value for t in at.table if "Exclusions" in t.value.index)
-    assert rec["choice"] in table.columns or rec["status"] == "closest_fails"
+    assert rec["choice"] in table.columns or rec["status"] in ("closest_fails", "keep")
     at.button(key="prepare_report").click().run()  # the report checks the new securities too
     assert not at.exception, at.exception
     assert at.session_state["client_report"][0].startswith(b"%PDF")

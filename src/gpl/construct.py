@@ -425,8 +425,9 @@ def build_strategy(
     """Walk-forward Build: at each rebalance, screen-select-optimise on the trailing window
     only (``build_once``), so the securities as well as the weights use no future data.
 
-    If a window can't be built, the previous weights are kept (``strategy.infeasible_dates``);
-    before the first feasible window, ``fallback`` (or equal weights in the eligible set).
+    If a window can't be built, the previous weights are kept (``strategy.infeasible_dates``,
+    with the optimiser's reason in ``strategy.last_reason``); before the first feasible
+    window, ``fallback`` (the client's current portfolio), or equal weights without one.
     ``strategy.latest`` is the last ``Built`` (weights and reasons).
     """
     state: dict = {"last": None if fallback is None else pd.Series(fallback, dtype=float)}
@@ -442,6 +443,7 @@ def build_strategy(
             strategy.latest = built
         else:
             strategy.infeasible_dates.append(window.index[-1])
+            strategy.last_reason = " ".join(built.notes)
             if state["last"] is None:
                 cols = [t for t in eligible if t in window.columns]
                 state["last"] = pd.Series(1 / len(cols), index=cols)
@@ -449,6 +451,7 @@ def build_strategy(
 
     strategy.infeasible_dates = []
     strategy.latest = None
+    strategy.last_reason = ""
     return strategy
 
 

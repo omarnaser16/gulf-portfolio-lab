@@ -67,7 +67,7 @@ def pct(x: float) -> str:
 
 
 def num(x: float) -> str:
-    return f"{x:.2f}"
+    return "–" if pd.isna(x) else f"{x:.2f}"
 
 
 def times(x: float) -> str:
@@ -986,6 +986,7 @@ def run_build(
     rf_annual = _rf_annual(ctx, rets.index[0])
 
     results, latest_built, in_sample, infeasible = {}, {}, {}, {}
+    never_built: dict[str, list[str]] = {}
     w_held = pd.Series(current, dtype=float)
     if len(w_held) and set(w_held.index) <= set(
         prices.columns
@@ -1001,9 +1002,13 @@ def run_build(
         s = dc_replace(settings, tilt=tilt)
         strategy = build_strategy(
             eligible, universe.tags, bench_r, ctx.ips, limits, s, ctx.rf, objective,
-            cash_like, None, core, rets,
+            cash_like, dict(w_held) if CURRENT in results else None, core, rets,
         )  # fmt: skip
-        results[name] = bt.run_backtest(prices, strategy, **run)
+        result = bt.run_backtest(prices, strategy, **run)
+        if len(strategy.infeasible_dates) >= len(result.weights):  # never built: not a result
+            never_built[name] = [strategy.last_reason or "The limits could never be met."]
+            continue
+        results[name] = result
         infeasible[name] = len(strategy.infeasible_dates)
         latest_built[name] = strategy.latest
         full = build_once(rets_b, bench_r, eligible, universe.tags, ctx.ips, limits, s,
@@ -1159,6 +1164,7 @@ def run_build(
         },
         "walk_forward_after_costs": rows,
         "backtest_period": f"{frame.index[0].date()} to {frame.index[-1].date()}",
+        "infeasible_candidates": never_built,
         "recommendation": {
             "choice": rec.choice,
             "status": rec.status,

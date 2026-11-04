@@ -486,7 +486,7 @@ def test_run_build_reports_candidates_rule_and_securities(ctx) -> None:
                 "worst_relative_drawdown", "tracking_error", "turnover_per_year"):  # fmt: skip
         assert key in rows["Max IR"], key
     rec = report["recommendation"]
-    assert rec["status"] in {"recommended", "next_best", "closest_fails"}
+    assert rec["status"] in {"recommended", "next_best", "keep", "closest_fails"}
     assert "information ratio" in rec["rule"] and "survivorship" in report["caveats"]
     if rec["choice"] in run.latest_weights.index:
         chosen = run.latest_weights.loc[rec["choice"]]

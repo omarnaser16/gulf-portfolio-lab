@@ -332,3 +332,21 @@ def test_build_needs_a_material_information_ratio() -> None:
     assert recommend_build(_build_table(**tiny), 0.04, min_information_ratio=0.05).choice == (
         "Max IR · momentum tilt"
     )
+
+
+def test_build_keeps_a_compliant_current_portfolio_over_a_worse_fallback() -> None:
+    from gpl.recommend import KEEP, TRACKER, recommend_build
+
+    none_beat = {
+        "Max IR": {"excess_return": -0.01},
+        "Max IR · momentum tilt": {"information_ratio": -0.1},
+    }
+    table = _build_table(**none_beat)
+    table.loc["Current"] = table.loc[TRACKER]
+    table.loc["Current", ["sharpe", "passes_ips"]] = [0.75, True]  # better than the 0.70
+    rec = recommend_build(table, 0.04)
+    assert rec.choice == KEEP and rec.status == "keep" and "so keep it" in rec.reasons[1]
+    table.loc["Current", "sharpe"] = 0.60  # worse than the tracker: move to it
+    assert recommend_build(table, 0.04).choice == TRACKER
+    table.loc["Current", ["sharpe", "passes_ips"]] = [0.90, False]  # better, but fails the IPS
+    assert recommend_build(table, 0.04).choice == TRACKER

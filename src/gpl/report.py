@@ -919,7 +919,8 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
             story += _bullets(rec["domicile"])
         story.append(
             para(
-                f"Tested month by month on past data ({rec['period']}), after costs. "
+                f"Tested on past data ({rec['period']}), re-estimated at each rebalance with "
+                "only the data available then, after costs. "
                 "Risk-adjusted and historical, not a promise of higher returns.",
                 "small",
             )

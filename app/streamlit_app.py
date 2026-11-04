@@ -1417,10 +1417,12 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         st.markdown("**Latest weights of each method** (what it would hold now)")
         st.table(run.latest_weights.map(pct))
         if rec["choice"] != KEEP:
+            pair = run.latest_weights.loc[["Current", rec["choice"]]]
+            pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
             plot(
                 paired_bars_chart(
-                    run.latest_weights.loc["Current"],
-                    run.latest_weights.loc[rec["choice"]],
+                    pair.loc["Current"],
+                    pair.loc[rec["choice"]],
                     ("Current", rec["choice"]),
                     f"Current vs {rec['choice']}",
                 ),

@@ -380,7 +380,9 @@ BUILD_RULE = (
     "held up out of sample, kept volatility at most the benchmark's (within {tol}) and tracking "
     "error within {te}, and beat the benchmark out of sample (excess return above zero and an "
     "information ratio of at least {min_ir}). If none did: a low-cost benchmark tracker if it "
-    "passes the IPS, else the best IPS-compliant diversified portfolio."
+    "passes the IPS, else the best IPS-compliant diversified portfolio; but if the current "
+    "portfolio passes the IPS and its walk-forward Sharpe ratio is at least that option's, keep "
+    "it (a change must not be worse than what is held)."
 )
 
 
@@ -444,11 +446,31 @@ def recommend_build(
         f"(an information ratio of at least {min_information_ratio:.2f} is needed: below that, "
         "the difference is within noise)."
     )
+    current_ok = (
+        CURRENT in table.index
+        and bool(table.loc[CURRENT].get("passes_ips", True))
+        and pd.notna(table.loc[CURRENT, "sharpe"])
+    )
     for name, label in (
         (TRACKER, "a low-cost benchmark tracker"),
         (DIVERSIFIED, "the best IPS-compliant diversified portfolio"),
     ):
         if name in cands.index and passes.get(name, False):
+            if current_ok and table.loc[CURRENT, "sharpe"] >= cands.loc[name, "sharpe"]:
+                return Recommendation(
+                    KEEP,
+                    rule,
+                    [
+                        why,
+                        f"The next best option, {label} ({name}), had a walk-forward Sharpe "
+                        f"ratio of {cands.loc[name, 'sharpe']:.2f}; your current portfolio "
+                        f"passes the IPS with {table.loc[CURRENT, 'sharpe']:.2f}, so keep it.",
+                    ],
+                    [],
+                    survived,
+                    "keep",
+                    True,
+                )
             return Recommendation(
                 name,
                 rule,
