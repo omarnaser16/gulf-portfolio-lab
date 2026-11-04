@@ -35,6 +35,7 @@ from gpl.agent.tools import (
     AnalystContext,
     ToolError,
     UniverseData,
+    _ips_checks,
     diagnose_portfolio,
     run_build,
     run_candidates,
@@ -620,6 +621,8 @@ def shared_context() -> AnalystContext:
     ctx.attributes = get_attributes(tuple(data.prices.columns))
     ctx.portfolio_value = portfolio_value()
     ctx.product_types = holding_products(tuple(my_weights))  # knowledge & experience check
+    uni = (st.session_state.get("ws_opt") or {}).get("universe")
+    ctx.curated = uni  # Build / swap proposals: prices and tags for new securities
     return ctx
 
 
@@ -1141,8 +1144,14 @@ def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
     ips = client_ips()
     if ips is None:
         return None
-    currencies = data.history["currency"].to_dict()
+    portfolios = {n: w[w > 1e-9] for n, w in portfolios.items()}
     tickers = tuple(sorted(set().union(*[set(w.index) for w in portfolios.values()])))
+    uni = (st.session_state.get("ws_opt") or {}).get("universe")
+    if uni is not None and not set(tickers) <= set(all_returns.columns):
+        # Build / swaps: securities not held today are checked on the universe's prices
+        ctx = shared_context()
+        return {name: _ips_checks(ctx, w, uni) for name, w in portfolios.items()}
+    currencies = data.history["currency"].to_dict()
     regions = {
         t: c["region"]
         for t, c in classify_holdings(
@@ -1345,9 +1354,9 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     build = report.get("mode") == "build"
     st.caption(
         (
-            "Each candidate re-chooses its securities and weights every month from the trailing "
-            "window only, within the IPS and your limits, then holds them to the next month, "
-            "after trading costs. "
+            "Each candidate re-chooses its securities and weights every quarter from the data "
+            "available then (risk from all history so far, returns from the last year), within "
+            "the IPS and your limits, then holds them to the next quarter, after trading costs. "
             if build
             else "Each method is re-optimised every month on the trailing window only "
             "(Ledoit-Wolf covariance), within your limits, then held to the next month, after "
@@ -1523,7 +1532,7 @@ def render_build(ctx, ai_ok: bool) -> None:
                 "source": "Build (closest; fails the IPS)" if fails else "Build recommendation",
             }
         st.session_state.ws_opt = {
-            "report": report, "run": run, "memo": None, "key": run_key, "universe": uni.excluded,
+            "report": report, "run": run, "memo": None, "key": run_key, "universe": uni,
         }  # fmt: skip
     result = st.session_state.get("ws_opt")
     if result and result["key"] == run_key:
@@ -1616,6 +1625,7 @@ def render_optimise() -> None:
     )  # fmt: skip
     if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
         with st.spinner("Re-optimising each method month by month and backtesting…"):
+            uni = universe_data(True) if use_swaps else None
             report, run = run_candidates(
                 ctx,
                 goal,
@@ -1623,7 +1633,7 @@ def render_optimise() -> None:
                 my_weights,
                 target,
                 max_turnover=max_turnover / 100,
-                universe=universe_data(True) if use_swaps else None,
+                universe=uni,
                 max_swaps=int(max_swaps),
             )
         ctx.optimisation = report
@@ -1638,7 +1648,9 @@ def render_optimise() -> None:
                 if fails
                 else "Optimise recommendation",
             }
-        st.session_state.ws_opt = {"report": report, "run": run, "memo": None, "key": run_key}
+        st.session_state.ws_opt = {
+            "report": report, "run": run, "memo": None, "key": run_key, "universe": uni,
+        }  # fmt: skip
     result = st.session_state.get("ws_opt")
     if result and result["key"] == run_key:
         _results_section(result, ai_ok)

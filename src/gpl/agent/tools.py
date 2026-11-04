@@ -99,6 +99,7 @@ class AnalystContext:
     attributes: Mapping[str, Mapping[str, str]] | None = None  # Sharia status, sector
     portfolio_value: float | None = None  # USD, for the liquidity rule
     product_types: Mapping[str, str] | None = None  # ticker -> "ETFs", "Equities", ... (K&E)
+    curated: Any = None  # UniverseData: the curated universe (Build / swaps), if loaded
     rebalance: dict | None = None  # latest drift monitor and trade list (set by the app)
     # every tool result and user message this conversation (set by the Analyst); `calculate`
     # only accepts numbers that appear in them
@@ -929,7 +930,7 @@ BUILD_CANDIDATES = {  # name -> (objective, tilt)
     "Max IR · low-vol tilt": ("max_information_ratio", "low_vol"),
     "Max IR · momentum tilt": ("max_information_ratio", "momentum"),
     "Max IR · quality tilt": ("max_information_ratio", "quality"),
-    "Diversified (IPS)": ("max_diversification", "none"),
+    "Diversified (IPS)": ("max_sharpe", "none"),  # best Sharpe under the IPS, 8-15 holdings
 }
 SURVIVORSHIP = (
     "The universe is today's funds: a backtest over it can't include funds that closed "
@@ -970,7 +971,8 @@ def run_build(
     if bench is None or bench.is_cash:
         raise ToolError("Build needs a market benchmark (not cash) to aim to beat")
     lab = ctx.settings.get("optimise_lab", {})
-    run = _run_settings(ctx)
+    run = {**_run_settings(ctx), "rebalance": lab.get("build_rebalance", "QE")}
+    every = {"QE": "quarter", "ME": "month"}.get(run["rebalance"], run["rebalance"])
     prices = universe.prices
     rets = universe.returns
     periods = universe.periods_per_year
@@ -999,13 +1001,13 @@ def run_build(
         s = dc_replace(settings, tilt=tilt)
         strategy = build_strategy(
             eligible, universe.tags, bench_r, ctx.ips, limits, s, ctx.rf, objective,
-            cash_like, None, core,
+            cash_like, None, core, rets,
         )  # fmt: skip
         results[name] = bt.run_backtest(prices, strategy, **run)
         infeasible[name] = len(strategy.infeasible_dates)
         latest_built[name] = strategy.latest
         full = build_once(rets_b, bench_r, eligible, universe.tags, ctx.ips, limits, s,
-                          rf_annual, objective, cash_like, core)  # fmt: skip
+                          rf_annual, objective, cash_like, core, rets_b)  # fmt: skip
         if full.feasible:
             w = full.weights
             mu = rets_b[w.index].mean() * periods
@@ -1017,10 +1019,19 @@ def run_build(
     # benchmark tracker: the benchmark's funds (UCITS twins for a non-US person if eligible)
     ucits = {r["ucits_of"]: t for t, r in universe.tags.items() if r.get("ucits_of")}
     tracker = {}
+    cap = limits.max_weight
+    if ctx.ips is not None and ctx.ips.limits["max_weight"]:
+        cap = min(cap, ctx.ips.limits["max_weight"])
     for t, w in benchmark_weights.items():
         alt = ucits.get(t)
         use = alt if (not us_person and alt in prices.columns) else t
-        if use in prices.columns:
+        if use not in prices.columns:
+            continue
+        twin = t if use == alt else alt  # the same index in the other wrapper
+        if w > cap + 1e-9 and twin in prices.columns and not (us_person and twin == alt):
+            tracker[use] = tracker.get(use, 0.0) + w / 2  # split over the cap: same index
+            tracker[twin] = tracker.get(twin, 0.0) + w / 2
+        else:
             tracker[use] = tracker.get(use, 0.0) + w
     if tracker:
         results[TRACKER] = bt.run_backtest(prices[list(tracker)], bt.fixed_weights(tracker), **run)
@@ -1073,7 +1084,19 @@ def run_build(
         settings.tracking_error_max,
         tolerance=lab.get("volatility_tolerance", 0.005),
         held_up_ratio=lab.get("held_up_ratio", 0.5),
+        min_information_ratio=lab.get("build_min_information_ratio", 0.10),
     )
+    if CURRENT in table.index and rec.choice in table.index:
+        cur_ir, new_ir = (
+            table.loc[CURRENT, "information_ratio"],
+            table.loc[rec.choice, "information_ratio"],
+        )
+        if pd.notna(cur_ir) and pd.notna(new_ir) and cur_ir > new_ir:
+            rec.reasons.append(
+                f"Your current portfolio's walk-forward information ratio ({cur_ir:.2f}) is "
+                f"higher than {rec.choice}'s ({new_ir:.2f}): consider 'Improve my current "
+                "portfolio' instead."
+            )
 
     rows = {}
     for name in table.index:
@@ -1145,7 +1168,7 @@ def run_build(
         },
         "securities_chosen": securities,
         "caveats": (
-            "Walk-forward results choose securities and weights each month using only data "
+            f"Walk-forward results choose securities and weights each {every} using only data "
             "available at the time, after trading costs. They are historical and "
             "risk-adjusted, not a forecast or a promise of beating the benchmark. Choosing the "
             "best of several candidates on the same period is itself a mild form of hindsight. "
@@ -1238,6 +1261,8 @@ def _ips_checks(
     returns, attributes, groups = ctx.all_returns, dict(ctx.attributes or {}), ctx.holding_groups
     meta = dict(ctx.settings.get("exposure_meta", {}))
     held = list(weights[weights > 0].index)
+    if universe is None and not set(held) <= set(ctx.all_returns.columns):
+        universe = ctx.curated  # a Build or swap proposal: new securities
     if universe is not None:
         if set(held) <= set(universe.returns.columns):
             returns = universe.returns  # one calendar for every holding checked

@@ -1559,6 +1559,8 @@ def test_a_new_listing_that_shortens_the_sample_can_be_excluded(app: AppTest) ->
 
 def test_build_mode_screens_builds_and_recommends_by_rule(optimise_app) -> None:
     at, _ = optimise_app([])
+    at.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
+    at.button(key="client_load_example").click().run()  # a client: suitability runs too
     at.radio(key="opt_mode").set_value("Build a portfolio for me").run()
     assert not at.exception, at.exception
     assert at.number_input(key="build_te").value == 4.0  # the 4% default
@@ -1578,6 +1580,13 @@ def test_build_mode_screens_builds_and_recommends_by_rule(optimise_app) -> None:
         assert set(securities.index) == set(report["securities_chosen"])
     assert any(e.label.startswith("Universe after the IPS screen") for e in at.expander)
     assert "survivorship" in " ".join(i.value for i in at.info)
+    gate = report["suitability_gate"]
+    assert set(gate["failed_rules"]) >= {"Current", "Max IR"}
+    table = next(t.value for t in at.table if "Exclusions" in t.value.index)
+    assert rec["choice"] in table.columns or rec["status"] == "closest_fails"
+    at.button(key="prepare_report").click().run()  # the report checks the new securities too
+    assert not at.exception, at.exception
+    assert at.session_state["client_report"][0].startswith(b"%PDF")
 
 
 def test_improve_mode_caps_turnover_and_explains_swaps(optimise_app) -> None:

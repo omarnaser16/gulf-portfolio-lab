@@ -319,3 +319,16 @@ def test_build_falls_back_to_tracker_then_diversified_then_closest() -> None:
     all_fail["Max IR"]["ips_fails"] = 1
     rec = recommend_build(_build_table(**all_fail), 0.04)
     assert rec.status == "closest_fails" and "Not suitable as it stands" in rec.reasons[1]
+
+
+def test_build_needs_a_material_information_ratio() -> None:
+    from gpl.recommend import TRACKER, recommend_build
+
+    tiny = {"Max IR": {"information_ratio": 0.02}, "Max IR · momentum tilt":
+            {"information_ratio": 0.08}}  # fmt: skip
+    rec = recommend_build(_build_table(**tiny), 0.04)
+    assert rec.status == "next_best" and rec.choice == TRACKER  # 0.08 < 0.10: within noise
+    assert "at least 0.10" in rec.reasons[0]
+    assert recommend_build(_build_table(**tiny), 0.04, min_information_ratio=0.05).choice == (
+        "Max IR · momentum tilt"
+    )

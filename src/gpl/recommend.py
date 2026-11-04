@@ -378,9 +378,9 @@ DIVERSIFIED = "Diversified (IPS)"
 BUILD_RULE = (
     "Highest walk-forward information ratio after costs among portfolios that pass the IPS, "
     "held up out of sample, kept volatility at most the benchmark's (within {tol}) and tracking "
-    "error within {te}, and beat the benchmark out of sample (excess return and information "
-    "ratio above zero). If none did: a low-cost benchmark tracker if it passes the IPS, else "
-    "the best IPS-compliant diversified portfolio."
+    "error within {te}, and beat the benchmark out of sample (excess return above zero and an "
+    "information ratio of at least {min_ir}). If none did: a low-cost benchmark tracker if it "
+    "passes the IPS, else the best IPS-compliant diversified portfolio."
 )
 
 
@@ -389,6 +389,7 @@ def recommend_build(
     tracking_error_max: float,
     tolerance: float = 0.005,
     held_up_ratio: float = 0.5,
+    min_information_ratio: float = 0.10,
 ) -> Recommendation:
     """Choose among built portfolios by a fixed rule (``BUILD_RULE``); never promises returns.
 
@@ -399,7 +400,11 @@ def recommend_build(
     diversified portfolio: it does not beat the benchmark) or "closest_fails" (nothing passes
     the IPS: the closest, with its breaches).
     """
-    rule = BUILD_RULE.format(tol=f"{tolerance * 100:.2f} pp", te=f"{tracking_error_max:.2%}")
+    rule = BUILD_RULE.format(
+        tol=f"{tolerance * 100:.2f} pp",
+        te=f"{tracking_error_max:.2%}",
+        min_ir=f"{min_information_ratio:.2f}",
+    )
     bench_vol = float(table.loc[BENCHMARK, "volatility"])
     cands = table.drop(index=[BENCHMARK, CURRENT], errors="ignore")
     if "feasible" in cands:
@@ -420,7 +425,7 @@ def recommend_build(
         & (builds["volatility"] <= bench_vol + tolerance)
         & (builds["tracking_error"] <= tracking_error_max + tolerance)
         & (builds["excess_return"] > 0)
-        & (builds["information_ratio"] > 0)
+        & (builds["information_ratio"] >= min_information_ratio)
     ]
     if len(ok):
         ranking = ok.sort_values("information_ratio", ascending=False).index.tolist()
@@ -434,7 +439,11 @@ def recommend_build(
             "Historical and risk-adjusted: not a promise that it will beat the benchmark.",
         ]
         return Recommendation(pick, rule, reasons, ranking, survived, "recommended")
-    why = "No built portfolio beat the benchmark out of sample after costs within the IPS."
+    why = (
+        "No built portfolio beat the benchmark out of sample after costs within the IPS "
+        f"(an information ratio of at least {min_information_ratio:.2f} is needed: below that, "
+        "the difference is within noise)."
+    )
     for name, label in (
         (TRACKER, "a low-cost benchmark tracker"),
         (DIVERSIFIED, "the best IPS-compliant diversified portfolio"),

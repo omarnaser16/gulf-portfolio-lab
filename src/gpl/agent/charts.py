@@ -70,6 +70,23 @@ def _portfolios(ctx) -> dict[str, pd.Series]:
     return {n: w[w > 0] for n, w in out.items()}
 
 
+def _prices(ctx, tickers) -> pd.DataFrame:
+    """Prices for ``tickers``: the holdings' table, or the curated universe's for securities
+    not held today (a Build or swap proposal)."""
+    tickers = list(tickers)
+    extra = getattr(ctx, "curated", None)
+    if set(tickers) <= set(ctx.prices.columns) or extra is None:
+        return ctx.prices[tickers]
+    return extra.prices[tickers]
+
+
+def _returns(ctx, tickers) -> pd.DataFrame:
+    tickers = list(tickers)
+    if set(tickers) <= set(ctx.all_returns.columns):
+        return ctx.all_returns[tickers]
+    return _prices(ctx, tickers).pct_change().iloc[1:]
+
+
 def _backtest_returns(ctx, w: pd.Series) -> pd.Series:
     """Fixed weights rebalanced monthly after costs, from the first full day held."""
     run = dict(
@@ -78,13 +95,13 @@ def _backtest_returns(ctx, w: pd.Series) -> pd.Series:
         cost_bps=ctx.settings["cost_bps"],
     )
     return bt.run_backtest(
-        ctx.prices[list(w.index)], bt.fixed_weights(w.to_dict()), **run
+        _prices(ctx, w.index), bt.fixed_weights(w.to_dict()), **run
     ).returns.iloc[1:]
 
 
 def _held_returns(ctx, w: pd.Series) -> pd.Series:
     """Daily returns at fixed weights over the full common sample (no costs)."""
-    return ctx.all_returns[list(w.index)] @ w
+    return _returns(ctx, w.index) @ w
 
 
 def _with_benchmark(ctx, frame: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
@@ -164,7 +181,7 @@ def chart_data(ctx, chart: str) -> ChartData:
         )
     if chart == "efficient_frontier":
         tickers = sorted(set().union(*[set(w.index) for w in ports.values()]))
-        rets = ctx.all_returns[tickers]
+        rets = _returns(ctx, tickers)
         mu, cov = rets.mean() * ctx.periods, rets.cov() * ctx.periods
         cap = ctx.settings["max_weight"] if ctx.settings["max_weight"] * len(tickers) >= 1 else 1.0
         points = {
@@ -182,7 +199,7 @@ def chart_data(ctx, chart: str) -> ChartData:
         bands = {}
         for n, w in ports.items():
             paths = simulate_paths(
-                ctx.all_returns[list(w.index)],
+                _returns(ctx, w.index),
                 w,
                 ctx.periods * MC_YEARS,
                 MC_PATHS,

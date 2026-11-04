@@ -303,6 +303,7 @@ def build_once(
     objective: str = "max_information_ratio",
     cash_like: tuple[str, ...] = (),
     core: tuple[str, ...] = (),
+    history: pd.DataFrame | None = None,
 ) -> Built:
     """Build one portfolio on one window: shortlist, optimise, then prune to 8-15 holdings.
 
@@ -311,6 +312,12 @@ def build_once(
     tracking-error cap and volatility at most the benchmark's, with the tilt's names held at
     ``tilt_min`` or more. Holdings under ``min_weight`` are dropped and the rest re-optimised;
     if fewer than ``n_min`` remain, the largest ``n_min`` are kept at ``min_weight`` or more.
+
+    Risk (covariance, volatility cap, tracking error) is estimated on ``history``: all returns
+    up to the window's last date (default: the window), because the IPS judges volatility and
+    drawdown over the full history; expected returns come from the window. If the result's
+    largest historical fall exceeds the IPS drawdown limit, the volatility cap is tightened by
+    10% and the portfolio rebuilt (up to six times).
     """
     s = settings
     needed = []
@@ -325,7 +332,12 @@ def build_once(
         return Built(False, None, {}, [f"Only {len(tickers)} eligible securities."])
     data = window[tickers].join(bench.rename("__b__"), how="inner").dropna()
     win, b = data[tickers], data["__b__"]
-    bench_vol = float(b.std() * np.sqrt(s.periods_per_year))
+    hist = window if history is None else history.loc[: window.index[-1]]
+    hist_data = hist[tickers].join(bench.rename("__b__"), how="inner").dropna()
+    hist_r, hist_b = hist_data[tickers], hist_data["__b__"]
+    bench_vol = float(hist_b.std() * np.sqrt(s.periods_per_year))
+    dd_limit = ips.limits["max_drawdown"] if ips is not None else None
+    squeeze = {"factor": 1.0}
 
     def solve(names: list[str], floors: Mapping[str, float] | None = None):
         groups = _groups(names, universe)
@@ -338,6 +350,7 @@ def build_once(
         spec = tighter(spec, replace(base, asset_bounds={}, sets={}, groups={}, group_bounds={}))
         vs_bench = s.vol_vs_benchmark and objective == "max_information_ratio"
         caps = [v for v in (spec.max_volatility, bench_vol if vs_bench else None) if v]
+        caps = [c * squeeze["factor"] for c in caps]
         sets = dict(spec.sets)
         held = [t for t in tilt_names if t in names]
         if held and objective == "max_information_ratio":
@@ -353,10 +366,28 @@ def build_once(
             asset_bounds=bounds,
         )  # fmt: skip
         mu = win[names].mean() * s.periods_per_year
-        cov, _ = ledoit_wolf_cov(win[names], s.periods_per_year)
-        active = active_moments(win[names], b, s.periods_per_year)
+        cov, _ = ledoit_wolf_cov(hist_r[names], s.periods_per_year)
+        active = active_moments(hist_r[names], hist_b, s.periods_per_year)
+        active.mu = (win[names].sub(b, axis=0)).mean() * s.periods_per_year
         return optimise(mu, cov, spec, rf, active)
 
+    for _ in range(7):
+        built = _prune_and_solve(solve, tickers, s)
+        if not built.feasible or dd_limit is None:
+            break
+        port = hist_r[list(built.weights.index)] @ built.weights
+        wealth = (1 + port).cumprod()
+        fall = float((wealth / wealth.cummax() - 1).min())
+        if fall >= -dd_limit:
+            break
+        squeeze["factor"] *= 0.9  # too deep a fall in the history so far: take less risk
+    if not built.feasible:
+        return built
+    return Built(True, built.weights, {t: reasons[t] for t in built.weights.index}, built.notes)
+
+
+def _prune_and_solve(solve, tickers: list[str], s: BuildSettings) -> Built:
+    """Optimise the shortlist, keep 8-15 holdings at ``min_weight`` or more, re-optimise."""
     first = solve(tickers)
     if not first.feasible:
         return Built(False, None, {}, first.reasons)
@@ -371,9 +402,7 @@ def build_once(
     else:
         final, notes = second.weights[second.weights > 1e-6], []
     final = final / final.sum()
-    return Built(
-        True, final.sort_values(ascending=False), {t: reasons[t] for t in final.index}, notes
-    )
+    return Built(True, final.sort_values(ascending=False), {}, notes)
 
 
 # ------------------------------------------------------------------------ walk-forward strategies
@@ -391,6 +420,7 @@ def build_strategy(
     cash_like: tuple[str, ...] = (),
     fallback: Mapping[str, float] | None = None,
     core: tuple[str, ...] = (),
+    history: pd.DataFrame | None = None,
 ):
     """Walk-forward Build: at each rebalance, screen-select-optimise on the trailing window
     only (``build_once``), so the securities as well as the weights use no future data.
@@ -405,7 +435,7 @@ def build_strategy(
         known = bench.loc[: window.index[-1]]
         built = build_once(
             window, known, eligible, universe, ips, base, settings,
-            _annual_rf_at(rf, window.index[-1]), objective, cash_like, core,
+            _annual_rf_at(rf, window.index[-1]), objective, cash_like, core, history,
         )  # fmt: skip
         if built.feasible:
             state["last"] = built.weights
