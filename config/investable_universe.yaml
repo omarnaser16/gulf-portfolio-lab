@@ -1,0 +1,90 @@
+# Curated investable universe for Optimise › "Build a portfolio for me" and the swap ideas in
+# "Improve my current portfolio" (gpl/construct.py). Liquid funds and GCC blue chips, each
+# tagged. ILLUSTRATIVE, NOT A BUY LIST: an adviser must check costs, liquidity, share class and
+# the client's own Sharia screen before using any of them.
+#
+# Fields
+#   name, asset_class (Equity | Bonds | Sukuk | Gold | Cash | Real estate), region,
+#   currency (trading currency), sharia (compliant | not_compliant | unknown: compliant only when
+#   screened by the fund's index provider or Sharia board), domicile, factor (low_vol |
+#   momentum | quality, for the tilts), ucits_of (the US-listed fund it replaces),
+#   gcc_stock (single GCC stocks: in the universe only when the IPS asks for GCC exposure),
+#   history_from / verified: first price date on Yahoo and the date that was checked
+#   (written by scripts/verify_universe.py; blank until verified).
+#
+# Survivorship bias: these are funds that exist today; a backtest over them cannot include
+# funds that closed. Stated wherever results are shown.
+
+securities:
+  # ---------------------------------------------------------------- equity: US-listed ETFs
+  SPY: { name: SPDR S&P 500 ETF, asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  QQQ: { name: Invesco QQQ (Nasdaq-100), asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  IWM: { name: iShares Russell 2000 (US small caps), asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  EFA: { name: iShares MSCI EAFE, asset_class: Equity, region: Developed ex-US, currency: USD, sharia: not_compliant, domicile: United States }
+  EEM: { name: iShares MSCI Emerging Markets, asset_class: Equity, region: Emerging markets, currency: USD, sharia: not_compliant, domicile: United States }
+  ACWI: { name: iShares MSCI ACWI, asset_class: Equity, region: Global, currency: USD, sharia: not_compliant, domicile: United States }
+  URTH: { name: iShares MSCI World, asset_class: Equity, region: World (developed), currency: USD, sharia: not_compliant, domicile: United States }
+  VGK: { name: Vanguard FTSE Europe, asset_class: Equity, region: Europe, currency: USD, sharia: not_compliant, domicile: United States }
+  EWJ: { name: iShares MSCI Japan, asset_class: Equity, region: Japan, currency: USD, sharia: not_compliant, domicile: United States }
+  INDA: { name: iShares MSCI India, asset_class: Equity, region: India, currency: USD, sharia: not_compliant, domicile: United States }
+  MCHI: { name: iShares MSCI China, asset_class: Equity, region: China, currency: USD, sharia: not_compliant, domicile: United States }
+  EWU: { name: iShares MSCI United Kingdom, asset_class: Equity, region: United Kingdom, currency: USD, sharia: not_compliant, domicile: United States }
+  # ---------------------------------------------------------------- equity: GCC country ETFs
+  KSA: { name: iShares MSCI Saudi Arabia, asset_class: Equity, region: Saudi Arabia, currency: USD, sharia: not_compliant, domicile: United States }
+  UAE: { name: iShares MSCI UAE, asset_class: Equity, region: UAE, currency: USD, sharia: not_compliant, domicile: United States }
+  QAT: { name: iShares MSCI Qatar, asset_class: Equity, region: Qatar, currency: USD, sharia: not_compliant, domicile: United States }
+  # ---------------------------------------------------------------- equity: factor ETFs
+  USMV: { name: iShares MSCI USA Min Vol Factor, asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: United States, factor: low_vol }
+  ACWV: { name: iShares MSCI Global Min Vol Factor, asset_class: Equity, region: Global, currency: USD, sharia: not_compliant, domicile: United States, factor: low_vol }
+  MTUM: { name: iShares MSCI USA Momentum Factor, asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: United States, factor: momentum }
+  QUAL: { name: iShares MSCI USA Quality Factor, asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: United States, factor: quality }
+  IQLT: { name: iShares MSCI Intl Quality Factor, asset_class: Equity, region: Developed ex-US, currency: USD, sharia: not_compliant, domicile: United States, factor: quality }
+  # ---------------------------------------------------------------- bonds
+  AGG: { name: iShares Core US Aggregate Bond, asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  IEF: { name: iShares 7-10 Year Treasury Bond, asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  TLT: { name: iShares 20+ Year Treasury Bond, asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  LQD: { name: iShares iBoxx USD Investment Grade Corporate Bond, asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  HYG: { name: iShares iBoxx USD High Yield Corporate Bond, asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  EMB: { name: iShares JP Morgan USD Emerging Markets Bond, asset_class: Bonds, region: Emerging markets, currency: USD, sharia: not_compliant, domicile: United States }
+  TIP: { name: iShares TIPS Bond (US inflation-linked), asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  BNDX: { name: Vanguard Total International Bond (USD hedged), asset_class: Bonds, region: Developed ex-US, currency: USD, sharia: not_compliant, domicile: United States }
+  # ---------------------------------------------------------------- cash and short-term
+  BIL: { name: SPDR Bloomberg 1-3 Month T-Bill, asset_class: Cash, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  SHV: { name: iShares 0-1 Year Treasury Bond, asset_class: Cash, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  SHY: { name: iShares 1-3 Year Treasury Bond, asset_class: Cash, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  # ---------------------------------------------------------------- gold
+  GLD: { name: SPDR Gold Shares, asset_class: Gold, region: Global, currency: USD, sharia: unknown, domicile: United States }
+  IAU: { name: iShares Gold Trust, asset_class: Gold, region: Global, currency: USD, sharia: unknown, domicile: United States }
+  # ---------------------------------------------------------------- real estate
+  VNQ: { name: Vanguard Real Estate (US REITs), asset_class: Real estate, region: United States, currency: USD, sharia: not_compliant, domicile: United States }
+  REET: { name: iShares Global REIT, asset_class: Real estate, region: Global, currency: USD, sharia: not_compliant, domicile: United States }
+  # ---------------------------------------------------------------- Sharia-screened funds
+  SPUS: { name: SP Funds S&P 500 Sharia Industry Exclusions, asset_class: Equity, region: United States, currency: USD, sharia: compliant, domicile: United States }
+  HLAL: { name: Wahed FTSE USA Shariah, asset_class: Equity, region: United States, currency: USD, sharia: compliant, domicile: United States }
+  SPSK: { name: SP Funds Dow Jones Global Sukuk, asset_class: Sukuk, region: Global, currency: USD, sharia: compliant, domicile: United States }
+  SPRE: { name: SP Funds S&P Global REIT Sharia, asset_class: Real estate, region: Global, currency: USD, sharia: compliant, domicile: United States }
+  "ISDU.L": { name: iShares MSCI USA Islamic UCITS, asset_class: Equity, region: United States, currency: USD, sharia: compliant, domicile: Ireland }
+  "ISWD.L": { name: iShares MSCI World Islamic UCITS, asset_class: Equity, region: World (developed), currency: USD, sharia: compliant, domicile: Ireland }
+  "ISDE.L": { name: iShares MSCI EM Islamic UCITS, asset_class: Equity, region: Emerging markets, currency: USD, sharia: compliant, domicile: Ireland }
+  # ---------------------------------------------------------------- UCITS equivalents (Ireland)
+  "CSPX.L": { name: iShares Core S&P 500 UCITS (Acc), asset_class: Equity, region: United States, currency: USD, sharia: not_compliant, domicile: Ireland, ucits_of: SPY }
+  "SWDA.L": { name: iShares Core MSCI World UCITS (Acc), asset_class: Equity, region: World (developed), currency: GBP, sharia: not_compliant, domicile: Ireland, ucits_of: URTH }
+  "IEEM.L": { name: iShares MSCI EM UCITS (Dist), asset_class: Equity, region: Emerging markets, currency: USD, sharia: not_compliant, domicile: Ireland, ucits_of: EEM }
+  "IKSA.L": { name: iShares MSCI Saudi Arabia Capped UCITS (Acc), asset_class: Equity, region: Saudi Arabia, currency: USD, sharia: not_compliant, domicile: Ireland, ucits_of: KSA }
+  "IUAA.L": { name: iShares US Aggregate Bond UCITS (Acc), asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: Ireland, ucits_of: AGG }
+  "IDTL.L": { name: iShares $ Treasury Bond 20+yr UCITS (Dist), asset_class: Bonds, region: United States, currency: USD, sharia: not_compliant, domicile: Ireland, ucits_of: TLT }
+  "IB01.L": { name: iShares $ Treasury Bond 0-1yr UCITS, asset_class: Cash, region: United States, currency: USD, sharia: not_compliant, domicile: Ireland, ucits_of: BIL }
+  "IGLN.L": { name: iShares Physical Gold ETC, asset_class: Gold, region: Global, currency: USD, sharia: unknown, domicile: Ireland, ucits_of: GLD }
+  # ---------------------------------------------------------------- GCC blue chips
+  "2222.SR": { name: Saudi Aramco, asset_class: Equity, region: Saudi Arabia, currency: SAR, sharia: compliant, domicile: Saudi Arabia, gcc_stock: true }
+  "1120.SR": { name: Al Rajhi Bank, asset_class: Equity, region: Saudi Arabia, currency: SAR, sharia: compliant, domicile: Saudi Arabia, gcc_stock: true }
+  "2010.SR": { name: SABIC, asset_class: Equity, region: Saudi Arabia, currency: SAR, sharia: unknown, domicile: Saudi Arabia, gcc_stock: true }
+  "7010.SR": { name: Saudi Telecom (stc), asset_class: Equity, region: Saudi Arabia, currency: SAR, sharia: unknown, domicile: Saudi Arabia, gcc_stock: true }
+  "1180.SR": { name: Saudi National Bank, asset_class: Equity, region: Saudi Arabia, currency: SAR, sharia: unknown, domicile: Saudi Arabia, gcc_stock: true }
+  "EMAAR.AE": { name: Emaar Properties, asset_class: Equity, region: UAE, currency: AED, sharia: unknown, domicile: UAE, gcc_stock: true }
+  "EMIRATESNBD.AE": { name: Emirates NBD, asset_class: Equity, region: UAE, currency: AED, sharia: unknown, domicile: UAE, gcc_stock: true }
+  "QNBK.QA": { name: Qatar National Bank, asset_class: Equity, region: Qatar, currency: QAR, sharia: unknown, domicile: Qatar, gcc_stock: true }
+  "IQCD.QA": { name: Industries Qatar, asset_class: Equity, region: Qatar, currency: QAR, sharia: unknown, domicile: Qatar, gcc_stock: true }
+  "NBK.KW": { name: National Bank of Kuwait, asset_class: Equity, region: Kuwait, currency: KWF, sharia: unknown, domicile: Kuwait, gcc_stock: true }
+  "ZAIN.KW": { name: Zain (Mobile Telecommunications), asset_class: Equity, region: Kuwait, currency: KWF, sharia: unknown, domicile: Kuwait, gcc_stock: true }
+  "KFH.KW": { name: Kuwait Finance House, asset_class: Equity, region: Kuwait, currency: KWF, sharia: unknown, domicile: Kuwait, gcc_stock: true }

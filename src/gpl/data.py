@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 DEFAULT_UNIVERSE = PROJECT_ROOT / "config" / "universe.yaml"
+INVESTABLE = PROJECT_ROOT / "config" / "investable_universe.yaml"
+INVESTABLE_HISTORY = PROJECT_ROOT / "config" / "investable_history.yaml"  # generated
 RISK_FREE_TICKER = "^IRX"
 PERIODS_PER_YEAR = 252
 
@@ -254,6 +256,51 @@ def load_universe(path: Path | None = None) -> dict:
         config = yaml.safe_load(f)
     config["assets"] = [t for tickers in config["groups"].values() for t in tickers]
     return config
+
+
+def load_investable(path: Path | None = None, history_path: Path | None = None) -> dict[str, dict]:
+    """The curated investable universe (``config/investable_universe.yaml``), ticker -> tags.
+
+    Each record gains ``history_from`` and ``verified`` from the generated history file
+    (``scripts/verify_universe.py``); both are None for a ticker not yet verified.
+    """
+    with open(path or INVESTABLE) as f:
+        securities = yaml.safe_load(f)["securities"]
+    history: dict = {}
+    hist_file = history_path or INVESTABLE_HISTORY
+    if Path(hist_file).exists():
+        with open(hist_file) as f:
+            history = (yaml.safe_load(f) or {}).get("history", {})
+    return {
+        str(t): {
+            **tags,
+            "history_from": history.get(t, {}).get("history_from"),
+            "verified": history.get(t, {}).get("verified"),
+        }
+        for t, tags in securities.items()
+    }
+
+
+def verify_history(
+    tickers: Sequence[str], today: date, cache_dir: Path | None = None
+) -> dict[str, dict]:
+    """First and last price dates on Yahoo for each ticker (for the universe's history check).
+
+    A ticker with no prices, or none in the last 30 days, is reported with ``problem``.
+    """
+    out = {}
+    for t in tickers:
+        series = download_series(t, "2005-01-01", None, cache_dir)
+        series = None if series is None else series.dropna()
+        if series is None or series.empty:
+            out[t] = {"problem": "no prices on Yahoo Finance"}
+            continue
+        first, last = series.index[0].date(), series.index[-1].date()
+        record = {"history_from": first.isoformat(), "last_price": last.isoformat()}
+        if (today - last).days > 30:
+            record["problem"] = f"no prices since {last.isoformat()}"
+        out[t] = record
+    return out
 
 
 # ------------------------------------------------------------------ any asset, any currency
