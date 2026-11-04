@@ -257,3 +257,45 @@ def test_curated_sukuk_fund_is_sharia_compliant() -> None:
     )
     assert "SPSK" not in excluded and "SPSK" not in review and "SPUS" not in review
     assert excluded == {"AGG": "not Sharia-compliant"}
+
+
+def test_knowledge_check_only_when_experience_recorded() -> None:
+    weights = {"EQ": 0.5, "BOND": 0.5}
+    types = {"EQ": "ETFs", "BOND": "Derivatives"}
+
+    def checks(client):
+        out = check_suitability(
+            pd.Series(weights),
+            RETURNS,
+            client,
+            ATTRS,
+            CURRENCIES,
+            GROUPS,
+            252,
+            EPISODES,
+            product_types=types,
+        )
+        return {c.rule: c for c in out}
+
+    assert "Knowledge & experience" not in checks(ips())  # nothing recorded: no rule
+    flagged = checks(ips(years_investing=10, products_used=["ETFs"]))["Knowledge & experience"]
+    assert flagged.status == "review" and flagged.reason.startswith("Derivatives: complex")
+    ok = checks(ips(years_investing=10, products_used=["ETFs", "Derivatives"]))
+    assert ok["Knowledge & experience"].status == "pass"
+
+
+def test_rationale_is_built_from_the_rules() -> None:
+    from gpl.suitability import rationale
+
+    client = ips(primary_objective="Growth")
+    checks = list(run({"EQ": 0.5, "BOND": 0.5}, client).values())
+    lines = rationale(client, "Current", checks, ["ranks first under the rule"])
+    assert (
+        lines[0] == "Client: Risk score 3 of 5 (capacity 4, willingness 3); objective: "
+        "growth; horizon 10 years."
+    )
+    assert lines[1] == "Current: ranks first under the rule"
+    assert any(line.startswith("Volatility: ") for line in lines)
+    failed = [c.rule for c in checks if c.status == "fail"]
+    assert lines[-1].startswith("Conclusion: Current")
+    assert ("not suitable" in lines[-1]) == bool(failed)

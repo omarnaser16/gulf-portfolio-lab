@@ -23,6 +23,7 @@ from gpl.client import (
     month_text,
 )
 from gpl.data import SUBUNITS
+from gpl.factfind import complex_product_flags
 from gpl.metrics import annualised_volatility, max_drawdown, period_label
 from gpl.scenarios import episode_performance
 
@@ -59,6 +60,7 @@ def check_suitability(
     cash_like: Sequence[str] = (),
     regions: Mapping[str, str] | None = None,
     headline_dates: pd.Index | None = None,
+    product_types: Mapping[str, str] | None = None,
 ) -> list[Check]:
     """Check ``weights`` against every IPS rule.
 
@@ -83,6 +85,10 @@ def check_suitability(
         The dates of the headline figures (the backtest period). Volatility and drawdown are
         judged on the full history, which is longer and includes earlier crises; over these
         dates they are added to the reasons too, so both periods are visible and labelled.
+    product_types : mapping, optional
+        Ticker -> product type ("ETFs", "Equities", ...; ``gpl.factfind.product_type``). With
+        the client's knowledge & experience recorded, products they may not understand are
+        flagged for review (``gpl.factfind.complex_product_flags``).
     """
     w = weights[weights > 0]
     port = returns[list(w.index)] @ w
@@ -388,6 +394,22 @@ def check_suitability(
             cap_fx or 1.0,
         )
     )
+    c = ips.client
+    if product_types is not None and c.years_investing is not None:
+        held = [product_types[t] for t in w.index if t in product_types]
+        flags = complex_product_flags(c.products_used, c.years_investing, held)
+        checks.append(
+            Check(
+                "Knowledge & experience",
+                "review" if flags else "pass",
+                ", ".join(dict.fromkeys(held)) or "–",
+                "products the client knows",
+                " ".join(flags)
+                if flags
+                else f"The client has used every product type held ({c.years_investing:g} years "
+                "investing).",
+            )
+        )
     full = period_label(returns.index)
     for c in checks:
         if c.rule in ("Volatility", "Max drawdown", "Liquidity"):
@@ -461,3 +483,44 @@ def suitability_table(results: Mapping[str, Sequence[Check] | Mapping[str, Check
         items = checks.values() if isinstance(checks, Mapping) else checks
         out[name] = {c.rule: f"{STATUS[c.status]}: {c.measured} (limit {c.limit})" for c in items}
     return pd.DataFrame(out)
+
+
+def rationale(
+    ips: IPS, name: str, checks: Sequence[Check], reasons: Sequence[str] = ()
+) -> list[str]:
+    """The suitability record for one portfolio: why it does or doesn't suit the client.
+
+    Built only from the IPS, the checks and the recommendation rule's reasons (no AI), so every
+    statement traces to a tested rule. The adviser can edit it before it goes in the IPS and
+    the client report.
+    """
+    c, r = ips.client, ips.risk
+    profile = (
+        f"Risk score {r.score} of 5 (capacity {r.capacity}, willingness {r.willingness}"
+        + (f"; adviser override from {r.calculated}" if r.override in ("lower", "higher") else "")
+        + ")"
+        if r.score
+        else "Risk score not set (questionnaire incomplete)"
+    )
+    objective = f"; objective: {c.primary_objective.lower()}" if c.primary_objective else ""
+    lines = [f"Client: {profile}{objective}; horizon {c.horizon_years:g} years."]
+    lines += [f"{name}: {reason}" for reason in reasons]
+    for ch in checks:
+        lines.append(f"{ch.rule}: {STATUS[ch.status]}. {ch.reason}")
+    failed = [ch.rule for ch in checks if ch.status == "fail"]
+    review = [ch.rule for ch in checks if ch.status == "review"]
+    if failed:
+        lines.append(
+            f"Conclusion: {name} is not suitable as it stands: it fails "
+            + ", ".join(failed).lower()
+            + "."
+        )
+    elif review:
+        lines.append(
+            f"Conclusion: {name} passes every measurable rule; the adviser must review "
+            + ", ".join(review).lower()
+            + " before recommending it."
+        )
+    else:
+        lines.append(f"Conclusion: {name} meets every rule of the client's IPS.")
+    return lines

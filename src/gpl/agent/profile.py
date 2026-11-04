@@ -21,6 +21,7 @@ from gpl.client import (
     parse_month,
     regulator_for,
 )
+from gpl.factfind import CURRENCIES, EMPLOYMENT, MARITAL, OBJECTIVES, PRODUCTS
 
 PROFILE_SYSTEM_PROMPT = """\
 You fill in a wealth manager's client form from their notes. You never calculate, estimate or \
@@ -53,6 +54,14 @@ liquidity_needs, not here), with an amount, a multiple of today's value, or year
 as written.
 - max_volatility_pct / max_drawdown_pct: only if the notes state a limit ("can't lose more \
 than 20%" is a drawdown limit of 20).
+- Household, wealth and experience facts, only if written: nationality, tax_residencies \
+(countries), marital_status, dependants (number) and dependant_ages, occupation, employer, \
+employment_type, retirement_age (planned), reporting_currency, source_of_wealth and \
+source_of_funds (in the notes' words), primary_objective (growth, income or capital \
+preservation, only if stated), annual_contribution_usd (yearly additions to the portfolio), \
+years_investing, products_used. When not stated: "" for text and choices, 0 for \
+retirement_age and annual_contribution_usd, -1 for years_investing. Never record whether \
+the client is a politically exposed person: the adviser checks that.
 - unmapped_requests: anything that doesn't fit any field, in the notes' words. Don't list \
 anything you recorded in a field.
 - summary: one or two sentences restating what you recorded.
@@ -61,6 +70,11 @@ anything you recorded in a field.
 
 def _num(nullable: bool = True) -> dict:
     return {"type": ["number", "null"]} if nullable else {"type": "number"}
+
+
+def _choice(options) -> dict:
+    """A string enum where "" means not stated (no null: strict tools allow few unions)."""
+    return {"type": "string", "enum": ["", *options]}
 
 
 def profile_tool() -> dict:
@@ -126,6 +140,23 @@ def profile_tool() -> dict:
                 "additionalProperties": False,
             },
         },
+        # fact-find facts (never the questionnaire, PEP status, classification reason or scores)
+        "nationality": {"type": "string"},
+        "tax_residencies": {"type": "array", "items": {"type": "string"}},
+        "marital_status": _choice(MARITAL),
+        "dependants": _num(),
+        "dependant_ages": {"type": "array", "items": {"type": "number"}},
+        "occupation": {"type": "string"},
+        "employer": {"type": "string"},
+        "employment_type": _choice(EMPLOYMENT),
+        "retirement_age": _num(False),  # 0: not stated (strict tools allow few nullable fields)
+        "reporting_currency": _choice(CURRENCIES),
+        "source_of_wealth": {"type": "string"},
+        "source_of_funds": {"type": "string"},
+        "primary_objective": _choice(OBJECTIVES),
+        "annual_contribution_usd": _num(False),  # 0: none stated
+        "years_investing": _num(False),  # -1: not stated
+        "products_used": {"type": "array", "items": {"type": "string", "enum": PRODUCTS}},
         "unmapped_requests": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
     }
@@ -159,6 +190,9 @@ def numbers_in_text(text: str) -> set[float]:
     return found
 
 
+SENTINEL = {"retirement_age": 0, "annual_contribution_usd": 0, "years_investing": -1}
+
+
 def _draft_numbers(draft: dict) -> list[float]:
     keys = [
         "horizon_years",
@@ -169,8 +203,15 @@ def _draft_numbers(draft: dict) -> list[float]:
         "home_bias_gcc_pct",
         "max_volatility_pct",
         "max_drawdown_pct",
+        "dependants",
+        "retirement_age",
+        "annual_contribution_usd",
+        "years_investing",
     ]
-    values = [draft.get(k) for k in keys]
+    # sentinels for "not stated" (0 or -1) are not numbers from the notes
+    values = [
+        None if k in SENTINEL and draft.get(k) == SENTINEL[k] else draft.get(k) for k in keys
+    ] + list(draft.get("dependant_ages") or [])
     for g in draft.get("goals") or []:
         values += [g.get("amount_usd"), g.get("multiple"), g.get("years")]
     for need in draft.get("liquidity_needs") or []:
@@ -255,6 +296,15 @@ def apply_proposal(profile: ClientProfile, draft: dict, today: date | None = Non
     """
     today = today or date.today()
     simple = [
+        "nationality",
+        "marital_status",
+        "occupation",
+        "employer",
+        "employment_type",
+        "reporting_currency",
+        "source_of_wealth",
+        "source_of_funds",
+        "primary_objective",
         "horizon_years",
         "return_target_pct",
         "portfolio_value_usd",
@@ -269,8 +319,17 @@ def apply_proposal(profile: ClientProfile, draft: dict, today: date | None = Non
     ]
     # null (or "" for text) means "not in the notes": the form keeps what it had
     updates = {k: draft[k] for k in simple if draft.get(k) not in (None, "")}
-    if draft.get("age") is not None:
-        updates["age"] = int(draft["age"])
+    for key in ("age", "dependants", "retirement_age"):
+        if draft.get(key) is not None and draft.get(key) != SENTINEL.get(key):
+            updates[key] = int(draft[key])
+    for key in ("annual_contribution_usd", "years_investing"):
+        if draft.get(key) is not None and draft[key] != SENTINEL[key]:
+            updates[key] = float(draft[key])
+    for key in ("tax_residencies", "products_used"):
+        if draft.get(key):
+            updates[key] = list(draft[key])
+    if draft.get("dependant_ages"):
+        updates["dependant_ages"] = [int(a) for a in draft["dependant_ages"]]
     if regulator_for(draft.get("jurisdiction")):
         updates["booking_location"] = draft["jurisdiction"]
         updates["regulator"] = regulator_for(draft["jurisdiction"])
@@ -296,7 +355,10 @@ def apply_proposal(profile: ClientProfile, draft: dict, today: date | None = Non
     if draft.get("goals"):
         updates["goals"] = [{k: v for k, v in g.items() if v is not None} for g in draft["goals"]]
     overrides = dict(profile.overrides)
-    for key in ("max_volatility_pct", "max_drawdown_pct"):
-        if draft.get(key) is not None:
-            overrides[key] = float(draft[key])
+    if draft.get("max_volatility_pct") is not None:
+        overrides["max_volatility_pct"] = float(draft["max_volatility_pct"])
+    # "can't lose more than 20%" is the client's capacity for loss: it can only tighten the
+    # band's drawdown limit (an adviser override could loosen it)
+    if draft.get("max_drawdown_pct") is not None:
+        updates["max_acceptable_drawdown_pct"] = float(draft["max_drawdown_pct"])
     return replace(profile, **updates, overrides=overrides)

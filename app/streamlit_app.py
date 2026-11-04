@@ -49,6 +49,7 @@ from gpl.data import (
     to_returns,
 )
 from gpl.domicile import domicile_report, format_domicile
+from gpl.factfind import product_type
 from gpl.metrics import (
     drawdown_series,
     kpi_table,
@@ -91,7 +92,7 @@ from gpl.scenarios import (
     trade_list,
     trades_covering_cash_need,
 )
-from gpl.suitability import check_suitability, suitability_table
+from gpl.suitability import check_suitability, rationale, suitability_table
 
 CFG = load_universe()
 COST_BY_SUFFIX = CFG.get("trading_costs", {}).get("by_suffix", {})  # market rates, bps
@@ -1053,12 +1054,75 @@ def suitability_results(portfolios: dict[str, pd.Series]) -> dict | None:
             CFG.get("cash_like", []),
             regions,
             headline_dates(),
+            holding_products(tickers),
         )
         for name, w in portfolios.items()
     }
 
 
-def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
+def holding_products(tickers) -> dict[str, str]:
+    """Ticker -> product type ('ETFs', 'Equities', 'Funds') from the Yahoo quote type."""
+    out = {}
+    for t in tickers:
+        kind = product_type(getattr(get_quote(t), "quote_type", ""))
+        if kind:
+            out[t] = kind
+    return out
+
+
+def _save_record(key: str) -> None:
+    client = st.session_state.get(client_ui.CLIENT)
+    if client is not None:
+        client["suitability_record"] = st.session_state.get(key, "")
+
+
+def _reset_record() -> None:
+    client = st.session_state.get(client_ui.CLIENT)
+    if client is not None:
+        client["suitability_record"] = ""
+    st.session_state["suit_record_v"] = st.session_state.get("suit_record_v", 0) + 1
+
+
+def generated_record(results: dict) -> tuple[str, str]:
+    """(portfolio name, rule-generated suitability record) for the last portfolio checked."""
+    name = list(results)[-1]
+    reasons: list[str] = []
+    opt = st.session_state.get("ws_opt")
+    if opt and opt["report"]["recommendation"].get("choice") == name:
+        reasons = list(opt["report"]["recommendation"]["reasons"])
+    lines = rationale(client_ips(), name, results[name], reasons)
+    return name, "\n".join(f"- {line}" for line in lines)
+
+
+def render_suitability_record(results: dict) -> None:
+    """The suitability record: generated from rules and checks, editable by the adviser."""
+    profile = client_ui.current_profile()
+    name, generated = generated_record(results)
+    st.markdown(f"**Suitability record** ({name})")
+    edited = bool(profile.suitability_record) and profile.suitability_record != generated
+    key = (
+        f"suit_record_{st.session_state.get(client_ui.VERSION, 0)}_"
+        f"{st.session_state.get('suit_record_v', 0)}"
+    )
+    st.text_area(
+        "Rationale (edit before it goes in the IPS and the client report)",
+        profile.suitability_record or generated,
+        height=220,
+        key=key,
+        on_change=_save_record,
+        args=(key,),
+    )
+    c1, c2 = st.columns([1, 3])
+    c1.button("Reset to the generated text", key="suit_record_reset", on_click=_reset_record)
+    c2.caption(
+        "Edited by the adviser."
+        if edited
+        else "Generated from the IPS rules and the checks "
+        "above (no AI). Your edits are saved with the client profile."
+    )
+
+
+def render_suitability(portfolios: dict[str, pd.Series], key: str, record: bool = False) -> None:
     """Pass / fail / review per IPS rule for each portfolio, with the written reasons."""
     st.markdown("**Suitability against the client's IPS**")
     results = suitability_results(portfolios)
@@ -1090,6 +1154,8 @@ def render_suitability(portfolios: dict[str, pd.Series], key: str) -> None:
         "the data can't decide and the adviser must check. Decision support for a licensed "
         "adviser."
     )
+    if record:
+        render_suitability_record(results)
 
 
 def client_ips():
@@ -1327,6 +1393,7 @@ with tab_client:
         A["model"],
         cash_like_now() if portfolio_ok else [],
         holding_regions() if portfolio_ok else {},
+        holding_products(tuple(my_weights)),
     )
     if client_ui.current_profile() is not None:
         st.divider()
@@ -1953,7 +2020,7 @@ def render_portfolio_overview() -> None:
     proposed = st.session_state.get("ctx") and st.session_state.ctx.proposed
     if proposed:
         ports[proposed["name"]] = pd.Series(proposed["weights"], dtype=float)
-    render_suitability(ports, "analyst")
+    render_suitability(ports, "analyst", record=True)
     render_domicile("overview")
     render_report_button(holdings, ports)
 
@@ -2067,6 +2134,12 @@ def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) ->
             if rec and rec["choice"]:  # the optimiser's portfolio, never a chat what-if
                 latest = st.session_state.ws_opt["run"].latest_weights
                 checked[rec["choice"]] = latest.loc[rec["choice"]].fillna(0.0)
+            results = suitability_results(checked)
+            record, edited = "", False
+            if results:
+                generated = generated_record(results)[1]
+                record = profile.suitability_record or generated
+                edited = bool(profile.suitability_record) and record != generated
             inputs = ReportInputs(
                 report_date=date.today(),
                 data_as_of=f"{data.price_as_of:%d %b %Y}",
@@ -2077,11 +2150,17 @@ def render_report_button(holdings: pd.DataFrame, ports: dict[str, pd.Series]) ->
                 ips=client_ips(),
                 kpis=portfolio_kpis(),
                 charts=charts,
-                suitability=suitability_results(checked),
+                suitability=results,
+                suitability_record=record,
+                record_edited=edited,
                 memo=memo,
                 memo_unverified=unverified,
-                adviser=st.session_state.get("rep_adviser", ""),
-                adviser_licence=st.session_state.get("rep_licence", ""),
+                adviser=st.session_state.get("rep_adviser")
+                or (profile and profile.adviser_name)
+                or "",
+                adviser_licence=st.session_state.get("rep_licence")
+                or (profile and profile.adviser_licence)
+                or "",
                 domicile=domicile_section(),
                 value=portfolio_value(),
                 recommendation=rec,

@@ -32,6 +32,17 @@ from reportlab.platypus import (
 )
 
 from gpl.client import IPS, QUESTIONS, ClientProfile, effective_regulator
+from gpl.factfind import (
+    ASSET_TYPES,
+    DEMO_LABEL,
+    INCOME_TYPES,
+    LIABILITY_TYPES,
+    PUBLIC_NOTICE,
+    SECTIONS,
+    SPECIALIST_REMINDER,
+    finances,
+    goals_required_return,
+)
 
 FOOTER = (
     "Decision support for a licensed adviser. Not investment, tax or legal advice. "
@@ -139,6 +150,7 @@ def build_pdf(
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(colors.HexColor(MUTED))
         canvas.drawString(18 * mm, 10 * mm, FOOTER)
+        canvas.drawString(18 * mm, 6.5 * mm, PUBLIC_NOTICE)
         canvas.drawRightString(A4[0] - 18 * mm, 14 * mm, f"{title} · page {doc.page}")
         canvas.restoreState()
 
@@ -155,6 +167,83 @@ def build_pdf(
     )
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return buffer.getvalue()
+
+
+MAPS = {"income": INCOME_TYPES, "assets": ASSET_TYPES, "liabilities": LIABILITY_TYPES}
+
+
+def _fact_value(c: ClientProfile, name: str, kind: str) -> str:
+    """A fact-find answer as text ('' when not answered)."""
+    value = getattr(c, name)
+    if kind == "money_map":
+        return "; ".join(f"{MAPS[name][k]} USD {v:,.0f}" for k, v in value.items() if v)
+    if kind == "money":
+        return f"USD {value:,.0f}" if value else ""
+    if kind in ("bool", "yesno"):
+        return "" if value is None else ("yes" if value else "no")
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    if isinstance(value, float):
+        return f"{value:g}"
+    return "" if value is None else str(value)
+
+
+def factfind_story(c: ClientProfile) -> list:
+    """The fact-find by section (answered fields only), with the calculated figures."""
+    story = [para("Client fact-find", "h2")]
+    if c.demo:
+        story.append(para(DEMO_LABEL + ".", "small"))
+    fin = finances(c)
+    extra = {
+        "financial": [
+            ["Net worth", f"USD {fin.net_worth:,.0f}"],
+            ["Investable assets", f"USD {fin.investable:,.0f}"],
+            [
+                "Savings rate",
+                "–" if fin.savings_rate is None else f"{fin.savings_rate:.2%}",
+            ],
+            [
+                "Emergency fund",
+                "–" if fin.emergency_months is None else f"{fin.emergency_months:.1f} months",
+            ],
+        ],
+        "estate": [["Reminder", SPECIALIST_REMINDER]],
+    }
+    goals = goals_required_return(
+        c.portfolio_value_usd, c.goals, c.liquidity_needs, c.annual_contribution_usd
+    )
+    extra["objectives"] = [
+        [
+            "Return needed for the goals",
+            ("–" if goals.rate is None else f"{goals.rate:.2%} a year. ") + goals.reason,
+        ]
+    ]
+    for s in SECTIONS:
+        rows = [
+            [f.label, text]
+            for f in s.fields
+            if f.kind != "custom" and (text := _fact_value(c, f.name, f.kind))
+        ]
+        rows += extra.get(s.key, [])
+        if rows:
+            story.append(para(s.title, "h3"))
+            story.append(table(rows, widths=[62 * mm, 112 * mm], header=False))
+    return story
+
+
+def record_story(record: str, edited: bool) -> list:
+    """The suitability record (rule-generated, or as the adviser edited it)."""
+    lines = [ln.strip().removeprefix("- ").removeprefix("• ") for ln in record.splitlines()]
+    return [
+        para("Suitability record", "h2"),
+        *_bullets([ln for ln in lines if ln]),
+        para(
+            "Edited by the adviser."
+            if edited
+            else "Generated from the IPS rules and the suitability checks.",
+            "small",
+        ),
+    ]
 
 
 def ips_story(ips: IPS) -> list:
@@ -208,6 +297,7 @@ def ips_story(ips: IPS) -> list:
     story.append(table(q_rows, widths=[100 * mm, 52 * mm, 22 * mm]))
     story.append(Spacer(1, 4))
     story.append(para(ips.risk.explanation, "small"))
+    story += factfind_story(ips.client)
     return story
 
 
@@ -217,8 +307,9 @@ def ips_pdf(ips: IPS, compress: bool = True, draft: bool = False) -> bytes:
     ``draft``: watermarked "DRAFT" and titled as a draft, for an incomplete profile.
     """
     c = ips.client
+    marks = [m for m, on in (("DRAFT", draft), ("DEMO DATA", c.demo)) if on]
     story = [
-        para("Investment Policy Statement" + (" (DRAFT)" if draft else ""), "title"),
+        para("Investment Policy Statement" + (f" ({', '.join(marks)})" if marks else ""), "title"),
         para(
             f"Client {c.reference or c.name or '(no reference)'} · prepared {ips.created} · "
             "Gulf Portfolio Lab",
@@ -226,6 +317,8 @@ def ips_pdf(ips: IPS, compress: bool = True, draft: bool = False) -> bytes:
         ),
         *ips_story(ips),
     ]
+    if c.suitability_record:
+        story += record_story(c.suitability_record, True)
     if c.adviser_notes:
         story += [para("Adviser notes", "h2"), para(c.adviser_notes)]
     story.append(
@@ -247,7 +340,7 @@ def ips_pdf(ips: IPS, compress: bool = True, draft: bool = False) -> bytes:
         )
     )
     title = f"IPS {c.reference or ''} {ips.created}".strip()
-    return build_pdf(story, title, compress, watermark="DRAFT" if draft else None)
+    return build_pdf(story, title, compress, watermark=" · ".join(marks) or None)
 
 
 # ------------------------------------------------------------------------- client report
@@ -293,6 +386,8 @@ class ReportInputs:
     recommendation: dict | None = None  # recommendation_section output
     trades: dict | None = None  # trade_section output
     adviser_licence: str = ""
+    suitability_record: str = ""  # rule-generated or adviser-edited rationale
+    record_edited: bool = False
 
 
 def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
@@ -691,7 +786,7 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
     who = (c.name or c.reference) if c else ""
     stamp = inputs.report_date.isoformat()
     story = [
-        para("Your portfolio review", "title"),
+        para("Your portfolio review" + (" (DEMO DATA)" if c and c.demo else ""), "title"),
         para(
             (f"Prepared for {who} · " if who else "")
             + f"{inputs.report_date:%d %B %Y}"
@@ -824,6 +919,8 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
                 "small",
             )
         )
+    if inputs.suitability_record:
+        story += record_story(inputs.suitability_record, inputs.record_edited)
     # domicile
     if inputs.domicile is not None:
         story.append(para("Where your funds are domiciled (information, not tax advice)", "h2"))
@@ -888,4 +985,9 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
     if inputs.ips is not None:
         story += [PageBreak(), para("Appendix: Investment Policy Statement", "title")]
         story += ips_story(inputs.ips)
-    return build_pdf(story, f"Portfolio review {who} {stamp}".strip(), compress)
+    return build_pdf(
+        story,
+        f"Portfolio review {who} {stamp}".strip(),
+        compress,
+        watermark="DEMO DATA" if c and c.demo else None,
+    )

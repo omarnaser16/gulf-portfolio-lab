@@ -15,7 +15,6 @@ from gpl.client import (
     effective_regulator,
     horizon_score,
     ips_constraints,
-    ips_missing,
     liquidity_need_score,
     month_after,
     month_text,
@@ -129,16 +128,55 @@ def test_regulator_defaults_from_booking_then_residency() -> None:
     )
 
 
-def test_ips_missing_lists_what_blocks_the_final_ips() -> None:
-    today = date(2026, 11, 1)
-    ready = profile(age=40, portfolio_value_usd=1_000_000)
-    assert ips_missing(ready, today) == []
-    blank = ClientProfile(residency="France")
-    missing = ips_missing(blank, today)
-    assert "client reference" in missing and "age" in missing and "portfolio value" in missing
-    assert "regulator (booking location)" in missing
-    assert any("loss_reaction" in m or "20%" in m for m in missing)
-    assert not any("experience" in m for m in missing)
+def test_adviser_override_needs_a_reason_and_flags_higher_scores() -> None:
+    base = profile()  # calculated score 3
+    assert risk_profile(base).override == "" and risk_profile(base).calculated == 3
+    ignored = risk_profile(replace(base, override_score=2))
+    assert (
+        ignored.score == 3
+        and ignored.override == "ignored"
+        and "needs a reason" in (ignored.explanation)
+    )
+    lower = risk_profile(replace(base, override_score=2, override_reason="Client is nervous"))
+    assert (lower.score, lower.calculated, lower.override) == (2, 3, "lower")
+    assert "because Client is nervous." in lower.explanation
+    higher = risk_profile(replace(base, override_score=4, override_reason="Large other assets"))
+    assert higher.override == "higher" and "compliance review" in higher.explanation
+    ips = build_ips(replace(base, override_score=2, override_reason="Nervous"), CFG)
+    assert ips.limits["max_volatility"] == 0.09 and ips.limits["source"]["max_volatility"] == (
+        "band 2"
+    )
+
+
+def test_capacity_for_loss_tightens_the_drawdown_limit() -> None:
+    band = build_ips(profile(), CFG).limits  # band 3: 20% drawdown
+    assert band["max_drawdown"] == 0.20
+    tighter_loss = build_ips(profile(max_acceptable_drawdown_pct=15), CFG).limits
+    assert tighter_loss["max_drawdown"] == 0.15
+    assert tighter_loss["source"]["max_drawdown"] == "client capacity for loss"
+    looser = build_ips(profile(max_acceptable_drawdown_pct=30), CFG).limits
+    assert looser["max_drawdown"] == 0.20  # the band's limit is tighter: it stays
+    adviser = profile(max_acceptable_drawdown_pct=15, overrides={"max_drawdown_pct": 25})
+    assert build_ips(adviser, CFG).limits["max_drawdown"] == 0.25  # explicit override wins
+
+
+def test_fact_find_fields_round_trip_and_age_from_dob() -> None:
+    p = ClientProfile.from_dict(
+        {
+            "dob": "1980-11-02",
+            "income": {"salary": "300000", "bonus": 0},
+            "dependants": "2",
+            "dependant_ages": ["8", 12],
+            "pep": False,
+            "max_acceptable_drawdown_pct": "25",
+        },
+        today=date(2026, 11, 1),
+    )
+    assert p.age == 45 and p.income == {"salary": 300_000.0} and p.dependants == 2
+    assert p.dependant_ages == [8, 12] and p.max_acceptable_drawdown_pct == 25.0
+    assert p.version == 2 and ClientProfile.from_dict(p.to_dict()) == p
+    with pytest.raises(ValueError, match="date of birth"):
+        ClientProfile.from_dict({"dob": "31/05/1980"})
 
 
 def test_unanswered_questions_are_reported_not_guessed() -> None:

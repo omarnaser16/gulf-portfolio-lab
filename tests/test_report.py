@@ -285,3 +285,34 @@ def test_draft_ips_is_watermarked() -> None:
     ips = build_ips(ClientProfile.from_dict(EXAMPLE_CLIENTS["Dubai, moderate, 10 years"]), CFG)
     final, draft = ips_pdf(ips, compress=False), ips_pdf(ips, compress=False, draft=True)
     assert b"DRAFT" in draft and b"DRAFT" not in final
+
+
+def test_ips_pdf_has_fact_find_record_and_demo_marks() -> None:
+    from dataclasses import replace
+
+    base = ClientProfile.from_dict(EXAMPLE_CLIENTS["Dubai, moderate, 10 years"])
+    p = replace(
+        base,
+        nationality="Emirati",
+        income={"salary": 300_000},
+        annual_expenses_usd=180_000,
+        assets={"cash": 90_000, "investments": 600_000},
+        will_status="DIFC Wills Service Centre will",
+        suitability_record="- Client: risk score 3.\n- Conclusion: suitable.",
+        demo=True,
+    )
+    text = _text(ips_pdf(build_ips(p, CFG, today=date(2026, 11, 1)), compress=False))
+    for snippet in (
+        "Client fact-find",
+        "Emirati",
+        "Savings rate",
+        "40.00%",
+        "DIFC Wills Service Centre will",
+        "specialist legal and tax advice",
+        "Suitability record",
+        "Conclusion: suitable.",
+        "Edited by the adviser.",
+        "DEMO DATA",
+        "do not enter real client data",
+    ):
+        assert snippet in text, snippet

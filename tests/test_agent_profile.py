@@ -86,7 +86,9 @@ def test_propose_and_apply_keep_the_questionnaire() -> None:
     assert after.answers == {"tradeoff": 2}  # never filled by the model
     assert after.portfolio_value_usd == 500_000 and after.sharia_only
     assert after.excluded_sectors == ["Tobacco"]
-    assert after.overrides == {"max_drawdown_pct": 25.0} and after.home_bias_gcc_pct == 20
+    # "can't lose more than 25%" is the client's capacity for loss, not an adviser override
+    assert after.overrides == {} and after.max_acceptable_drawdown_pct == 25.0
+    assert after.home_bias_gcc_pct == 20
     assert after.goals == [{"description": "Property deposit", "amount_usd": 50_000}]
     assert after.us_person is False  # null leaves the existing value
 
@@ -205,3 +207,39 @@ def test_new_gulf_jurisdictions_and_booking_location_recorded() -> None:
     assert regulator_for("Oman") == "FSA (Oman, formerly CMA)"
     after = apply_proposal(ClientProfile(), {"jurisdiction": "Bahrain"})
     assert after.booking_location == "Bahrain" and after.regulator == "CBB (Bahrain)"
+
+
+def test_fact_find_facts_are_recorded_and_sentinels_mean_not_stated() -> None:
+    from gpl.agent.profile import numbers_not_in_notes
+
+    facts = {
+        "nationality": "Emirati",
+        "tax_residencies": ["UAE"],
+        "marital_status": "Married",
+        "dependants": 2,
+        "dependant_ages": [8, 12],
+        "occupation": "Surgeon",
+        "employer": "",
+        "employment_type": "",
+        "retirement_age": 0,  # not stated
+        "reporting_currency": "AED",
+        "source_of_wealth": "Medical practice",
+        "source_of_funds": "",
+        "primary_objective": "Growth",
+        "annual_contribution_usd": 0,  # none stated
+        "years_investing": -1,  # not stated
+        "products_used": ["Equities"],
+    }
+    after = apply_proposal(ClientProfile(), {**DRAFT, **facts})
+    assert after.nationality == "Emirati" and after.dependants == 2
+    assert after.dependant_ages == [8, 12] and after.reporting_currency == "AED"
+    assert after.primary_objective == "Growth" and after.products_used == ["Equities"]
+    assert after.retirement_age is None and after.years_investing is None
+    assert after.employment_type == "" and after.pep is None  # never filled by the model
+    notes = (
+        "Emirati surgeon, 45, married with 2 kids aged 8 and 12, $500k, 15 years, "
+        "property deposit 50k in 12 months, 20% GCC, can't lose more than 25%."
+    )
+    assert numbers_not_in_notes({**DRAFT, **facts}, notes) == []
+    flagged = numbers_not_in_notes({**DRAFT, **facts, "retirement_age": 60}, notes)
+    assert flagged == ["60"]
