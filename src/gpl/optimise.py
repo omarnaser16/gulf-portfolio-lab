@@ -463,6 +463,7 @@ Objective = Literal[
     "target_return",
     "risk_parity",
     "max_diversification",
+    "max_information_ratio",
 ]
 OBJECTIVES: tuple[str, ...] = (
     "max_sharpe",
@@ -472,6 +473,7 @@ OBJECTIVES: tuple[str, ...] = (
     "target_return",
     "risk_parity",
     "max_diversification",
+    "max_information_ratio",
 )
 _TOL = 1e-6
 
@@ -486,7 +488,9 @@ class OptimisationSpec:
         ``max_sharpe``; ``min_variance``; ``max_return``; ``target_volatility`` (highest return
         with volatility at most ``max_volatility``); ``target_return`` (lowest volatility with
         return at least ``min_return``); ``risk_parity`` (as close to equal risk contributions
-        as the limits allow); ``max_diversification`` (highest diversification ratio).
+        as the limits allow); ``max_diversification`` (highest diversification ratio);
+        ``max_information_ratio`` (highest expected active return per unit of tracking error
+        against a benchmark: needs ``active`` moments in ``optimise``).
     max_weight : float
         Cap on every asset (1.0 = no cap).
     asset_bounds : mapping
@@ -501,6 +505,8 @@ class OptimisationSpec:
         Name -> (tickers, minimum, maximum): limits on the total weight of a named set of
         holdings. Unlike ``groups``, sets may overlap each other and the groups, e.g.
         ``{"Cash need": (frozenset({"BIL", "SHV"}), 0.25, None)}`` or a region minimum.
+    tracking_error_max : float, optional
+        Cap on the annual tracking error against the benchmark (needs ``active`` moments).
     """
 
     objective: Objective = "max_sharpe"
@@ -513,6 +519,7 @@ class OptimisationSpec:
     sets: Mapping[str, tuple[frozenset[str], float | None, float | None]] = field(
         default_factory=dict
     )
+    tracking_error_max: float | None = None
 
     def __post_init__(self) -> None:
         if self.objective not in OBJECTIVES:
@@ -523,6 +530,8 @@ class OptimisationSpec:
             raise ValueError("target_return needs min_return")
         if not 0 < self.max_weight <= 1:
             raise ValueError("max_weight must be in (0, 1]")
+        if self.tracking_error_max is not None and self.tracking_error_max <= 0:
+            raise ValueError("tracking_error_max must be positive")
 
 
 @dataclass
@@ -677,8 +686,45 @@ def _satisfies(w, lo, hi, rows, sigma, m, spec, tol=1e-5) -> bool:
     return not (spec.min_return is not None and w @ m < spec.min_return - tol)
 
 
+@dataclass
+class ActiveMoments:
+    """Expected active returns (asset minus benchmark) and their covariance, annualised.
+
+    For fully invested weights w, the portfolio's active return is ``w @ (r - b)``, so its
+    tracking error is ``sqrt(w' S_a w)`` with ``S_a`` the covariance of ``r_i - b``.
+    """
+
+    mu: pd.Series
+    cov: pd.DataFrame
+
+
+def active_moments(
+    returns: pd.DataFrame,
+    benchmark: pd.Series,
+    periods_per_year: int = 252,
+    cov_method: str = "ledoit_wolf",
+) -> ActiveMoments:
+    """Active means and covariance of ``returns`` against ``benchmark`` (same dates only).
+
+    Means are arithmetic, x periods per year; the covariance is Ledoit-Wolf shrunk by default
+    (``cov_method="sample"`` for the plain sample covariance).
+    """
+    joined = returns.join(benchmark.rename("__bench__"), how="inner").dropna()
+    active = joined[returns.columns].sub(joined["__bench__"], axis=0)
+    mu = active.mean() * periods_per_year
+    if cov_method == "ledoit_wolf":
+        cov, _ = ledoit_wolf_cov(active, periods_per_year)
+    else:
+        cov = active.cov() * periods_per_year
+    return ActiveMoments(mu, cov)
+
+
 def optimise(
-    mu: pd.Series, cov: pd.DataFrame, spec: OptimisationSpec, rf: float = 0.0
+    mu: pd.Series,
+    cov: pd.DataFrame,
+    spec: OptimisationSpec,
+    rf: float = 0.0,
+    active: ActiveMoments | None = None,
 ) -> OptimisationResult:
     """Optimise weights for ``spec``, or explain in plain language why it can't be done.
 
@@ -692,6 +738,9 @@ def optimise(
         Objective and constraints.
     rf : float, default 0.0
         Annual risk-free rate (for the Sharpe objective and the reported Sharpe).
+    active : ActiveMoments, optional
+        Active returns against a benchmark (``active_moments``), needed by
+        ``max_information_ratio`` and ``tracking_error_max``.
 
     Returns
     -------
@@ -708,6 +757,12 @@ def optimise(
     """
     index = cov.index
     sigma, m = cov.to_numpy(), mu.reindex(index).to_numpy()
+    needs_active = spec.objective == "max_information_ratio" or spec.tracking_error_max
+    if needs_active and active is None:
+        raise ValueError("max_information_ratio and tracking_error_max need active moments")
+    if active is not None:
+        sigma_a = active.cov.reindex(index=index, columns=index).to_numpy()
+        m_a = active.mu.reindex(index).to_numpy()
     lo, hi, rows, reasons = _linear_constraints(spec, index)
     if reasons:
         return OptimisationResult(False, None, reasons)
@@ -739,6 +794,32 @@ def optimise(
             }
         ]
     )
+    te_cap = (
+        []
+        if spec.tracking_error_max is None
+        else [
+            {
+                "type": "ineq",
+                "fun": lambda w: spec.tracking_error_max**2 - w @ sigma_a @ w,
+                "jac": lambda w: -2 * sigma_a @ w,
+            }
+        ]
+    )
+    if spec.tracking_error_max is not None:
+        closest = _slsqp(lambda w: w @ sigma_a @ w, lambda w: 2 * sigma_a @ w, start, lo, hi, rows)
+        if closest is None:
+            return OptimisationResult(False, None, ["The optimiser could not solve this problem."])
+        if np.sqrt(closest @ sigma_a @ closest) > spec.tracking_error_max + _TOL:
+            return OptimisationResult(
+                False,
+                None,
+                [
+                    f"The lowest tracking error these limits allow is "
+                    f"{np.sqrt(closest @ sigma_a @ closest):.2%} a year, above the "
+                    f"{spec.tracking_error_max:.2%} limit."
+                ],
+            )
+    vol_cap = vol_cap + te_cap
     best_return = _lp(-m, lo, hi, rows)
     if spec.min_return is not None and best_return @ m < spec.min_return - _TOL:
         return OptimisationResult(
@@ -779,7 +860,12 @@ def optimise(
             w = _max_ratio(sigma, np.sqrt(np.diag(sigma)), start, lo, hi, rows, floor + vol_cap)
         case "risk_parity":
             w = _risk_parity_within(cov, spec, start, lo, hi, rows, floor + vol_cap)
-    if not _satisfies(w, lo, hi, rows, sigma, m, spec):
+        case "max_information_ratio":
+            w = _max_ratio(sigma_a, m_a, start, lo, hi, rows, floor + vol_cap)
+    te_ok = spec.tracking_error_max is None or (
+        w is not None and np.sqrt(w @ sigma_a @ w) <= spec.tracking_error_max + 1e-5
+    )
+    if not te_ok or not _satisfies(w, lo, hi, rows, sigma, m, spec):
         return OptimisationResult(
             False, None, ["The optimiser could not find weights meeting every limit."]
         )

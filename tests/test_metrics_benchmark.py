@@ -131,3 +131,37 @@ def test_period_label_and_kpi_period() -> None:
     r = pd.Series(0.001, index=idx)
     b = pd.Series(0.0005, index=idx[10:])
     assert kpi_table(r, b).attrs["period"] == period_label(idx[10:])  # shared dates only
+
+
+def test_hit_rate_counts_months_ahead_by_hand() -> None:
+    from gpl.metrics import hit_rate
+
+    idx = pd.bdate_range("2024-01-01", "2024-04-30")
+    month = idx.month
+    port = pd.Series(0.0, index=idx)
+    bench = pd.Series(0.0, index=idx)
+    # one day in each month decides it: ahead in Jan, Feb, Apr; behind in Mar
+    for m, (p, b) in {1: (0.02, 0.01), 2: (0.01, 0.0), 3: (0.0, 0.03), 4: (0.05, 0.04)}.items():
+        first = idx[month == m][0]
+        port[first], bench[first] = p, b
+    assert hit_rate(port, bench) == pytest.approx(0.75)
+
+
+def test_relative_summary_by_hand() -> None:
+    from gpl.metrics import relative_summary
+
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    port = pd.Series([0.01, -0.01, 0.02, 0.0], index=idx)
+    bench = pd.Series([0.0, 0.0, 0.0, 0.0], index=idx)
+    out = relative_summary(port, bench, periods_per_year=4)
+    # over 4 periods with 4 a year the CAGR is the total return: 1.01 * 0.99 * 1.02 - 1
+    assert out["excess_return"] == pytest.approx(1.01 * 0.99 * 1.02 - 1)
+    assert out["worst_relative_drawdown"] == pytest.approx(-0.01)  # 1.01 -> 0.9999
+    assert out["hit_rate"] == 1.0  # one month, ahead
+    assert set(out) == {
+        "excess_return",
+        "information_ratio",
+        "tracking_error",
+        "worst_relative_drawdown",
+        "hit_rate",
+    }

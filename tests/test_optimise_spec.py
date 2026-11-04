@@ -313,3 +313,58 @@ def test_risk_parity_respects_a_set() -> None:
     spec = OptimisationSpec("risk_parity", sets={"Cash need": (frozenset({"B"}), 0.8, None)})
     w = optimise(MU, COV, spec).weights
     assert w["B"] >= 0.8 - 1e-6
+
+
+def test_max_information_ratio_matches_the_closed_form_on_two_assets() -> None:
+    from gpl.optimise import ActiveMoments
+
+    idx = pd.Index(["A", "B"])
+    # uncorrelated active returns: best IR weights are proportional to a / s^2 = (50, 100)
+    active = ActiveMoments(
+        pd.Series([0.02, 0.01], index=idx),
+        pd.DataFrame([[0.0004, 0.0], [0.0, 0.0001]], index=idx, columns=idx),
+    )
+    cov = pd.DataFrame([[0.04, 0.0], [0.0, 0.02]], index=idx, columns=idx)
+    res = optimise(
+        pd.Series([0.08, 0.06], index=idx),
+        cov,
+        OptimisationSpec(objective="max_information_ratio"),
+        active=active,
+    )
+    assert res.feasible
+    assert res.weights["A"] == pytest.approx(1 / 3, abs=1e-4)
+    assert res.weights["B"] == pytest.approx(2 / 3, abs=1e-4)
+
+
+def test_tracking_error_cap_binds_or_explains() -> None:
+    from gpl.optimise import ActiveMoments
+
+    idx = pd.Index(["A", "B"])
+    active = ActiveMoments(
+        pd.Series([0.03, 0.0], index=idx),
+        pd.DataFrame([[0.01, 0.0], [0.0, 0.0001]], index=idx, columns=idx),  # TE 10% and 1%
+    )
+    cov = pd.DataFrame([[0.04, 0.0], [0.0, 0.02]], index=idx, columns=idx)
+    mu = pd.Series([0.09, 0.06], index=idx)
+    spec = OptimisationSpec(objective="max_information_ratio", tracking_error_max=0.03)
+    res = optimise(mu, cov, spec, active=active)
+    w = res.weights.to_numpy()
+    te = (w @ active.cov.to_numpy() @ w) ** 0.5
+    assert res.feasible and te <= 0.03 + 1e-5
+    too_tight = OptimisationSpec(objective="max_information_ratio", tracking_error_max=0.005)
+    out = optimise(mu, cov, too_tight, active=active)
+    assert not out.feasible and "lowest tracking error these limits allow" in out.reasons[0]
+    with pytest.raises(ValueError, match="need active moments"):
+        optimise(mu, cov, OptimisationSpec(objective="max_information_ratio"))
+
+
+def test_active_moments_by_hand() -> None:
+    from gpl.optimise import active_moments
+
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    rets = pd.DataFrame({"A": [0.02, 0.0, 0.01, 0.03], "B": [0.0, 0.0, 0.0, 0.0]}, index=idx)
+    bench = pd.Series([0.01, 0.0, 0.01, 0.02], index=idx)
+    out = active_moments(rets, bench, periods_per_year=4, cov_method="sample")
+    assert out.mu["A"] == pytest.approx((0.01 + 0.0 + 0.0 + 0.01) / 4 * 4)
+    assert out.mu["B"] == pytest.approx(-0.04 / 4 * 4)
+    assert out.cov.loc["A", "A"] == pytest.approx(pd.Series([0.01, 0, 0, 0.01]).var() * 4)

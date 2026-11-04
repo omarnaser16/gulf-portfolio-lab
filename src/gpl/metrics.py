@@ -447,6 +447,39 @@ def relative_drawdown(returns: pd.Series, benchmark: pd.Series) -> pd.Series:
     return drawdown_series((1 + returns) / (1 + benchmark) - 1)
 
 
+def hit_rate(returns: pd.Series, benchmark: pd.Series, freq: str = "ME") -> float:
+    """Share of months (``freq`` periods) in which the portfolio beat the benchmark.
+
+    Daily returns are compounded within each month first; months either series is missing
+    are left out. E.g. ahead in 3 of 4 months: 0.75.
+    """
+    joined = pd.concat([returns, benchmark], axis=1, join="inner").dropna()
+    if joined.empty:
+        return float("nan")
+    monthly = (1 + joined).resample(freq).prod() - 1
+    monthly = monthly[(joined.resample(freq).size() > 0)]
+    return float((monthly.iloc[:, 0] > monthly.iloc[:, 1]).mean())
+
+
+def relative_summary(
+    returns: pd.Series, benchmark: pd.Series, periods_per_year: int = PERIODS_PER_YEAR
+) -> dict[str, float]:
+    """How a portfolio did against its benchmark over the same dates.
+
+    ``excess_return`` (CAGR minus the benchmark's CAGR), ``information_ratio``,
+    ``tracking_error``, ``worst_relative_drawdown`` (negative) and ``hit_rate`` (monthly).
+    """
+    joined = pd.concat([returns, benchmark], axis=1, join="inner").dropna()
+    r, b = joined.iloc[:, 0], joined.iloc[:, 1]
+    return {
+        "excess_return": float(cagr(r, periods_per_year) - cagr(b, periods_per_year)),
+        "information_ratio": float(information_ratio(r, b, periods_per_year)),
+        "tracking_error": float(tracking_error(r, b, periods_per_year)),
+        "worst_relative_drawdown": float(relative_drawdown(r, b).min()),
+        "hit_rate": hit_rate(r, b),
+    }
+
+
 # ------------------------------------------------------------------- more screen metrics
 
 
