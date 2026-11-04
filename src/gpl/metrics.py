@@ -10,6 +10,8 @@ Inputs are simple daily returns, either a ``pd.Series`` (one asset or strategy) 
 Shortfall are 1-day figures reported as positive losses. Max drawdown is negative.
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
@@ -445,6 +447,40 @@ def relative_drawdown(returns: pd.Series, benchmark: pd.Series) -> pd.Series:
     fallen 10% behind that point.
     """
     return drawdown_series((1 + returns) / (1 + benchmark) - 1)
+
+
+def compound_to(returns: pd.Series, dates: pd.DatetimeIndex) -> pd.Series:
+    """Returns compounded onto ``dates``: each value covers the time since the previous date.
+
+    Two series on different calendars (e.g. daily US returns and a Sun-Thu Gulf panel kept
+    on the dates every market traded) are comparable only over the same intervals: a
+    Monday that follows a Thursday must include Friday's return too. The first date is
+    NaN (no interval before it), as are dates before the series starts.
+    E.g. daily 1%, 2%, 3% onto the 1st and 3rd dates: (1.02 x 1.03) - 1 = 5.06%.
+    """
+    r = returns.dropna()
+    wealth = (1 + r).cumprod()
+    start = r.index[0] - pd.Timedelta(days=1) if len(r) else None
+    if start is not None:
+        wealth.loc[start] = 1.0  # wealth before the first return
+        wealth = wealth.sort_index()
+    on = wealth.reindex(wealth.index.union(dates)).ffill().reindex(dates)
+    out = on.pct_change()
+    if len(r):
+        out[dates < r.index[0]] = np.nan
+    return out
+
+
+def align_compounded(series: Mapping[str, pd.Series]) -> pd.DataFrame:
+    """Several return series on the dates all of them cover, each compounded onto them
+    (``compound_to``), so every row compares the same interval."""
+    dates = None
+    for r in series.values():
+        idx = r.dropna().index
+        dates = idx if dates is None else dates.intersection(idx)
+    if dates is None or len(dates) < 2:
+        return pd.DataFrame({n: pd.Series(dtype=float) for n in series})
+    return pd.DataFrame({n: compound_to(r, dates) for n, r in series.items()}).iloc[1:]
 
 
 def hit_rate(returns: pd.Series, benchmark: pd.Series, freq: str = "ME") -> float:

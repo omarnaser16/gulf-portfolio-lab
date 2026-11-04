@@ -165,3 +165,19 @@ def test_relative_summary_by_hand() -> None:
         "worst_relative_drawdown",
         "hit_rate",
     }
+
+
+def test_compound_to_covers_the_same_intervals_by_hand() -> None:
+    from gpl.metrics import align_compounded, compound_to
+
+    idx = pd.bdate_range("2024-01-01", periods=4)  # Mon-Thu
+    daily = pd.Series([0.01, 0.02, 0.03, -0.01], index=idx)
+    out = compound_to(daily, idx[[0, 2, 3]])
+    assert np.isnan(out.iloc[0])  # no interval before the first date
+    assert out.iloc[1] == pytest.approx(1.02 * 1.03 - 1)  # Tue and Wed together
+    assert out.iloc[2] == pytest.approx(-0.01)
+    first = compound_to(daily, idx)
+    assert first.iloc[1:].tolist() == pytest.approx(daily.iloc[1:].tolist())  # same calendar
+    sparse = pd.Series([0.05, 0.01], index=idx[[2, 3]])
+    both = align_compounded({"daily": daily, "sparse": sparse})
+    assert list(both.index) == [idx[3]] and both.loc[idx[3], "daily"] == pytest.approx(-0.01)

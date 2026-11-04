@@ -16,7 +16,13 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from gpl import backtest as bt
-from gpl.metrics import drawdown_series, kpi_table, rolling_volatility
+from gpl.metrics import (
+    align_compounded,
+    compound_to,
+    drawdown_series,
+    kpi_table,
+    rolling_volatility,
+)
 from gpl.montecarlo import simulate_paths
 from gpl.optimise import efficient_frontier, portfolio_performance, risk_contributions
 from gpl.plots import (
@@ -104,11 +110,22 @@ def _held_returns(ctx, w: pd.Series) -> pd.Series:
     return _returns(ctx, w.index) @ w
 
 
-def _with_benchmark(ctx, frame: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
+def _mixed_calendars(ctx, ports) -> bool:
+    """A proposal priced from the curated universe may sit on fewer dates than the holdings."""
+    return any(not set(w.index) <= set(ctx.prices.columns) for w in ports.values())
+
+
+def _with_benchmark(
+    ctx, frame: pd.DataFrame, mixed: bool = False
+) -> tuple[pd.DataFrame, str | None]:
     if ctx.benchmark is None:
         return frame, None
     name = f"Benchmark: {ctx.benchmark.name}"
-    frame[name] = ctx.benchmark.returns.reindex(frame.index)
+    frame[name] = (
+        compound_to(ctx.benchmark.returns, frame.index)  # same intervals as the portfolios
+        if mixed
+        else ctx.benchmark.returns.reindex(frame.index)
+    )
     return frame.dropna(), name
 
 
@@ -132,8 +149,10 @@ def chart_data(ctx, chart: str) -> ChartData:
             notes,
         )
     if chart in ("growth_of_1", "drawdown_comparison", "metrics_table"):
-        rets = pd.DataFrame({n: _backtest_returns(ctx, w) for n, w in ports.items()}).dropna()
-        rets, ref = _with_benchmark(ctx, rets)
+        mixed = _mixed_calendars(ctx, ports)
+        series = {n: _backtest_returns(ctx, w) for n, w in ports.items()}
+        rets = align_compounded(series) if mixed else pd.DataFrame(series).dropna()
+        rets, ref = _with_benchmark(ctx, rets, mixed)
         notes.append(
             "Rebalanced monthly after costs. The proposed portfolio uses today's proposed weights "
             "over the past, so it is hindsight."

@@ -516,3 +516,33 @@ def test_improve_caps_turnover_runs_swaps_and_lists_domicile_ideas(ctx) -> None:
         assert turnover(now, run.latest_weights.loc[name]) <= 0.30 + 1e-6, name
     dom = report["domicile_suggestions_information_not_tax_advice"]
     assert any(d["sell"] == "SPY" and d["buy"] == "CSPX.L" for d in dom)
+
+
+def test_build_compounds_the_benchmark_onto_a_sparser_calendar(ctx) -> None:
+    """Regression: a daily benchmark dropped onto a panel that skips days (a Gulf calendar)
+    compared one day of benchmark with several days of portfolio, inflating tracking error
+    so much that Max IR could never meet a 4% limit in the app (36 of 39 quarters)."""
+    from dataclasses import replace
+
+    from gpl.agent.tools import UniverseData, run_build
+    from gpl.construct import BuildSettings, _groups
+    from gpl.data import BenchmarkData, load_investable
+    from gpl.optimise import OptimisationSpec
+
+    tags = load_investable()
+    daily = ctx.prices.pct_change().iloc[1:]
+    bench = BenchmarkData("60/40", "t", 0.6 * daily["SPY"] + 0.4 * daily["AGG"], False, [])
+    sparse = ctx.prices[ctx.prices.index.day_of_week != 4]  # the panel has no Fridays
+    tickers = list(sparse.columns)
+    uni = UniverseData(sparse, tags, tickers, {}, _groups(tickers, tags),
+                       dict.fromkeys(tickers, "USD"), 200)  # fmt: skip
+    c = replace(ctx, benchmark=bench, ips=None, settings={**ctx.settings, "optimise_lab": {}})
+    report, _ = run_build(
+        c, uni, OptimisationSpec(max_weight=1.0), {"SPY": 0.6, "AGG": 0.4},
+        BuildSettings(tracking_error_max=0.06, n_min=4, n_max=6), {"SPY": 0.6, "AGG": 0.4},
+    )  # fmt: skip
+    tracker_te = float(report["walk_forward_after_costs"]["Benchmark tracker"]
+                       ["tracking_error"].rstrip("%"))  # fmt: skip
+    # the benchmark's own funds track it: 1.27% here is monthly-rebalancing drift; dropping
+    # the daily benchmark onto the sparser dates instead measured about 4.6%
+    assert tracker_te < 2.0

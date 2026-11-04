@@ -29,9 +29,11 @@ from gpl.data import (
 )
 from gpl.metrics import (
     PERIODS_PER_YEAR,
+    align_compounded,
     annualised_volatility,
     benchmark_metrics,
     beta,
+    compound_to,
     correlation_clusters,
     summary_table,
 )
@@ -689,10 +691,16 @@ def run_candidates(
             infeasible_months[swap_name] = swaps_run["infeasible"]
 
     # from the first full day held, as on the Benchmark tab (day one only buys, paying costs)
-    frame = pd.DataFrame({n: r.returns.iloc[1:] for n, r in results.items()})
-    if bench_returns is not None:
-        frame[BENCHMARK] = bench_returns
-    frame = frame.dropna()
+    series = {n: r.returns.iloc[1:] for n, r in results.items()}
+    if swaps_run is not None:  # the swaps ran on the universe's dates: compare like intervals
+        if bench is not None:
+            series[BENCHMARK] = bench.returns
+        frame = align_compounded(series).dropna()
+    else:
+        frame = pd.DataFrame(series)
+        if bench_returns is not None:
+            frame[BENCHMARK] = bench_returns
+        frame = frame.dropna()
     metrics = summary_table(frame, rf=ctx.rf, periods_per_year=ctx.periods)
     w_now = pd.Series(current, dtype=float)
     current_in_sample = portfolio_performance(w_now, mu, cov)
@@ -977,7 +985,8 @@ def run_build(
     rets = universe.returns
     periods = universe.periods_per_year
     settings = dc_replace(settings, periods_per_year=periods)
-    bench_r = bench.returns.reindex(rets.index).dropna()
+    # the benchmark compounded onto the universe's dates (a Gulf panel can skip US days)
+    bench_r = compound_to(bench.returns, rets.index).dropna()
     rets_b = rets.loc[bench_r.index]
     us_person = bool(ctx.ips and ctx.ips.client.us_person)
     eligible = [t for t in universe.eligible if t in prices.columns]
