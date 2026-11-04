@@ -601,6 +601,7 @@ def shared_context() -> AnalystContext:
     ctx.ips = client_ips()
     ctx.attributes = get_attributes(tuple(data.prices.columns))
     ctx.portfolio_value = portfolio_value()
+    ctx.product_types = holding_products(tuple(my_weights))  # knowledge & experience check
     return ctx
 
 
@@ -1541,8 +1542,13 @@ with tab_backtest:
                 + f"; SPY holds {pct(CFG['benchmarks']['spy']['SPY'])}."
             )
             equity = first_eight(pd.DataFrame({n: r.equity for n, r in results.items()}))
-            plot(equity_chart(equity), width="stretch")
-            plot(drawdown_chart(drawdown_series(strat_returns[equity.columns])), width="stretch")
+            plot(equity_chart(equity, reference=BENCHMARK_NAMES), width="stretch")
+            plot(
+                drawdown_chart(
+                    drawdown_series(strat_returns[equity.columns]), reference=BENCHMARK_NAMES
+                ),
+                width="stretch",
+            )
             chosen = st.selectbox("Weights over time for", list(results))
             plot(
                 weights_chart(
@@ -1699,8 +1705,8 @@ with step_portfolio:
                 f"at most {pct(max_weight)} each."
             )
             equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
-            plot(equity_chart(equity), width="stretch")
-            plot(drawdown_chart(drawdown_series(rets)), width="stretch")
+            plot(equity_chart(equity, reference=BENCHMARK_NAMES), width="stretch")
+            plot(drawdown_chart(drawdown_series(rets), reference=BENCHMARK_NAMES), width="stretch")
             st.caption(
                 "Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab."
             )

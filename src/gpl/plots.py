@@ -79,16 +79,36 @@ pio.templates["gpl_light"] = go.layout.Template(
 pio.templates.default = "gpl_light"
 
 
-def series_styles(names: Sequence[str], reference: str | None = None) -> dict[str, dict]:
-    """Line style per series: categorical slots in order; ``reference`` grey and dashed."""
+REFERENCE_DASHES = ["dash", "dot", "dashdot"]  # several benchmarks: grey, told apart by dash
+
+
+def _references(reference: str | Sequence[str] | None) -> list[str]:
+    if reference is None:
+        return []
+    return [reference] if isinstance(reference, str) else list(reference)
+
+
+def series_styles(
+    names: Sequence[str], reference: str | Sequence[str] | None = None
+) -> dict[str, dict]:
+    """Line style per series: categorical slots in order; ``reference`` series (one name or
+    several, e.g. 60/40 and SPY) grey, dashed, then dotted, so they never take a slot."""
+    refs = [r for r in _references(reference) if r in names]
     styles, slot = {}, 0
     for name in names:
-        if name == reference:
-            styles[name] = {"color": REFERENCE_COLOR, "width": 2, "dash": "dash"}
+        if name in refs:
+            dash = REFERENCE_DASHES[refs.index(name) % len(REFERENCE_DASHES)]
+            styles[name] = {"color": REFERENCE_COLOR, "width": 2, "dash": dash}
         else:
             styles[name] = {"color": SERIES_COLORS[slot], "width": 2}
             slot += 1
     return styles
+
+
+def _n_series(columns, reference) -> int:
+    """Series that need a colour slot (references don't)."""
+    refs = set(_references(reference))
+    return sum(1 for c in columns if c not in refs)
 
 
 def _base_layout(fig: go.Figure, title: str, y_title: str, y_format: str) -> go.Figure:
@@ -118,10 +138,12 @@ def _check_series_count(n: int) -> None:
 
 
 def equity_chart(
-    equity: pd.DataFrame, title: str = "Growth of $1", reference: str | None = None
+    equity: pd.DataFrame,
+    title: str = "Growth of $1",
+    reference: str | Sequence[str] | None = None,
 ) -> go.Figure:
     """Line chart of wealth curves, one column per strategy (``reference`` grey dashed)."""
-    _check_series_count(equity.shape[1] - (reference in equity.columns))
+    _check_series_count(_n_series(equity.columns, reference))
     fig = go.Figure()
     styles = series_styles(list(equity.columns), reference)
     for name in equity.columns:
@@ -139,10 +161,12 @@ def equity_chart(
 
 
 def drawdown_chart(
-    drawdowns: pd.DataFrame, title: str = "Drawdown from peak", reference: str | None = None
+    drawdowns: pd.DataFrame,
+    title: str = "Drawdown from peak",
+    reference: str | Sequence[str] | None = None,
 ) -> go.Figure:
     """Line chart of drawdown series (values <= 0), one column per strategy."""
-    _check_series_count(drawdowns.shape[1] - (reference in drawdowns.columns))
+    _check_series_count(_n_series(drawdowns.columns, reference))
     fig = go.Figure()
     styles = series_styles(list(drawdowns.columns), reference)
     for name in drawdowns.columns:
@@ -445,7 +469,7 @@ def lines_chart(
     reference: str | None = None,
 ) -> go.Figure:
     """Generic line chart, one column per series (``reference`` grey dashed)."""
-    _check_series_count(frame.shape[1] - (reference in frame.columns))
+    _check_series_count(_n_series(frame.columns, reference))
     styles = series_styles(list(frame.columns), reference)
     fig = go.Figure()
     for name in frame.columns:

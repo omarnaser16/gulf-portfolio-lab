@@ -143,3 +143,28 @@ def test_dark_template_and_reference_series() -> None:
     assert fig.layout.paper_bgcolor == SURFACE and fig.data[1].line.dash == "dash"
     # set on each figure, not only as plotly's default (importing Streamlit changes that)
     assert fig.layout.template.layout.colorway == tuple(SERIES_COLORS)
+
+
+def test_several_benchmarks_are_grey_with_different_dashes_and_take_no_slot() -> None:
+    import pandas as pd
+
+    from gpl.plots import (
+        REFERENCE_COLOR,
+        SERIES_COLORS,
+        drawdown_chart,
+        equity_chart,
+        series_styles,
+    )
+
+    styles = series_styles(["Max Sharpe", "60/40", "Risk parity", "SPY"], ["60/40", "SPY"])
+    assert styles["60/40"] == {"color": REFERENCE_COLOR, "width": 2, "dash": "dash"}
+    assert styles["SPY"] == {"color": REFERENCE_COLOR, "width": 2, "dash": "dot"}
+    assert styles["Risk parity"]["color"] == SERIES_COLORS[1]  # benchmarks skip the slots
+    frame = pd.DataFrame(
+        {n: [1.0, 1.1] for n in [*(f"S{i}" for i in range(8)), "60/40", "SPY"]},
+        index=pd.bdate_range("2024-01-01", periods=2),
+    )
+    fig = equity_chart(frame, reference=["60/40", "SPY", "not shown"])  # 8 slots + 2 grey
+    dashes = {t.name: t.line.dash for t in fig.data}
+    assert dashes["60/40"] == "dash" and dashes["SPY"] == "dot" and dashes["S0"] is None
+    assert drawdown_chart(frame - 1, reference=["60/40", "SPY"]).data[8].line.dash == "dash"
