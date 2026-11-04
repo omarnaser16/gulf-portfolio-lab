@@ -468,11 +468,7 @@ def _form(
             vals["liquidity_needs"],
             vals["annual_contribution_usd"],
         )
-        st.markdown(
-            "**Return needed to meet the goals:** "
-            + ("–" if need.rate is None else f"{need.rate:.2%} a year")
-            + f". {need.reason}"
-        )
+        st.markdown(f"**Return needed to meet the goals:** {need.reason}")
 
     # 5 Risk profile ---------------------------------------------------------------------
     with _card("risk", parts):

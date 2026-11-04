@@ -450,6 +450,7 @@ def goals_required_return(
             lo, flows, f"The goals are covered even if the portfolio loses {-lo:.0%} a year.{note}"
         )
     rate = brentq(surplus, lo, hi, xtol=1e-10)
+    rate = 0.0 if abs(rate) < 5e-5 else rate  # never print "-0.00%"
     return GoalsReturn(
         rate,
         flows,

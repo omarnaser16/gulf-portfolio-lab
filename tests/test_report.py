@@ -343,3 +343,13 @@ def test_client_report_has_record_fact_find_and_demo_marks(ctx) -> None:
         "do not enter real client data",
     ):
         assert snippet in text, snippet
+
+
+def test_clean_memo_drops_chart_markers_and_keeps_citation_notes() -> None:
+    from gpl.report import clean_memo
+
+    memo = (
+        "Sharpe 0.73 [get_portfolio_diagnosis; the windows differ].\n"
+        "SPY dominates risk [get_portfolio_diagnosis].\n[show_chart: money_vs_risk]\nEnd."
+    )
+    assert clean_memo(memo) == ("Sharpe 0.73 (the windows differ).\nSPY dominates risk.\nEnd.")

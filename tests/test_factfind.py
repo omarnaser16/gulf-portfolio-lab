@@ -194,3 +194,13 @@ def test_age_and_next_review() -> None:
     assert age_on("1980-11-02", TODAY) == 45 and age_on("1980-11-01", TODAY) == 46
     assert next_review("Quarterly", date(2026, 11, 30)) == "2027-02-28"
     assert next_review("Annual", TODAY) == "2027-11-01"
+
+
+def test_goals_required_return_rounds_a_zero_rate_to_zero() -> None:
+    # 500k + 30k a year for 10 years = 800k pays 750k + 50k at about 0%
+    r = goals_required_return(
+        500_000,
+        [{"multiple": 1.5, "years": 10}, {"amount_usd": 50_000, "years": 10}],
+        annual_contribution=30_000,
+    )
+    assert r.rate == 0.0 and r.reason.startswith("0.00% a year")

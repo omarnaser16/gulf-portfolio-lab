@@ -190,7 +190,7 @@ def _fact_value(c: ClientProfile, name: str, kind: str) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     if isinstance(value, float):
-        return f"{value:g}"
+        return f"{value:g}%" if name.endswith("_pct") else f"{value:g}"
     return "" if value is None else str(value)
 
 
@@ -221,7 +221,7 @@ def factfind_story(c: ClientProfile) -> list:
     extra["objectives"] = [
         [
             "Return needed for the goals",
-            ("–" if goals.rate is None else f"{goals.rate:.2%} a year. ") + goals.reason,
+            goals.reason,
         ]
     ]
     for s in SECTIONS:
@@ -492,14 +492,21 @@ def trade_section(trades: pd.DataFrame, cost_bps: float, cash: dict | None = Non
 
 
 _TOOL_TAG = re.compile(r"\s*\[[a-z][a-z0-9_]*(?:\s*(?:,|;|/|&|and)\s*[a-z][a-z0-9_]*)*\](?!\()")
+_CHART_TAG = re.compile(r"\s*\[show_chart:\s*[a-z0-9_]+\]")  # where the app drew a chart
+# "[tool; a note in words]" (a note has a space; "[tool_a; tool_b]" is two citations)
+_TOOL_NOTE = re.compile(r"\s*\[[a-z][a-z0-9_]*\s*;\s*([^\s\[\]][^\[\]]*\s[^\[\]]*)\]")
 
 
 def clean_memo(text: str) -> str:
-    """The memo for a client: tool citations ('[stress_test]') and the app's appended
-    disclaimer removed (the report has its own)."""
+    """The memo for a client: tool citations ('[stress_test]'), chart markers
+    ('[show_chart: stress_test]') and the app's appended disclaimer removed (the report has
+    its own). A citation carrying a note ('[tool; the windows differ]') keeps the note in
+    brackets."""
     cut = text.rfind("\n---")
     if cut >= 0 and "not investment advice" in text[cut:].lower():
         text = text[:cut]
+    text = _CHART_TAG.sub("", text)
+    text = _TOOL_NOTE.sub(lambda m: f" ({m.group(1).strip()})", text)
     return _TOOL_TAG.sub("", text).strip()
 
 
@@ -977,14 +984,18 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
         )
     )
     # disclaimers
-    story.append(para("Important information", "h2"))
     story.append(
-        para(
-            "This report is decision support for a licensed adviser and does not constitute "
-            "investment, tax or legal advice, an offer, or a recommendation to buy or sell any "
-            "security on its own. Results are historical and risk-adjusted; they do not "
-            "guarantee future returns. Data from Yahoo Finance; GCC currencies converted at "
-            "their official USD pegs."
+        KeepTogether(
+            [
+                para("Important information", "h2"),
+                para(
+                    "This report is decision support for a licensed adviser and does not "
+                    "constitute investment, tax or legal advice, an offer, or a recommendation to "
+                    "buy or sell any security on its own. Results are historical and "
+                    "risk-adjusted; they do not guarantee future returns. Data from Yahoo "
+                    "Finance; GCC currencies converted at their official USD pegs."
+                ),
+            ]
         )
     )
     story += _bullets(LIMITATIONS)
