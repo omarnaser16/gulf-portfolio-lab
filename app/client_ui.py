@@ -7,6 +7,8 @@ redraws the form. Every number shown comes from ``gpl.client`` (tested rules).
 
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -16,12 +18,18 @@ from gpl.agent.profile import apply_proposal, propose_profile
 from gpl.client import (
     CLASSIFICATIONS,
     EXAMPLE_CLIENTS,
+    JURISDICTIONS,
     QUESTIONS,
     REGIONS,
     REGULATORS,
+    SCORED,
     ClientProfile,
     build_ips,
+    default_regulator,
+    effective_regulator,
     ips_constraints,
+    ips_missing,
+    liquidity_need_score,
     parse_month,
 )
 from gpl.report import ips_pdf
@@ -95,6 +103,13 @@ def _interpret(make_client: Callable, model: str) -> None:
     st.session_state.client_proposal = proposal
 
 
+def _default_regulator(k: str) -> None:
+    """Booking location or residency changed: reset the regulator to the default for it."""
+    st.session_state["cl_reg" + k] = default_regulator(
+        st.session_state.get("cl_book" + k), st.session_state.get("cl_res" + k)
+    )
+
+
 def _opt(value):
     return None if value is None else float(value)
 
@@ -112,15 +127,35 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         index=CLASSIFICATIONS.index(p.classification) if p.classification in CLASSIFICATIONS else 0,
         key="cl_class" + k,
     )
-    c1, c2, c3 = st.columns(3)
-    regulator = c1.selectbox(
+    c1, c2, c3, c4 = st.columns(4)
+    residency = c1.text_input(
+        "Residency (country)",
+        p.residency,
+        key="cl_res" + k,
+        on_change=_default_regulator,
+        args=(k,),
+    )
+    bookings = ["", *JURISDICTIONS]
+    booking = c2.selectbox(
+        "Booking location",
+        bookings,
+        index=bookings.index(p.booking_location) if p.booking_location in bookings else 0,
+        key="cl_book" + k,
+        format_func=lambda b: b or "from residency",
+        on_change=_default_regulator,
+        args=(k,),
+        help="Where the client is booked sets the regulator: ADGM -> FSRA, DIFC -> DFSA, "
+        "onshore UAE -> SCA, Saudi Arabia -> CMA, QFC -> QFCRA, Bahrain -> CBB, Kuwait -> CMA, "
+        "Oman -> FSA. Change the regulator if it differs.",
+    )
+    current = effective_regulator(p)
+    regulator = c3.selectbox(
         "Regulator",
         REGULATORS,
-        index=REGULATORS.index(p.regulator) if p.regulator in REGULATORS else len(REGULATORS) - 1,
+        index=REGULATORS.index(current) if current in REGULATORS else len(REGULATORS) - 1,
         key="cl_reg" + k,
     )
-    residency = c2.text_input("Residency (country)", p.residency, key="cl_res" + k)
-    us_person = c3.checkbox(
+    us_person = c4.checkbox(
         "US person (citizen, green card or US tax resident)", p.us_person, key="cl_us" + k
     )
 
@@ -183,6 +218,24 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         1.0,
         key="cl_reserve" + k,
     )
+    need_rows = []
+    for _, row in needs.iterrows():
+        if pd.isna(row["amount_usd"]) or not str(row["date"] or "").strip():
+            if pd.notna(row["amount_usd"]) or str(row["description"] or "").strip():
+                st.warning(f"Cash need '{row['description']}' needs an amount and a date.")
+            continue
+        try:
+            parse_month(str(row["date"]))
+        except ValueError:
+            st.warning(f"Cash need date '{row['date']}' isn't a month like 2028-10; ignored.")
+            continue
+        need_rows.append(
+            {
+                "description": str(row["description"] or "Cash need"),
+                "amount_usd": float(row["amount_usd"]),
+                "date": str(row["date"]).strip()[:7],
+            }
+        )
     goals = st.data_editor(
         pd.DataFrame(p.goals or [], columns=["description", "amount_usd", "multiple", "years"]),
         num_rows="dynamic",
@@ -199,14 +252,46 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
     st.markdown("**Risk questionnaire** (the client's own answers)")
     answers = {}
     q1, q2 = st.columns(2)
+    liquidity_score, liquidity_share = liquidity_need_score(
+        replace(p, liquidity_needs=need_rows, portfolio_value_usd=ws.portfolio_value()),
+        date.today(),
+    )
     for i, q in enumerate(QUESTIONS):
+        if q["dimension"] not in SCORED:
+            continue
         col = q1 if q["dimension"] == "capacity" else q2
+        derived = q["id"] == "liquidity_need" and liquidity_score is not None
+        stored = liquidity_score if derived else p.answers.get(q["id"])
         choice = col.radio(
             f"{q['text']} ({q['dimension']})",
             q["options"],
+            index=stored - 1 if stored else None,
+            key=f"cl_q{i}_{stored}" + k if derived else f"cl_q{i}" + k,
+            horizontal=False,
+            disabled=derived,
+            help="Set from the Cash needs table: the share of the portfolio due within 24 "
+            "months (none 5, under 5% 4, under 10% 3, under 25% 2, otherwise 1)."
+            if q["id"] == "liquidity_need"
+            else None,
+        )
+        if derived:
+            col.caption(
+                f"Set from the Cash needs table: {liquidity_share:.2%} of the portfolio is due "
+                "within 24 months."
+            )
+        if choice is not None:
+            answers[q["id"]] = q["options"].index(choice) + 1
+
+    st.markdown("**Knowledge & experience** (not part of the risk score)")
+    q1, _ = st.columns(2)
+    for i, q in enumerate(QUESTIONS):
+        if q["dimension"] in SCORED:
+            continue
+        choice = q1.radio(
+            q["text"],
+            q["options"],
             index=p.answers[q["id"]] - 1 if q["id"] in p.answers else None,
             key=f"cl_q{i}" + k,
-            horizontal=False,
         )
         if choice is not None:
             answers[q["id"]] = q["options"].index(choice) + 1
@@ -296,24 +381,6 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         )
         adviser_notes = st.text_area("Adviser notes", p.adviser_notes, key="cl_adv" + k)
 
-    need_rows = []
-    for _, row in needs.iterrows():
-        if pd.isna(row["amount_usd"]) or not str(row["date"] or "").strip():
-            if pd.notna(row["amount_usd"]) or str(row["description"] or "").strip():
-                st.warning(f"Cash need '{row['description']}' needs an amount and a date.")
-            continue
-        try:
-            parse_month(str(row["date"]))
-        except ValueError:
-            st.warning(f"Cash need date '{row['date']}' isn't a month like 2028-10; ignored.")
-            continue
-        need_rows.append(
-            {
-                "description": str(row["description"] or "Cash need"),
-                "amount_usd": float(row["amount_usd"]),
-                "date": str(row["date"]).strip()[:7],
-            }
-        )
     region_minimums = {
         str(row["region"]): float(row["min_pct"])
         for _, row in regions_table.iterrows()
@@ -331,6 +398,7 @@ def _form(p: ClientProfile, v: int) -> ClientProfile:
         classification=classification,
         regulator=regulator,
         residency=residency,
+        booking_location=booking,
         us_person=us_person,
         horizon_years=horizon,
         goals=goal_rows,
@@ -435,17 +503,31 @@ def render_client_tab(
         )
         for note in notes:
             st.caption("• " + note)
-    d1, d2 = st.columns(2)
+    missing = ips_missing(profile)
+    if missing:
+        st.warning(
+            "The final IPS can't be issued yet. Missing: " + "; ".join(missing) + ". "
+            "A watermarked DRAFT is available for discussion."
+        )
+    d1, d2, d3 = st.columns(3)
     ref = (profile.reference or "client").replace(" ", "_")
     d1.download_button(
         "Download IPS (PDF)",
-        ips_pdf(ips),
+        b"" if missing else ips_pdf(ips),
         file_name=f"IPS_{ref}_{ips.created}.pdf",
         mime="application/pdf",
         key="client_ips_pdf",
         type="primary",
+        disabled=bool(missing),
     )
     d2.download_button(
+        "Download DRAFT IPS (PDF)",
+        ips_pdf(ips, draft=True),
+        file_name=f"IPS_DRAFT_{ref}_{ips.created}.pdf",
+        mime="application/pdf",
+        key="client_ips_draft",
+    )
+    d3.download_button(
         "Save profile (JSON)",
         json.dumps(profile.to_dict(), indent=2),
         file_name=f"client_{ref}.json",

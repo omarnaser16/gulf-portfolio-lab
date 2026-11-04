@@ -1,5 +1,6 @@
 """Tests for the client profile, risk questionnaire, IPS and IPS -> optimiser limits."""
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -10,8 +11,12 @@ from gpl.client import (
     ClientProfile,
     build_ips,
     cash_like_holdings,
+    default_regulator,
+    effective_regulator,
     horizon_score,
     ips_constraints,
+    ips_missing,
+    liquidity_need_score,
     month_after,
     month_text,
     months_until,
@@ -67,25 +72,73 @@ def test_half_rounds_up_and_mismatch_is_flagged() -> None:
             "dependence": 5,
             "liquidity_need": 5,
             "loss_reaction": 1,
-            "tradeoff": 2,
-            "experience": 1,
+            "tradeoff": 1,
+            "experience": 5,  # knowledge & experience: not part of willingness
         },
     )
-    r = risk_profile(p)  # capacity 5; willingness mean 1.33 -> 1
+    r = risk_profile(p)  # capacity 5; willingness mean (1 + 1) / 2 = 1
     assert (r.capacity, r.willingness, r.score) == (5, 1, 1) and r.mismatch
     p2 = profile(
-        answers={**profile().answers, "loss_reaction": 4, "tradeoff": 3, "experience": 4}
-    )  # willingness mean 3.67 -> 4
+        answers={**profile().answers, "loss_reaction": 4, "tradeoff": 3}
+    )  # willingness mean 3.5 -> 4 (half rounds up)
     assert risk_profile(p2).willingness == 4
-    p3 = profile(
-        answers={
-            **profile().answers,
-            "loss_reaction": 3,
-            "tradeoff": 4,
-            "experience": 3,
-        }
-    )  # 3.33 -> 3
-    assert risk_profile(p3).willingness == 3
+    p3 = profile(answers={**profile().answers, "loss_reaction": 3, "tradeoff": 3, "experience": 1})
+    assert risk_profile(p3).willingness == 3  # experience doesn't move it
+    assert "4 answers" in risk_profile(p3).explanation  # capacity: horizon + 4 answers
+
+
+def test_experience_is_not_required_for_the_score() -> None:
+    answers = {k: v for k, v in profile().answers.items() if k != "experience"}
+    assert risk_profile(profile(answers=answers)).score is not None
+    assert {q["id"] for q in QUESTIONS if q["dimension"] == "knowledge"} == {"experience"}
+
+
+def test_liquidity_need_score_from_cash_needs() -> None:
+    today = date(2026, 11, 1)
+    need = {"description": "Deposit", "amount_usd": 50_000, "date": "2027-10"}
+    p = profile(liquidity_needs=[need], portfolio_value_usd=500_000)
+    assert liquidity_need_score(p, today) == (2, 0.10)  # 10% is not under 10% -> 2
+    assert liquidity_need_score(replace(p, portfolio_value_usd=2_000_000), today)[0] == 4  # 2.5%
+    assert liquidity_need_score(replace(p, portfolio_value_usd=600_000), today)[0] == 3  # 8.33%
+    assert liquidity_need_score(replace(p, portfolio_value_usd=150_000), today)[0] == 1  # 33%
+    assert liquidity_need_score(profile(), today) == (5, 0.0)  # no needs
+    later = {**need, "date": "2029-06"}  # 31 months away: outside two years
+    assert liquidity_need_score(replace(p, liquidity_needs=[later]), today) == (5, 0.0)
+    assert liquidity_need_score(replace(p, portfolio_value_usd=None), today) == (None, None)
+    # build_ips uses the derived answer, overriding a hand-picked one
+    ips = build_ips(replace(p, answers={**p.answers, "liquidity_need": 5}), CFG, today)
+    assert ips.client.answers["liquidity_need"] == 2
+
+
+def test_regulator_defaults_from_booking_then_residency() -> None:
+    assert default_regulator("ADGM (Abu Dhabi)", "UAE") == "FSRA (ADGM)"
+    assert default_regulator("", "UAE") == "SCA (UAE)"  # onshore unless booked in a centre
+    assert default_regulator(None, "Saudi Arabia") == "CMA (Saudi Arabia)"
+    assert default_regulator(None, "Qatar") == "QFCRA (Qatar)"
+    assert default_regulator("Qatar onshore", "Qatar") == "QFMA (Qatar)"
+    assert default_regulator(None, "bahrain") == "CBB (Bahrain)"
+    assert default_regulator(None, "Kuwait") == "CMA (Kuwait)"
+    assert default_regulator(None, "Oman") == "FSA (Oman, formerly CMA)"
+    assert default_regulator(None, "France") == "Other"
+    assert effective_regulator(ClientProfile(residency="Kuwait")) == "CMA (Kuwait)"
+    chosen = ClientProfile(residency="Kuwait", regulator="DFSA (DIFC)")
+    assert effective_regulator(chosen) == "DFSA (DIFC)"  # the adviser's choice wins
+    assert (
+        "Regulator: CMA (Kuwait)."
+        in build_ips(ClientProfile(residency="Kuwait"), CFG).sections["Legal and regulatory"]
+    )
+
+
+def test_ips_missing_lists_what_blocks_the_final_ips() -> None:
+    today = date(2026, 11, 1)
+    ready = profile(age=40, portfolio_value_usd=1_000_000)
+    assert ips_missing(ready, today) == []
+    blank = ClientProfile(residency="France")
+    missing = ips_missing(blank, today)
+    assert "client reference" in missing and "age" in missing and "portfolio value" in missing
+    assert "regulator (booking location)" in missing
+    assert any("loss_reaction" in m or "20%" in m for m in missing)
+    assert not any("experience" in m for m in missing)
 
 
 def test_unanswered_questions_are_reported_not_guessed() -> None:

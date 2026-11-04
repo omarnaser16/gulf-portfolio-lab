@@ -61,17 +61,24 @@ QUESTIONS: list[dict[str, Any]] = [
     },
     {
         "id": "experience",
-        "dimension": "willingness",
+        "dimension": "knowledge",
         "text": "How much investing experience does the client have?",
         "options": ["None", "Little", "Some", "Good", "Extensive"],
     },
 ]
+# only capacity and willingness answers set the risk score; knowledge & experience is recorded
+# separately (it bears on which products are appropriate, not on how much risk to take)
+SCORED = ("capacity", "willingness")
 REGULATORS = [
     "DFSA (DIFC)",
     "FSRA (ADGM)",
     "SCA (UAE)",
     "CMA (Saudi Arabia)",
     "QFCRA (Qatar)",
+    "QFMA (Qatar)",
+    "CBB (Bahrain)",
+    "CMA (Kuwait)",
+    "FSA (Oman, formerly CMA)",
     "Other",
 ]
 CLASSIFICATIONS = ["Retail", "Professional"]
@@ -82,7 +89,24 @@ JURISDICTIONS: dict[str, str] = {
     "UAE onshore": "SCA (UAE)",
     "Saudi Arabia": "CMA (Saudi Arabia)",
     "QFC (Qatar)": "QFCRA (Qatar)",
+    "Qatar onshore": "QFMA (Qatar)",
+    "Bahrain": "CBB (Bahrain)",
+    "Kuwait": "CMA (Kuwait)",
+    "Oman": "FSA (Oman, formerly CMA)",
     "Other": "Other",
+}
+# residency (country) -> the usual booking location when none is recorded
+RESIDENCY_BOOKING: dict[str, str] = {
+    "uae": "UAE onshore",
+    "united arab emirates": "UAE onshore",
+    "dubai": "UAE onshore",
+    "abu dhabi": "UAE onshore",
+    "saudi arabia": "Saudi Arabia",
+    "ksa": "Saudi Arabia",
+    "qatar": "QFC (Qatar)",
+    "bahrain": "Bahrain",
+    "kuwait": "Kuwait",
+    "oman": "Oman",
 }
 # regions for minimum allocations; the names gpl.scenarios.classify_holdings gives holdings
 REGIONS = [
@@ -105,9 +129,29 @@ def regulator_for(jurisdiction: str | None) -> str | None:
     """The regulator for a booking jurisdiction (``JURISDICTIONS``); None if unknown.
 
     ADGM (Abu Dhabi Global Market) -> FSRA; DIFC (Dubai) -> DFSA; onshore UAE -> SCA;
-    Saudi Arabia -> CMA; QFC (Qatar) -> QFCRA.
+    Saudi Arabia -> CMA; QFC (Qatar) -> QFCRA; onshore Qatar -> QFMA; Bahrain -> CBB;
+    Kuwait -> CMA Kuwait; Oman -> FSA (the Capital Market Authority until 2024).
     """
     return JURISDICTIONS.get(jurisdiction or "")
+
+
+def default_booking(residency: str | None) -> str | None:
+    """The usual booking location for a residency ('UAE' -> 'UAE onshore'); None if unknown.
+
+    Onshore is the default: a client counts as DIFC, ADGM or QFC only when booked there, except
+    Qatar, where advisers for this kind of client are usually QFC firms.
+    """
+    return RESIDENCY_BOOKING.get((residency or "").strip().lower())
+
+
+def default_regulator(booking_location: str | None, residency: str | None) -> str:
+    """The regulator from the booking location, else from the residency; 'Other' if neither maps."""
+    return regulator_for(booking_location) or regulator_for(default_booking(residency)) or "Other"
+
+
+def effective_regulator(profile: ClientProfile) -> str:
+    """The adviser's choice if recorded, otherwise the default from booking location/residency."""
+    return profile.regulator or default_regulator(profile.booking_location, profile.residency)
 
 
 def in_region(holding_region: str, region: str) -> bool:
@@ -206,8 +250,9 @@ class ClientProfile:
     name: str = ""
     age: int | None = None
     classification: str = "Retail"
-    regulator: str = "DFSA (DIFC)"
+    regulator: str = ""  # "": from the booking location / residency (``effective_regulator``)
     residency: str = "UAE"
+    booking_location: str = ""  # a key of JURISDICTIONS
     us_person: bool = False
     horizon_years: float = 10
     goals: list[dict] = field(default_factory=list)  # {description, amount_usd|multiple, years}
@@ -282,6 +327,68 @@ class ClientProfile:
         return out
 
 
+LIQUIDITY_SCORE_BANDS = ((0.05, 4), (0.10, 3), (0.25, 2))  # share due < limit -> score
+
+
+def liquidity_need_score(
+    profile: ClientProfile, today: date, months: int = 24
+) -> tuple[int | None, float | None]:
+    """Answer "cash needs in the next two years" from the dated Cash needs table.
+
+    The share of the portfolio due within ``months`` (24) sets the score: none 5, under 5% 4,
+    under 10% 3, under 25% 2, 25% or more 1. Returns (score, share); (None, None) when the
+    portfolio value is unknown and needs are recorded (the adviser answers by hand then).
+    E.g. USD 50,000 due in 11 months from USD 500,000: 10.00% -> 2.
+    """
+    due = sum(
+        n["amount_usd"] for n in profile.liquidity_needs if months_until(n["date"], today) <= months
+    )
+    if due <= 0:
+        return 5, 0.0
+    value = profile.portfolio_value_usd
+    if not value:
+        return None, None
+    share = due / value
+    for limit, score in LIQUIDITY_SCORE_BANDS:
+        if share < limit:
+            return score, share
+    return 1, share
+
+
+def with_derived_answers(profile: ClientProfile, today: date) -> ClientProfile:
+    """The profile with answers set by rule from recorded facts (cash needs), where possible."""
+    score, _ = liquidity_need_score(profile, today)
+    if score is None:
+        return profile
+    return replace(profile, answers={**profile.answers, "liquidity_need": score})
+
+
+IPS_REQUIRED = {
+    "reference": "client reference",
+    "age": "age",
+    "residency": "residency",
+    "portfolio_value_usd": "portfolio value",
+}
+
+
+def ips_missing(profile: ClientProfile, today: date | None = None) -> list[str]:
+    """What must be filled in before the final IPS can be issued (empty list: ready).
+
+    Required facts (``IPS_REQUIRED``), a known regulator, and every capacity and willingness
+    answer. Until then only a DRAFT IPS is produced.
+    """
+    p = with_derived_answers(profile, today or date.today())
+    missing = [label for name, label in IPS_REQUIRED.items() if getattr(p, name) in (None, "", 0)]
+    if effective_regulator(p) == "Other":
+        missing.append("regulator (booking location)")
+    missing += [
+        f"questionnaire: {q['text']}"
+        for q in QUESTIONS
+        if q["dimension"] in SCORED and q["id"] not in p.answers
+    ]
+    return missing
+
+
 @dataclass
 class RiskProfile:
     capacity: int | None
@@ -295,7 +402,7 @@ class RiskProfile:
 def risk_profile(profile: ClientProfile) -> RiskProfile:
     """Score capacity and willingness (rounded means, half up); the lower sets the band."""
     answers = dict(profile.answers)
-    missing = [q["id"] for q in QUESTIONS if q["id"] not in answers]
+    missing = [q["id"] for q in QUESTIONS if q["dimension"] in SCORED and q["id"] not in answers]
     if missing:
         return RiskProfile(
             None,
@@ -316,7 +423,8 @@ def risk_profile(profile: ClientProfile) -> RiskProfile:
     explanation = (
         f"Risk score {score} of 5: the lower of capacity ({capacity}) and willingness "
         f"({willingness}). Capacity averages the horizon ({profile.horizon_years:g} years scores "
-        f"{cap_items[0]}) and four answers; willingness averages three answers."
+        f"{cap_items[0]}) and {len(cap_items) - 1} answers; willingness averages "
+        f"{len(will_items)} answers."
     )
     if mismatch:
         explanation += (
@@ -392,7 +500,13 @@ def _goal_text(goal: dict) -> str:
 
 
 def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> IPS:
-    """Build the IPS. Risk limits come from the risk band unless the adviser overrides them."""
+    """Build the IPS. Risk limits come from the risk band unless the adviser overrides them.
+
+    The "cash needs in the next two years" answer is set from the dated cash needs whenever the
+    portfolio value is known (``liquidity_need_score``).
+    """
+    today = today or date.today()
+    profile = with_derived_answers(profile, today)
     risk = risk_profile(profile)
     band = cfg["risk_bands"].get(risk.score) if risk.score else None
     limits: dict[str, Any] = {"source": {}}
@@ -409,7 +523,6 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
     )
     limits["max_non_pegged_currency"] = profile.max_non_pegged_currency_pct / 100
     value = profile.portfolio_value_usd
-    today = today or date.today()
     window = int(cfg.get("cash_need_window_months", 36))
     soon, later = cash_needs(profile, today, window)
     need_usd = sum(n["amount_usd"] for n in soon)
@@ -476,7 +589,8 @@ def build_ips(profile: ClientProfile, cfg: dict, today: date | None = None) -> I
         ),
         "Liquidity": _liquidity_text(profile, soon, later, window, reserve_usd, limits, value),
         "Legal and regulatory": (
-            f"Client classification: {profile.classification}. Regulator: {profile.regulator}."
+            f"Client classification: {profile.classification}. "
+            f"Regulator: {effective_regulator(profile)}."
             + (f" {profile.legal_notes}" if profile.legal_notes else "")
         ),
         "Unique circumstances": " ".join(
@@ -685,7 +799,8 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         [{"description": "Property deposit", "amount_usd": 50_000, "date": "2027-10"}],
         [4, 3, 4, 4, 3, 3, 3],
         residency="UAE",
-        regulator="DFSA (DIFC)",
+        booking_location="DIFC (Dubai)",
+        age=45,
         home_bias_gcc_pct=10,
         goals=[{"description": "Grow capital", "multiple": 1.5, "years": 10}],
     ),
@@ -696,7 +811,8 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         [{"description": "School fees", "amount_usd": 100_000, "date": "2027-04"}],
         [3, 2, 2, 3, 2, 1, 3],
         residency="Saudi Arabia",
-        regulator="CMA (Saudi Arabia)",
+        booking_location="Saudi Arabia",
+        age=58,
         sharia_only=True,
         home_bias_gcc_pct=30,
         goals=[{"description": "Preserve capital", "years": 5}],
@@ -708,7 +824,8 @@ EXAMPLE_CLIENTS: dict[str, dict] = {
         [],
         [5, 4, 5, 5, 4, 5, 4],
         residency="Qatar",
-        regulator="QFCRA (Qatar)",
+        booking_location="QFC (Qatar)",
+        age=34,
         goals=[{"description": "Long-term growth", "multiple": 3, "years": 20}],
     ),
 }

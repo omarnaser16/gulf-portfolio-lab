@@ -279,3 +279,9 @@ def test_percent_axis_ticks_never_round() -> None:
     labels = [ax.yaxis.get_major_formatter()(t) for t in ticks]
     assert all(lbl.rstrip("%").lstrip("−-").replace(".", "").isdigit() for lbl in labels)
     plt.close(fig)
+
+
+def test_draft_ips_is_watermarked() -> None:
+    ips = build_ips(ClientProfile.from_dict(EXAMPLE_CLIENTS["Dubai, moderate, 10 years"]), CFG)
+    final, draft = ips_pdf(ips, compress=False), ips_pdf(ips, compress=False, draft=True)
+    assert b"DRAFT" in draft and b"DRAFT" not in final

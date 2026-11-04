@@ -978,6 +978,29 @@ def test_client_tab_starts_empty_and_loads_an_example(app: AppTest) -> None:
     assert any(d.label == "Download IPS (PDF)" for d in app.get("download_button"))
 
 
+def test_final_ips_blocked_until_complete_draft_always_available(app: AppTest) -> None:
+    app.button(key="client_new").click().run()
+    assert not app.exception, app.exception
+    buttons = {d.label: d for d in app.get("download_button")}
+    assert buttons["Download IPS (PDF)"].proto.disabled
+    assert not buttons["Download DRAFT IPS (PDF)"].proto.disabled
+    assert any("final IPS can't be issued yet" in w.value for w in app.warning)
+    # the blank client lives in the UAE: regulator SCA by default, not "Other"
+    assert app.selectbox(key="cl_reg_1").value == "SCA (UAE)"
+    app.selectbox(key="cl_book_1").set_value("ADGM (Abu Dhabi)").run()
+    assert app.selectbox(key="cl_reg_1").value == "FSRA (ADGM)"
+
+
+def test_domicile_asks_for_the_value_when_missing(app: AppTest) -> None:
+    box = app.number_input(key="pf_value_overview_0")  # the Analyst overview's domicile check
+    assert box.label.startswith("Portfolio value (USD) for the estate-tax")
+    box.set_value(2_000_000.0).run()
+    assert not app.exception, app.exception
+    assert app.session_state["pf_value"] == 2_000_000.0
+    keys = [n.key for n in app.number_input]
+    assert "pf_value_overview_1" not in keys  # the value is known now: no box
+
+
 def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()

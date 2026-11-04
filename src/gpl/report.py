@@ -31,7 +31,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from gpl.client import IPS, QUESTIONS, ClientProfile
+from gpl.client import IPS, QUESTIONS, ClientProfile, effective_regulator
 
 FOOTER = (
     "Decision support for a licensed adviser. Not investment, tax or legal advice. "
@@ -117,12 +117,25 @@ def table(
     return t
 
 
-def build_pdf(story: list, title: str, compress: bool = True) -> bytes:
-    """Lay out ``story`` on A4 with the footer disclaimer and page numbers on every page."""
+def build_pdf(
+    story: list, title: str, compress: bool = True, watermark: str | None = None
+) -> bytes:
+    """Lay out ``story`` on A4 with the footer disclaimer and page numbers on every page.
+
+    ``watermark`` (e.g. "DRAFT") is printed diagonally in light grey across every page.
+    """
     buffer = BytesIO()
 
     def footer(canvas, doc) -> None:
         canvas.saveState()
+        if watermark:
+            canvas.setFont("Helvetica-Bold", 96)
+            canvas.setFillColor(colors.HexColor(RULE))
+            canvas.translate(A4[0] / 2, A4[1] / 2)
+            canvas.rotate(45)
+            canvas.drawCentredString(0, -30, watermark)
+            canvas.restoreState()
+            canvas.saveState()
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(colors.HexColor(MUTED))
         canvas.drawString(18 * mm, 10 * mm, FOOTER)
@@ -198,11 +211,14 @@ def ips_story(ips: IPS) -> list:
     return story
 
 
-def ips_pdf(ips: IPS, compress: bool = True) -> bytes:
-    """The IPS for the adviser and client to review and sign."""
+def ips_pdf(ips: IPS, compress: bool = True, draft: bool = False) -> bytes:
+    """The IPS for the adviser and client to review and sign.
+
+    ``draft``: watermarked "DRAFT" and titled as a draft, for an incomplete profile.
+    """
     c = ips.client
     story = [
-        para("Investment Policy Statement", "title"),
+        para("Investment Policy Statement" + (" (DRAFT)" if draft else ""), "title"),
         para(
             f"Client {c.reference or c.name or '(no reference)'} · prepared {ips.created} · "
             "Gulf Portfolio Lab",
@@ -230,7 +246,8 @@ def ips_pdf(ips: IPS, compress: bool = True) -> bytes:
             ]
         )
     )
-    return build_pdf(story, f"IPS {c.reference or ''} {ips.created}".strip(), compress)
+    title = f"IPS {c.reference or ''} {ips.created}".strip()
+    return build_pdf(story, title, compress, watermark="DRAFT" if draft else None)
 
 
 # ------------------------------------------------------------------------- client report
@@ -836,7 +853,7 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
                     [
                         ["Adviser", inputs.adviser or ""],
                         ["Licence / registration no.", inputs.adviser_licence or ""],
-                        ["Regulator", c.regulator if c else ""],
+                        ["Regulator", effective_regulator(c) if c else ""],
                         ["Date", f"{inputs.report_date:%d %B %Y}"],
                     ],
                     widths=[55 * mm, 119 * mm],

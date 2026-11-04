@@ -195,3 +195,13 @@ def test_regulator_for_jurisdictions() -> None:
     assert regulator_for("Saudi Arabia") == "CMA (Saudi Arabia)"
     assert regulator_for("QFC (Qatar)") == "QFCRA (Qatar)"
     assert regulator_for(None) is None and regulator_for("Mars") is None
+
+
+def test_new_gulf_jurisdictions_and_booking_location_recorded() -> None:
+    from gpl.client import regulator_for
+
+    assert regulator_for("Bahrain") == "CBB (Bahrain)"
+    assert regulator_for("Kuwait") == "CMA (Kuwait)"
+    assert regulator_for("Oman") == "FSA (Oman, formerly CMA)"
+    after = apply_proposal(ClientProfile(), {"jurisdiction": "Bahrain"})
+    assert after.booking_location == "Bahrain" and after.regulator == "CBB (Bahrain)"

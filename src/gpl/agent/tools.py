@@ -17,6 +17,7 @@ import pandas as pd
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent.charts import CHART_TYPES
+from gpl.client import effective_regulator
 from gpl.data import (
     BenchmarkData,
     clean_prices,
@@ -1221,7 +1222,7 @@ def get_client_profile(ctx: AnalystContext) -> dict:
     return {
         "client": c.name or c.reference or "(no name)",
         "reference": c.reference,
-        "classification_and_regulator": f"{c.classification}, {c.regulator}",
+        "classification_and_regulator": f"{c.classification}, {effective_regulator(c)}",
         "residency": c.residency,
         "us_person": c.us_person,
         "age": c.age,

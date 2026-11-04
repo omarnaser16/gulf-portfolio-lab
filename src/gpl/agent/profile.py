@@ -36,7 +36,7 @@ Qatar).
 - jurisdiction: where the client is booked, from the notes: Abu Dhabi or ADGM -> "ADGM (Abu \
 Dhabi)"; DIFC -> "DIFC (Dubai)"; elsewhere in the UAE without DIFC or ADGM (e.g. Dubai, \
 Sharjah) -> "UAE onshore"; Saudi Arabia -> "Saudi Arabia"; Qatar or QFC -> "QFC (Qatar)"; \
-null if the notes don't say.
+Bahrain -> "Bahrain"; Kuwait -> "Kuwait"; Oman -> "Oman"; null if the notes don't say.
 - annual_income_need_usd: yearly spending the client draws from the portfolio, if stated \
 ("needs 8k a month" -> leave null and list it in unmapped_requests; never multiply).
 - tax_notes: anything about taxes, tax residence or citizenship, in the notes' words.
@@ -272,6 +272,7 @@ def apply_proposal(profile: ClientProfile, draft: dict, today: date | None = Non
     if draft.get("age") is not None:
         updates["age"] = int(draft["age"])
     if regulator_for(draft.get("jurisdiction")):
+        updates["booking_location"] = draft["jurisdiction"]
         updates["regulator"] = regulator_for(draft["jurisdiction"])
     needs = []
     for need in draft.get("liquidity_needs") or []:

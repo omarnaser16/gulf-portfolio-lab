@@ -1006,13 +1006,16 @@ def domicile_section() -> dict | None:
     )
 
 
-def render_domicile() -> None:
+def render_domicile(where: str = "domicile") -> None:
     st.markdown("**Fund domicile check (GCC clients)**")
     result = domicile_section()
     if result is None:
         st.info("Add holdings on the Portfolio tab to check their domicile.")
         return
     st.info(result["label"])
+    if portfolio_value() is None:
+        c1, _ = st.columns([1, 2])
+        ws.value_input(c1, f"pf_value_{where}", "Portfolio value (USD) for the estate-tax estimate")
     if result["rows"]:
         st.table(pd.DataFrame(result["rows"]).set_index("Ticker"))
     for line in result["summary"]:
@@ -1951,7 +1954,7 @@ def render_portfolio_overview() -> None:
     if proposed:
         ports[proposed["name"]] = pd.Series(proposed["weights"], dtype=float)
     render_suitability(ports, "analyst")
-    render_domicile()
+    render_domicile("overview")
     render_report_button(holdings, ports)
 
 
