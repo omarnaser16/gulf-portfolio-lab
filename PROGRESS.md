@@ -411,3 +411,26 @@ days; the work itself was done in a series of sessions.
   - The goals' required return printed "-0.00%" and gave the rate twice.
   - Capacity for loss had no % sign.
 - **Status:** 889 tests passing.
+
+## Example clients work out of the box — 2026-11-04
+- **Directed:** each example should load its own portfolio with a cash-like holding, and a
+  goal with a meaningful required return.
+- **Built by Claude Code:**
+  - `EXAMPLE_HOLDINGS`, loaded with the example as USD amounts of its portfolio value. Each
+    includes a cash-like fund: BIL for Dubai and Doha, SPSK sukuk for Riyadh.
+  - New goals:
+    - Dubai: USD 1.1m for retirement in 10 years (4.84% needed).
+    - Riyadh: USD 1.1m capital in 5 years (4.06%).
+    - Doha: USD 2.5m financial independence in 20 years (6.70%).
+- **Checked on live data:**
+  - Dubai and Doha pass every IPS rule out of the box. For Doha the rule advises keeping the
+    portfolio: no method beats it by 0.05 Sharpe.
+  - Riyadh meets its cash need but fails volatility, 9.35% against 9.00%. The optimiser
+    confirms the lowest volatility its limits allow is 9.32%.
+- **Finding:** in this Sharia universe, no portfolio meets band 2 under a 25% cap with at
+  least 30% in GCC (a 5% grid search: 0 of all mixes). SPSK is the only low-risk Sharia fund
+  in the list, and BIL can't be used because T-bills pay interest. An early search looked
+  feasible only because SPRE shortened the sample and left out the 2020 crash.
+- **Open question:** add a second verified Sharia cash or sukuk fund, or let the adviser
+  widen the Riyadh IPS?
+- **Status:** 891 tests passing.
