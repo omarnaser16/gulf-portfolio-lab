@@ -1,5 +1,8 @@
 # Gulf Portfolio Lab
 
+🔗 **Live demo:** *LINK PENDING: add the Streamlit Community Cloud URL after deploying*
+· 🧭 **How it fits together:** [ARCHITECTURE.md](ARCHITECTURE.md)
+
 **An AI-assisted portfolio analyst for GCC and global investors, where the AI is not allowed to do the maths.**
 
 Gulf Portfolio Lab is a tested Python finance engine (data, risk metrics, portfolio optimisation,
@@ -9,8 +12,6 @@ investor profile ("I'm 35, in Dubai, investing in USD for 10 years…") by calli
 functions as tools. **Every number in the memo is copied from a tool result and cites the tool, and
 code flags any figure that no tool produced.**
 
-> 🔗 **Live demo:** *add the Streamlit Community Cloud link here after deploying*
->
 > **Not investment advice.** This is an educational portfolio project. Past performance does not
 > predict future results.
 
