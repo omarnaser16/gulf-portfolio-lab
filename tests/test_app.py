@@ -206,6 +206,21 @@ def test_frontier_tab_follows_the_cap(app: AppTest, cap: float) -> None:
     assert any(f"{cap:.2%}" in c.value for c in app.caption)  # the cap in use is shown
 
 
+def test_frontier_obeys_the_default_cap_after_a_change_is_undone(app: AppTest) -> None:
+    # Regression for a once-seen, never-reproduced bug: the Frontier showed weights for a 75% cap
+    # with the 40% default in place. Check a fresh session, then 75% and back to 40% (stale state).
+    default = app.slider(key="max_weight").value
+    assert default == pytest.approx(0.40)
+    assert (_frontier_weights(app).max(axis=1) <= default + 1e-9).all()
+    app.slider(key="max_weight").set_value(0.75).run()
+    assert _frontier_weights(app).max(axis=1).max() > default  # the looser cap is really used
+    app.slider(key="max_weight").set_value(default).run()
+    assert not app.exception, app.exception
+    weights = _frontier_weights(app)
+    assert (weights.max(axis=1) <= default + 1e-9).all(), weights.max(axis=1)
+    assert any(f"{default:.2%}" in c.value for c in app.caption)
+
+
 def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
     """Assets and Backtest-tab metric tables (static st.table, so headers can wrap)."""
     tables = [
