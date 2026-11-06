@@ -810,6 +810,7 @@ def render_rebalance(
             "Action": trades["action"],
             "Amount (USD)": trades["trade_usd"].abs().map("{:,.2f}".format),
             "Est. units": trades["units"].map(lambda u: "–" if pd.isna(u) else f"{abs(u):,.2f}"),
+            "Cost rate": trades["cost_bps"].map("{:g} bps".format),
             "Est. cost (USD)": trades["cost_usd"].map("{:,.2f}".format),
             "After (USD)": trades["target_usd"].map("{:,.2f}".format),
         },

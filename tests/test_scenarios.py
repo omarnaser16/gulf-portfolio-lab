@@ -225,3 +225,4 @@ def test_trade_list_charges_each_market_its_own_rate() -> None:
     assert t["cost_usd"].sum() == pytest.approx(40.0, rel=1e-3)  # ~10,000 x (0.3% + 0.1%)
     buys = t.loc[t.trade_usd > 0, "trade_usd"].sum()
     assert buys + t["cost_usd"].sum() == pytest.approx(-t.loc[t.trade_usd < 0, "trade_usd"].sum())
+    assert t["cost_bps"].to_dict() == {"SPY": 10.0, "2222.SR": 30.0}  # the rate each one pays

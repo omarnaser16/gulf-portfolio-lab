@@ -480,15 +480,25 @@ def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
 
 
 def trade_section(trades: pd.DataFrame, cost_bps: float, cash: dict | None = None) -> dict:
-    """``gpl.scenarios.trade_list`` (and ``cash_need_check``) output, formatted."""
+    """``gpl.scenarios.trade_list`` (and ``cash_need_check``) output, formatted.
+
+    Each trade shows the cost rate its market charges (``cost_bps`` column; ``cost_bps``
+    for every holding if the column is missing), and the summary lists the rates used.
+    """
     moved = trades[trades["action"] != "Hold"]
-    rows = [["Holding", "Action", "Amount (USD)", "Est. cost (USD)", "After (USD)"]]
+    rates = (
+        moved["cost_bps"].astype(float)
+        if "cost_bps" in moved
+        else pd.Series(float(cost_bps), index=moved.index)
+    )
+    rows = [["Holding", "Action", "Amount (USD)", "Cost rate", "Est. cost (USD)", "After (USD)"]]
     for t, r in moved.iterrows():
         rows.append(
             [
                 str(t),
                 r["action"],
                 f"{abs(r['trade_usd']):,.0f}",
+                f"{rates[t]:g} bps",
                 f"{r['cost_usd']:,.0f}",
                 f"{r['target_usd']:,.0f}",
             ]
@@ -496,10 +506,16 @@ def trade_section(trades: pd.DataFrame, cost_bps: float, cash: dict | None = Non
     sells = -trades.loc[trades.trade_usd < 0, "trade_usd"].sum()
     buys = trades.loc[trades.trade_usd > 0, "trade_usd"].sum()
     costs = trades["cost_usd"].sum()
+    by_rate = "; ".join(
+        f"{rate:g} bps on {', '.join(map(str, rates.index[rates == rate]))}"
+        for rate in sorted(rates.unique())
+    )
     out = {
         "rows": rows,
         "summary": f"Sales of USD {sells:,.0f} pay for purchases of USD {buys:,.0f} and estimated "
-        f"trading costs of USD {costs:,.0f} ({cost_bps:g} basis points); no new money is needed.",
+        f"trading costs of USD {costs:,.0f}"
+        + (f" ({by_rate})" if by_rate else "")
+        + "; no new money is needed.",
         "cash": None,
     }
     if cash is not None:
@@ -944,7 +960,10 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
         )
     else:
         story.append(
-            table(inputs.trades["rows"], widths=[30 * mm, 22 * mm, 40 * mm, 40 * mm, 42 * mm])
+            table(
+                inputs.trades["rows"],
+                widths=[28 * mm, 18 * mm, 34 * mm, 22 * mm, 34 * mm, 38 * mm],
+            )
         )
         story += _bullets(
             [inputs.trades["summary"], *([inputs.trades["cash"]] if inputs.trades["cash"] else [])]

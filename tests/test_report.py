@@ -233,6 +233,42 @@ def test_recommendation_and_trade_sections() -> None:
     assert "USD 5,010 short of the USD 25,000" in section["cash"]
 
 
+def test_trade_summary_shows_the_cost_rate_each_market_paid() -> None:
+    from gpl.report import trade_section
+
+    # 10 bps on US listings, 30 bps on Tadawul, 35 bps on DFM: the summary must say so
+    trades = pd.DataFrame(
+        {
+            "trade_usd": [-20_000.0, 10_000.0, 9_935.0, 0.0],
+            "target_usd": [30_000.0, 10_000.0, 9_935.0, 50_000.0],
+            "cost_usd": [20.0, 30.0, 34.77, 0.0],
+            "cost_bps": [10.0, 30.0, 35.0, 10.0],
+            "action": ["Sell", "Buy", "Buy", "Hold"],
+        },
+        index=["SPY", "2222.SR", "EMAAR.AE", "AGG"],
+    )
+    section = trade_section(trades, 10)
+    assert section["rows"][0] == [
+        "Holding", "Action", "Amount (USD)", "Cost rate", "Est. cost (USD)", "After (USD)"
+    ]  # fmt: skip
+    assert [r[3] for r in section["rows"][1:]] == ["10 bps", "30 bps", "35 bps"]
+    assert "basis points)" not in section["summary"]  # no single blanket rate
+    assert "estimated trading costs of USD 85" in section["summary"]
+    assert "(10 bps on SPY; 30 bps on 2222.SR; 35 bps on EMAAR.AE)" in section["summary"]
+
+
+def test_trade_summary_without_per_row_rates_uses_the_one_rate() -> None:
+    from gpl.report import trade_section
+
+    trades = pd.DataFrame(
+        {"trade_usd": [-1_000.0], "target_usd": [9_000.0], "cost_usd": [1.0], "action": ["Sell"]},
+        index=["SPY"],
+    )
+    section = trade_section(trades, 10)
+    assert section["rows"][1][3] == "10 bps"
+    assert "(10 bps on SPY)" in section["summary"]
+
+
 def test_report_shows_the_recommendation_trades_bullets_and_sign_off(ctx) -> None:
     from gpl.report import recommendation_section, trade_section
 

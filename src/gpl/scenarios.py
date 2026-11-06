@@ -206,8 +206,9 @@ def trade_list(
     -------
     pd.DataFrame
         Per holding: ``current_usd``, ``target_usd``, ``trade_usd`` (positive = buy),
-        ``action``, ``units`` (estimated, fractional) and ``cost_usd``. Costs are paid from
-        the sales: targets are applied to the value after costs, so buys + costs = sells.
+        ``action``, ``units`` (estimated, fractional), ``cost_usd`` and ``cost_bps`` (the
+        rate that holding's market charges). Costs are paid from the sales: targets are
+        applied to the value after costs, so buys + costs = sells.
     """
     if abs(float(target.sum()) - 1) > 1e-6:
         raise ValueError(f"Target weights add up to {target.sum():.2%}; they must add up to 100%.")
@@ -235,6 +236,7 @@ def trade_list(
     out["action"] = ["Buy" if x > 0.005 else "Sell" if x < -0.005 else "Hold" for x in trades]
     out["units"] = trades / prices_usd.reindex(tickers)
     out["cost_usd"] = trades.abs() * rate
+    out["cost_bps"] = rate * 1e4
     return out
 
 
