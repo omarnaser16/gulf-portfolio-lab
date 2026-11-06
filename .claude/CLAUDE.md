@@ -1,6 +1,6 @@
 # CLAUDE.md — Gulf Portfolio Lab
 
-Instructions for Claude Code on this project. Scope, architecture and plan live in @BRIEF.md.
+Instructions for Claude Code on this project. Scope, architecture and plan live in @../docs/BRIEF.md (the original brief; current design in ARCHITECTURE.md and docs/METHODOLOGY.md).
 
 ## Context
 Omar Naser, a finance and business graduate, is building this as a portfolio project for master's
@@ -68,8 +68,9 @@ it switched to build + explain mode, which has been used since:
 - **Cash needs:** dated (YYYY-MM); those due within `cash_need_window_months` (36) must be held
   in cash-like holdings (`client.cash_like_holdings`: the "Cash & short-term" group, config
   `cash_like`, or volatility <= 3%). They are a hard optimiser set and checked on the trade list.
-- **UI:** dark theme (`.streamlit/config.toml`) and one plotly template (`gpl_dark`); show figures
-  with `formatting.plot` (theme=None). Benchmarks are grey dashed reference series. No sidebar:
+- **UI:** light private-bank theme (`.streamlit/config.toml`) and one plotly template
+  (`gpl_light`); show figures with `formatting.plot` (theme=None). Six-step workflow with a stepper
+  and sticky header (`app/layout.py`). Benchmarks are grey dashed reference series. No sidebar:
   settings live in the top-bar popover.
 
 ## Code style
@@ -122,6 +123,6 @@ streamlit run app/streamlit_app.py
 - Don't change finance behaviour without explaining why and showing the effect on results.
 
 ## Learning log
-At the end of every session, append to `PROGRESS.md`: date, what was built (by Claude Code, at
+At the end of every session, append to `docs/PROGRESS.md`: date, what was built (by Claude Code, at
 Omar's direction), what Omar reviewed or decided, concepts learned, open questions and next step.
 Written in Omar's voice; short and honest.

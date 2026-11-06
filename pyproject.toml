@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gulf-portfolio-lab"
 version = "0.1.0"
 description = "An AI-agent portfolio analyst for GCC and global investors."
-readme = "BRIEF.md"
+readme = "README.md"
 requires-python = ">=3.14"
 authors = [{ name = "Omar Naser" }]
 dependencies = [

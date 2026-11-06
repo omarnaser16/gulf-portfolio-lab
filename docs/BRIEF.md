@@ -1,5 +1,8 @@
 # Gulf Portfolio Lab — Project Brief
 
+> Original brief (23 Oct 2026), kept as history. The project has since grown well beyond it:
+> see [ARCHITECTURE.md](../ARCHITECTURE.md) and [METHODOLOGY.md](METHODOLOGY.md) for the current design.
+
 **An AI-agent portfolio analyst for GCC and global investors.**
 A Python finance engine (data, risk, optimisation, backtesting, simulation) with an ML regime classifier,
 an Anthropic-API agent that calls the engine's functions as tools and writes an investment memo, and a
@@ -10,7 +13,7 @@ Core design principle: **the maths is deterministic, tested Python; the AI only 
 ---
 
 ## 1. Why this project
-- Shows the finance a master's in Investment & Wealth Management builds on: return/risk measurement,
+- Shows the finance a master's in finance builds on: return/risk measurement,
   modern portfolio theory, risk parity, backtesting discipline, Monte Carlo.
 - Shows engineering habits: tests, clean modules, reproducibility, no look-ahead bias.
 - Shows sensible AI use: an agent that is auditable because it cannot invent numbers.
