@@ -241,22 +241,64 @@ def test_improve_strategy_swaps_and_caps_turnover() -> None:
     assert (steps <= 0.3 + 1e-6).all()  # every rebalance within the 30% limit
 
 
-def test_limits_come_before_the_turnover_limit_by_hand() -> None:
-    from gpl.construct import limit_turnover_within
+def test_closest_compliant_move_keeps_the_turnover_limit_by_hand() -> None:
+    from gpl.construct import compliant_move
 
     current = pd.Series({"A": 0.5, "B": 0.3, "C": 0.2})  # A breaks the 40% cap
-    target = pd.Series({"A": 0.3, "B": 0.4, "C": 0.3})
+    target = pd.Series({"A": 0.3, "B": 0.4, "C": 0.3})  # full move: turnover 0.40
     spec = OptimisationSpec(max_weight=0.4)
-    # the full move trades 0.40; a 0.10 limit allows a quarter of it, but A must fall from
-    # 50% to 40%: (0.5 - 0.4) / (0.5 - 0.3) = half of the move
-    w, share, need = limit_turnover_within(current, target, 0.10, spec)
-    assert need == pytest.approx(0.5) and share == pytest.approx(0.5)
-    assert w["A"] == pytest.approx(0.40) and turnover(current, w) == pytest.approx(0.20)
-    _, share, _ = limit_turnover_within(current, target, 1.0, spec)
-    assert share == 1.0  # the turnover limit allows the whole move
-    within = pd.Series({"A": 0.4, "B": 0.35, "C": 0.25})  # already within the cap
-    w, share, need = limit_turnover_within(within, target, 0.10, spec)
-    assert need == 0.0 and turnover(within, w) == pytest.approx(0.10)
+    # meeting the cap needs at least 0.20 (sell 10% of A, buy 10% elsewhere); a 0.10 limit
+    # gets half way there: A at 45%, still over the cap, and the limit is kept
+    m = compliant_move(current, target, 0.10, spec)
+    assert m.turnover == pytest.approx(0.10) and m.weights["A"] == pytest.approx(0.45)
+    assert m.least_turnover == pytest.approx(0.20) and m.full_turnover == pytest.approx(0.40)
+    assert not m.meets_limits
+    # 0.30 is enough to meet the cap (0.20) and spend the rest moving towards the target
+    m = compliant_move(current, target, 0.30, spec)
+    assert m.meets_limits and m.weights["A"] <= 0.40 + 1e-9
+    assert m.turnover == pytest.approx(0.30, abs=1e-6) and m.weights.sum() == pytest.approx(1.0)
+    # the limit allows the whole move: the target itself
+    m = compliant_move(current, target, 0.50, spec)
+    assert m.turnover == pytest.approx(0.40) and m.weights["A"] == pytest.approx(0.30)
+    assert m.meets_limits
+    # already within the limits: part-way along the line, as limit_turnover
+    within = pd.Series({"A": 0.4, "B": 0.35, "C": 0.25})
+    m = compliant_move(within, target, 0.10, spec)
+    w, _ = limit_turnover(within, target, 0.10)
+    assert m.meets_limits and m.weights.to_dict() == pytest.approx(w.to_dict())
+
+
+def test_least_turnover_point_heads_for_the_target() -> None:
+    from gpl.construct import least_turnover_point
+
+    current = pd.Series({"A": 0.6, "B": 0.2, "C": 0.2})  # A is 20 pp over a 40% cap
+    spec = OptimisationSpec(max_weight=0.4)
+    # any split of the 20% sold costs the same 0.40 turnover; the target wants it all in C
+    p = least_turnover_point(current, spec, toward=pd.Series({"A": 0.3, "B": 0.2, "C": 0.5}))
+    assert p.to_dict() == pytest.approx({"A": 0.4, "B": 0.2, "C": 0.4})
+    assert turnover(current, p) == pytest.approx(0.40)
+
+
+def test_closest_compliant_move_when_the_limits_cannot_be_met() -> None:
+    from gpl.construct import compliant_move
+
+    current = pd.Series({"A": 0.5, "B": 0.5})
+    target = pd.Series({"A": 0.4, "B": 0.6})
+    m = compliant_move(current, target, 0.10, OptimisationSpec(max_weight=0.3))  # 2 x 30% < 1
+    assert not m.meets_limits and m.turnover <= 0.10 + 1e-9
+    assert m.least_turnover != m.least_turnover  # NaN: no portfolio meets them
+
+
+def test_turnover_limited_keeps_the_limit_while_moving_towards_the_limits() -> None:
+    r = _returns()
+    target = pd.Series({"EQ1": 0.3, "BD1": 0.3, "CSH": 0.4})
+    spec = OptimisationSpec(max_weight=0.4)
+    st = turnover_limited(lambda window: target, {"EQ1": 0.9, "CSH": 0.1}, 0.2, spec)
+    out = [st(r.iloc[:10]) for _ in range(6)]
+    assert turnover(pd.Series({"EQ1": 0.9, "CSH": 0.1}), out[0]) == pytest.approx(0.2)
+    for a, b in zip(out, out[1:], strict=False):
+        assert turnover(a, b) <= 0.2 + 1e-9
+    assert out[-1]["EQ1"] <= 0.4 + 1e-9  # the cap is met after a few months
 
 
 def test_policy_benchmark_fits_the_ips_by_construction() -> None:

@@ -126,7 +126,13 @@ from gpl.scenarios import (
     trade_list,
     trades_covering_cash_need,
 )
-from gpl.suitability import breach_text, check_suitability, rationale, suitability_table
+from gpl.suitability import (
+    breach_text,
+    check_suitability,
+    failures,
+    rationale,
+    suitability_table,
+)
 
 CFG = load_universe()
 COST_BY_SUFFIX = CFG.get("trading_costs", {}).get("by_suffix", {})  # market rates, bps
@@ -1309,6 +1315,80 @@ def initial_draft() -> dict:
     return draft
 
 
+IMPROVE_MOVE = "improve_move"
+FULL_MOVE = "Full restructure to target"
+
+
+def full_move_chosen(result: dict) -> bool:
+    """Did the adviser choose the full restructure for the recommended method (Improve)?"""
+    run = result["run"]
+    return (
+        str(st.session_state.get(IMPROVE_MOVE, "")).startswith(FULL_MOVE)
+        and run.full_targets is not None
+        and run.recommendation.choice in run.full_targets.index
+    )
+
+
+def optimise_weights(result: dict) -> pd.DataFrame:
+    """Latest weights per method; the recommended row is its full target if the adviser chose
+    the full restructure, else today's move within the turnover limit (the default)."""
+    run = result["run"]
+    if not full_move_chosen(result):
+        return run.latest_weights
+    latest = run.latest_weights.copy()
+    choice = run.recommendation.choice
+    latest.loc[choice] = run.full_targets.loc[choice].reindex(latest.columns).fillna(0.0)
+    return latest
+
+
+def move_options(report: dict, choice: str) -> list[str]:
+    """The two moves the adviser chooses between, each with its turnover (and cost)."""
+    lim = report["turnover_limited_move"][choice]
+    full = report["full_restructure_to_target"][choice]
+    meets = (
+        "meets every weight and group limit"
+        if lim["meets_weight_and_group_limits"] == "yes"
+        else "still outside a weight or group limit"
+    )
+    cost = (
+        f"USD {full['estimated_cost_usd']}"
+        if "estimated_cost_usd" in full
+        else f"{full['estimated_cost_pct_of_portfolio']} of the portfolio"
+    )
+    return [
+        f"Closest compliant move within {report['max_turnover']} turnover: {lim['turnover']} "
+        f"traded, {meets}",
+        f"{FULL_MOVE}: {full['turnover']} turnover, estimated cost {cost}; IPS: "
+        f"{full['passes_ips']}",
+    ]
+
+
+def _apply_improve_move() -> None:
+    """Callback: the adviser's choice of move becomes the proposal (Analyst, Trades, report)."""
+    result = st.session_state.get("ws_opt")
+    if not result:
+        return
+    run = result["run"]
+    choice = run.recommendation.choice
+    w = optimise_weights(result).loc[choice]
+    full = full_move_chosen(result)
+    fails = (
+        bool(failures(run.full_checks.get(choice, [])))
+        if full
+        else run.recommendation.status == "closest_fails"
+    )
+    label = "full restructure" if full else "within the turnover limit"
+    shared_context().proposed = {
+        "name": f"{choice} ({label}{'; fails the IPS' if fails else ''})",
+        "weights": w[w > 0].to_dict(),
+        "source": f"Optimise recommendation ({FULL_MOVE.lower()}, chosen by the adviser)"
+        if full
+        else "Optimise recommendation"
+        if not fails
+        else "Optimise (closest; fails the IPS)",
+    }
+
+
 def _results_section(result: dict, ai_ok: bool) -> None:
     report, run = result["report"], result["run"]
     rec = report["recommendation"]
@@ -1407,24 +1487,30 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         st.markdown(f"🔁 **Swap ({swap['kind']})**: {swap['why']}")
     for idea in report.get("domicile_suggestions_information_not_tax_advice", []):
         st.caption(f"🏛 **Domicile (information, not tax advice):** {idea['why']}")
+    latest = optimise_weights(result)
     if report.get("mode") == "improve":
         st.caption(
             f"Turnover limit {report['max_turnover']} of the portfolio: each month's move, and "
-            "today's suggested change from your current weights, stay within it unless your "
-            "limits need more."
+            "today's suggested change from your current weights, stay within it. If today's "
+            "portfolio breaks a weight or group limit, the move heads for the least-turnover "
+            "portfolio that meets them and stops at the limit."
         )
-        for name, traded in report.get(
-            "trades_more_than_the_turnover_limit_to_meet_the_limits", {}
-        ).items():
-            st.warning(
-                f"**{name}** trades {traded} of the portfolio, above the "
-                f"{report['max_turnover']} turnover limit, because meeting your limits needs it."
+        if rec["choice"] in report.get("full_restructure_to_target", {}):
+            st.radio(
+                f"Today's move for {rec['choice']} (the adviser chooses)",
+                move_options(report, rec["choice"]),
+                key=IMPROVE_MOVE,
+                on_change=_apply_improve_move,
+                help="Default: keep the turnover limit. The full restructure goes all the way "
+                "to the method's target today; its turnover and estimated cost (at each "
+                "market's rate) are shown. Your choice feeds the suitability checks, the trade "
+                "list and the client report.",
             )
-    if len(run.latest_weights) > 1:
+    if len(latest) > 1:
         st.markdown("**Latest weights of each method** (what it would hold now)")
-        st.table(run.latest_weights.map(pct))
+        st.table(latest.map(pct))
         if rec["choice"] != KEEP:
-            pair = run.latest_weights.loc[["Current", rec["choice"]]]
+            pair = latest.loc[["Current", rec["choice"]]]
             pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
             plot(
                 paired_bars_chart(
@@ -1448,9 +1534,9 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             width="stretch",
         )
     st.info(report["caveats"])
-    candidates = {"Current": run.latest_weights.loc["Current"]}
+    candidates = {"Current": latest.loc["Current"]}
     if rec["choice"] != KEEP:
-        candidates[rec["choice"]] = run.latest_weights.loc[rec["choice"]]
+        candidates[rec["choice"]] = latest.loc[rec["choice"]]
     render_suitability(candidates, "opt")
 
     if ai_ok and st.button("Explain the recommendation (AI memo)", key="ws_opt_memo"):
@@ -1646,6 +1732,7 @@ def render_optimise() -> None:
         max_turnover, use_swaps, max_swaps,
     )  # fmt: skip
     if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
+        st.session_state.pop(IMPROVE_MOVE, None)  # a new run starts on the default move
         with st.spinner("Re-optimising each method month by month and backtesting…"):
             uni = universe_data(True) if use_swaps else None
             report, run = run_candidates(
@@ -2445,15 +2532,61 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
     if not opt:
         return None, None
     report, run = opt["report"], opt["run"]
-    rec = recommendation_section(report, run.latest_weights)
+    latest = optimise_weights(opt)
+    rec = recommendation_section(report, latest)
+    if full_move_chosen(opt) and rec["choice"]:
+        full = report["full_restructure_to_target"][rec["choice"]]
+        passes = full["passes_ips"] in ("yes", "no IPS")  # no IPS: no gate to pass
+        rec["failed"] = [  # the rules the full target breaks, not today's limited move
+            breach_text(c) for c in failures(run.full_checks.get(rec["choice"], []))
+        ]
+        cost = full.get("estimated_cost_usd")
+        rec["reasons"].append(
+            f"The adviser chose the full restructure to the {rec['choice']} target: "
+            f"{full['turnover']} of the portfolio traded"
+            + (f", estimated cost USD {cost}" if cost else "")
+            + (
+                "."
+                if full["passes_ips"] == "no IPS"
+                else "; it passes every IPS rule."
+                if passes
+                else f"; it does not pass the IPS ({full['passes_ips'][4:]})."
+            )
+        )
+        if passes and rec["status"] == "closest_fails":
+            rec["headline"] = (
+                f"Within the {report['max_turnover']} turnover limit no move meets the IPS; "
+                f"the adviser chose the full restructure to the {rec['choice']} portfolio, "
+                "which passes every IPS rule."
+            )
+            rec["status"] = "recommended"
+    elif (
+        report.get("mode") == "improve"
+        and rec["choice"] in report.get("full_restructure_to_target", {})
+        and report["full_restructure_to_target"][rec["choice"]]["turnover"]
+        != report["turnover_limited_move"][rec["choice"]]["turnover"]
+    ):
+        full = report["full_restructure_to_target"][rec["choice"]]
+        lim = report["turnover_limited_move"][rec["choice"]]
+        cost = full.get("estimated_cost_usd")
+        rec["reasons"].append(
+            f"This is the closest compliant move within the {report['max_turnover']} turnover "
+            f"limit ({lim['turnover']} traded). A full restructure to the {rec['choice']} target "
+            f"would trade {full['turnover']}"
+            + (f" (estimated cost USD {cost})" if cost else "")
+            + "; your adviser can choose it instead."
+        )
     if rec["choice"] in run.equity and "Benchmark" in run.equity:
         daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
         rec["relative_drawdown"] = relative_drawdown(
             daily[rec["choice"]], daily["Benchmark"]
         ).rename(rec["choice"])
     value = portfolio_value()
-    if rec["choice"] is None or rec["status"] == "closest_fails" or not value:
-        return rec, None
+    full_fails = full_move_chosen(opt) and report["full_restructure_to_target"][rec["choice"]][
+        "passes_ips"
+    ] not in ("yes", "no IPS")
+    if rec["choice"] is None or rec["status"] == "closest_fails" or full_fails or not value:
+        return rec, None  # trades only for a portfolio that passes the IPS
     usd = st.session_state.get(ws.MODE) == ws.USD
     current = pd.Series(my_weights)
     values = (
@@ -2463,7 +2596,7 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
         if usd
         else current * value
     )
-    target = run.latest_weights.loc[rec["choice"]].fillna(0.0)
+    target = latest.loc[rec["choice"]].fillna(0.0)
     target = target / target.sum()
     prices = pd.Series({t: getattr(get_quote(t), "price_usd", None) for t in target.index})
     need = cash_need_for_trades()
@@ -2527,7 +2660,7 @@ def render_report_button() -> None:
             rec, trades = report_recommendation()
             checked = {"Current": pd.Series(my_weights)}
             if rec and rec["choice"]:  # the optimiser's portfolio, never a chat what-if
-                latest = st.session_state.ws_opt["run"].latest_weights
+                latest = optimise_weights(st.session_state.ws_opt)
                 checked[rec["choice"]] = latest.loc[rec["choice"]].fillna(0.0)
             results = suitability_results(checked)
             record, edited = "", False

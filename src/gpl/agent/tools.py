@@ -18,7 +18,7 @@ from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent.charts import CHART_TYPES
 from gpl.client import effective_regulator
-from gpl.construct import limit_turnover_within, turnover, turnover_limited
+from gpl.construct import compliant_move, turnover, turnover_limited
 from gpl.data import (
     BenchmarkData,
     clean_prices,
@@ -595,6 +595,10 @@ class CandidateRun:
     latest_weights: pd.DataFrame  # rows = Current + candidates, columns = holdings
     recommendation: Any  # gpl.recommend.Recommendation
     ips_checks: dict = field(default_factory=dict)  # name -> list[Check]; empty without an IPS
+    # Improve with a turnover limit: each method's own target ("full restructure") and its
+    # IPS checks; ``latest_weights`` holds today's move, which keeps the turnover limit
+    full_targets: pd.DataFrame | None = None
+    full_checks: dict = field(default_factory=dict)
 
 
 def run_candidates(
@@ -734,20 +738,19 @@ def run_candidates(
     )
     latest.loc[CURRENT] = w_now.reindex(columns).fillna(0.0)
     latest = latest.loc[[CURRENT, *[n for n in latest.index if n != CURRENT]]]
-    move_share, over_limit = {}, {}
+    moves, full_targets = {}, None
     if max_turnover is not None:  # today's change, from the actual current weights
-        for name in latest.index.drop(CURRENT):
-            target_w = latest.loc[name]
-            w, move_share[name], need = limit_turnover_within(w_now, target_w, max_turnover, limits)
-            w = (w / w.sum()).reindex(columns).fillna(0.0)
-            if need > 0 and turnover(w_now, w) > max_turnover + 1e-9:
-                over_limit[name] = pct(turnover(w_now, w))
-            latest.loc[name] = w
+        full_targets = latest.drop(index=CURRENT).copy()  # each method's own target
+        for name in full_targets.index:
+            moves[name] = compliant_move(w_now, full_targets.loc[name], max_turnover, limits)
+            latest.loc[name] = moves[name].weights.reindex(columns).fillna(0.0)
 
     # identical methods are shown once (e.g. min variance and risk parity at the same cap)
     same_as, same_weights = duplicate_candidates(latest, table)
     table = table.drop(index=list(same_as))
     latest = latest.drop(index=list(same_as))
+    if full_targets is not None:
+        full_targets = full_targets.drop(index=list(same_as), errors="ignore")
 
     # suitability gate: every portfolio is checked against the client's IPS at its latest weights
     ips_checks = {}
@@ -761,6 +764,12 @@ def run_candidates(
             closeness(ips_checks[n])[1] if n in ips_checks else 0.0 for n in table.index
         ]
         table["passes_ips"] = [n in ips_checks and not failures(ips_checks[n]) for n in table.index]
+    full_checks = {}
+    if ctx.ips is not None and full_targets is not None:
+        full_checks = {
+            n: _ips_checks(ctx, full_targets.loc[n].fillna(0.0), universe)
+            for n in full_targets.index
+        }
     rec = recommend(
         goal,
         table,
@@ -840,8 +849,44 @@ def run_candidates(
     if max_turnover is not None:
         report["mode"] = "improve"
         report["max_turnover"] = pct(max_turnover)
-        report["share_of_full_move_taken"] = {n: pct(v) for n, v in move_share.items()}
-        report["trades_more_than_the_turnover_limit_to_meet_the_limits"] = over_limit
+        report["turnover_limit_rule"] = (
+            "Default: the closest compliant move within the turnover limit. If today's "
+            "portfolio breaks a weight or group limit, the move first heads for the "
+            "least-turnover portfolio that meets them, and stops at the turnover limit. The "
+            "full restructure to each method's target is an option for the adviser, with its "
+            "turnover and estimated cost."
+        )
+        rates = bt.cost_rates(
+            list(columns), ctx.settings.get("cost_bps", 10.0), ctx.settings.get("cost_by_suffix")
+        )
+        value = getattr(ctx, "portfolio_value", None)
+        report["turnover_limited_move"], report["full_restructure_to_target"] = {}, {}
+        for name in full_targets.index:
+            m = moves[name]
+            report["turnover_limited_move"][name] = {
+                "turnover": pct(m.turnover),
+                "meets_weight_and_group_limits": "yes" if m.meets_limits else "no",
+                "least_turnover_to_meet_them": (
+                    "none can" if pd.isna(m.least_turnover) else pct(m.least_turnover)
+                ),
+            }
+            target_w = full_targets.loc[name].reindex(columns).fillna(0.0)
+            traded = (target_w - w_now.reindex(columns).fillna(0.0)).abs()
+            cost = float((traded * rates.reindex(columns).fillna(0.0)).sum() / 1e4)
+            row = {
+                "turnover": pct(turnover(w_now, target_w)),
+                "estimated_cost_pct_of_portfolio": pct(cost),
+            }
+            if value:
+                row["estimated_cost_usd"] = f"{cost * value:,.0f}"
+            if name in full_checks:
+                failed = failures(full_checks[name])
+                row["passes_ips"] = (
+                    "yes" if not failed else "no: " + ", ".join(c.rule for c in failed)
+                )
+            else:
+                row["passes_ips"] = "no IPS"
+            report["full_restructure_to_target"][name] = row
     if swaps_run is not None:
         report["swaps"] = [
             {"kind": sw.kind, "sell": sw.remove, "buy": sw.add, "why": sw.reason}
@@ -867,7 +912,7 @@ def run_candidates(
             if latest.loc[rec.choice, t] > 1e-9 or w_now_all[t] > 1e-9
         }
     equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns if n not in same_as})
-    return report, CandidateRun(equity, latest, rec, ips_checks)
+    return report, CandidateRun(equity, latest, rec, ips_checks, full_targets, full_checks)
 
 
 LEAD_METHOD = {  # the goal's own method, used for "Re-weight + swaps"

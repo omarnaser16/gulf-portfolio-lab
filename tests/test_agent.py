@@ -518,6 +518,30 @@ def test_improve_caps_turnover_runs_swaps_and_lists_domicile_ideas(ctx) -> None:
     assert any(d["sell"] == "SPY" and d["buy"] == "CSPX.L" for d in dom)
 
 
+def test_improve_keeps_the_turnover_limit_and_offers_a_full_restructure(ctx) -> None:
+    from gpl.agent.tools import run_candidates
+    from gpl.construct import turnover
+    from gpl.optimise import OptimisationSpec
+
+    current = {"SPY": 0.7, "AGG": 0.2, "GLD": 0.1}  # SPY breaks the 40% cap
+    report, run = run_candidates(
+        ctx, "max_risk_adjusted", OptimisationSpec(max_weight=0.4), current, max_turnover=0.10
+    )
+    now = pd.Series(current)
+    moves, full = report["turnover_limited_move"], report["full_restructure_to_target"]
+    assert "trades_more_than_the_turnover_limit_to_meet_the_limits" not in report
+    for name in run.latest_weights.index.drop("Current"):
+        # the default move keeps the 10% limit, even though SPY stays over the cap
+        assert turnover(now, run.latest_weights.loc[name]) <= 0.10 + 1e-6, name
+        assert moves[name]["meets_weight_and_group_limits"] == "no"  # 30 pp over needs 0.60
+        # the full restructure is the method's own target, with its turnover and cost
+        target = run.full_targets.loc[name]
+        assert target["SPY"] <= 0.40 + 1e-6
+        assert full[name]["turnover"] == f"{turnover(now, target):.2%}"
+        assert full[name]["estimated_cost_pct_of_portfolio"].endswith("%")
+        assert full[name]["passes_ips"].startswith(("yes", "no"))
+
+
 def test_build_compounds_the_benchmark_onto_a_sparser_calendar(ctx) -> None:
     """Regression: a daily benchmark dropped onto a panel that skips days (a Gulf calendar)
     compared one day of benchmark with several days of portfolio, inflating tracking error

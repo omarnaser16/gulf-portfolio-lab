@@ -462,8 +462,9 @@ def turnover_limited(
     spec: OptimisationSpec | None = None,
 ):
     """Wrap a walk-forward strategy so each rebalance moves at most ``max_turnover`` from the
-    previous target, starting from the client's current weights. With ``spec``, the limits
-    come first (``limit_turnover_within``): a move never stops short of them."""
+    previous target, starting from the client's current weights. With ``spec``, each move is
+    the closest compliant move within the limit (``compliant_move``): if the current weights
+    break a weight or group limit, the portfolio moves towards meeting it month by month."""
     state = {"last": pd.Series(start, dtype=float)}
 
     def limited(window: pd.DataFrame) -> pd.Series:
@@ -471,7 +472,7 @@ def turnover_limited(
         if spec is None:
             w, _ = limit_turnover(state["last"], target, max_turnover)
         else:
-            w, _, _ = limit_turnover_within(state["last"], target, max_turnover, spec)
+            w = compliant_move(state["last"], target, max_turnover, spec).weights
         w = w / w.sum()
         state["last"] = w
         return w
@@ -690,32 +691,123 @@ def _linear_rows(
     return rows
 
 
-def limit_turnover_within(
-    current: pd.Series, target: pd.Series, max_turnover: float, spec: OptimisationSpec
-) -> tuple[pd.Series, float, float]:
-    """``limit_turnover``, but the limits come first: if the turnover limit would leave a
-    linear limit broken (e.g. a holding still above the cap), move just far enough to meet
-    every one. Returns (weights, share of the move taken, smallest share the limits need).
+@dataclass(frozen=True)
+class Move:
+    """Today's change from the current weights under a turnover limit (``compliant_move``)."""
 
-    Along the line from ``current`` (s = 0) to a ``target`` that meets the limits (s = 1),
-    each linear limit holds from some s onwards; the largest of those is the least the
-    limits need. E.g. 50% in one holding, a 40% cap and a target of 30%: s >= 0.5.
+    weights: pd.Series
+    turnover: float  # of this move
+    full_turnover: float  # all the way to the target ("full restructure")
+    least_turnover: float  # the least that meets every weight and group limit (NaN: none can)
+    meets_limits: bool  # every weight, group and set limit met by ``weights``
+
+
+def _meets_linear(w: pd.Series, spec: OptimisationSpec, tol: float = 1e-9) -> bool:
+    for coef, lo, hi in _linear_rows(spec, list(w.index)):
+        g = float(coef.reindex(w.index, fill_value=0.0) @ w)
+        if (hi is not None and g > hi + tol) or (lo is not None and g < lo - tol):
+            return False
+    return True
+
+
+def least_turnover_point(
+    current: pd.Series, spec: OptimisationSpec, toward: pd.Series | None = None
+) -> pd.Series | None:
+    """The portfolio closest to ``current`` (least turnover) that meets every weight, group
+    and set limit, by linear programming; None if no long-only portfolio meets them.
+
+    Minimise sum(d) with d >= w - w0 and d >= w0 - w, so sum(d) is the turnover; the limits
+    are linear, and the weights are long-only and add up to 1. Many portfolios can share the
+    least turnover (e.g. which holding receives what is sold); with ``toward``, a tiny second
+    term picks the one closest to it, so the move heads for the method's target.
+    """
+    from scipy.optimize import linprog
+
+    idx = list(current.index)
+    n = len(idx)
+    w0 = current.to_numpy(dtype=float)
+    w1 = w0 if toward is None else toward.reindex(idx, fill_value=0.0).to_numpy(dtype=float)
+    eye, zero = np.eye(n), np.zeros((n, n))
+    # variables: w, d (|w - w0|), e (|w - w1|)
+    a_ub = [
+        np.hstack([eye, -eye, zero]),  # w - d <= w0
+        np.hstack([-eye, -eye, zero]),  # -w - d <= -w0
+        np.hstack([eye, zero, -eye]),  # w - e <= w1
+        np.hstack([-eye, zero, -eye]),  # -w - e <= -w1
+    ]
+    b_ub = [w0, -w0, w1, -w1]
+    for coef, lo, hi in _linear_rows(spec, idx):
+        c = coef.reindex(idx, fill_value=0.0).to_numpy(dtype=float)
+        row = np.hstack([c, np.zeros(2 * n)])[None, :]
+        if hi is not None:
+            a_ub.append(row)
+            b_ub.append(np.array([hi]))
+        if lo is not None:
+            a_ub.append(-row)
+            b_ub.append(np.array([-lo]))
+    tie = 0.0 if toward is None else 1e-4  # far too small to buy extra turnover
+    res = linprog(
+        np.hstack([np.zeros(n), np.ones(n), np.full(n, tie)]),
+        A_ub=np.vstack(a_ub),
+        b_ub=np.hstack(b_ub),
+        A_eq=np.hstack([np.ones(n), np.zeros(2 * n)])[None, :],
+        b_eq=[1.0],
+        bounds=[(0, None)] * (3 * n),
+        method="highs",
+    )
+    if not res.success:
+        return None
+    return pd.Series(np.clip(res.x[:n], 0.0, None), index=idx)
+
+
+def compliant_move(
+    current: pd.Series, target: pd.Series, max_turnover: float, spec: OptimisationSpec
+) -> Move:
+    """The closest compliant move within ``max_turnover``: the turnover limit is kept.
+
+    1. If the whole move to ``target`` is within the limit, take it.
+    2. If ``current`` already meets the weight and group limits, move part-way towards
+       ``target`` (``limit_turnover``): every point on that line meets them too.
+    3. Otherwise find the least-turnover portfolio that meets them (``least_turnover_point``).
+       If it is within the limit, go there and spend what is left of the limit moving
+       towards ``target`` (both ends meet the limits, so the whole segment does). If not, go
+       as far towards it as the limit allows: closer to the limits, but still outside them.
+
+    E.g. 50% in A with a 40% cap: meeting the cap needs a turnover of 0.20 (sell 10% of A,
+    buy 10% elsewhere); a 0.10 limit gets half way, to 45% in A.
     """
     idx = current.index.union(target.index)
-    w0 = current.reindex(idx, fill_value=0.0)
-    w1 = target.reindex(idx, fill_value=0.0)
-    need = 0.0
-    for coef, lo, hi in _linear_rows(spec, list(idx)):
-        g0 = float(coef.reindex(idx, fill_value=0.0) @ w0)
-        g1 = float(coef.reindex(idx, fill_value=0.0) @ w1)
-        if hi is not None and g0 > hi + 1e-12 and g0 > g1:
-            need = max(need, (g0 - hi) / (g0 - g1))
-        if lo is not None and g0 < lo - 1e-12 and g1 > g0:
-            need = max(need, (lo - g0) / (g1 - g0))
-    _, share = limit_turnover(w0, w1, max_turnover)
-    share = min(1.0, max(share, need))
-    w = w0 + share * (w1 - w0)
-    return w[w.abs() > 1e-12], share, need
+    w0 = current.reindex(idx, fill_value=0.0).astype(float)
+    w1 = target.reindex(idx, fill_value=0.0).astype(float)
+    full = turnover(w0, w1)
+
+    def done(w: pd.Series, least: float) -> Move:
+        w = w.clip(lower=0.0)
+        w = w / w.sum()
+        return Move(w[w > 1e-12], turnover(w0, w), full, least, _meets_linear(w, spec))
+
+    if full <= max_turnover + 1e-12:
+        return done(w1, 0.0 if _meets_linear(w0, spec) else float("nan"))
+    if _meets_linear(w0, spec):
+        w, _ = limit_turnover(w0, w1, max_turnover)
+        return done(w.reindex(idx, fill_value=0.0), 0.0)
+    p = least_turnover_point(w0, spec, toward=w1)
+    if p is None:  # no portfolio meets the limits: keep the turnover limit along the line
+        w, _ = limit_turnover(w0, w1, max_turnover)
+        return done(w.reindex(idx, fill_value=0.0), float("nan"))
+    least = turnover(w0, p)
+    if least > max_turnover:
+        return done(w0 + (max_turnover / least) * (p - w0), least)
+    if not _meets_linear(w1, spec):
+        return done(p, least)
+    lo, hi = 0.0, 1.0  # turnover from w0 grows (convexly) along p -> w1: bisect for the limit
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if turnover(w0, p + mid * (w1 - p)) <= max_turnover:
+            lo = mid
+        else:
+            hi = mid
+    return done(p + lo * (w1 - p), least)
 
 
 # ------------------------------------------------------------------------ policy benchmark

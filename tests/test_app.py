@@ -1239,6 +1239,7 @@ def test_rebalance_trade_list_against_proposed_target(app: AppTest) -> None:
     trades = next(t.value for t in app.table if "Est. cost (USD)" in t.value.columns)
     assert trades.loc["SPY", "Action"] == "Sell" and trades.loc["AGG", "Action"] == "Buy"
     assert trades.loc["SPY", "Amount (USD)"] == "6,007.20"  # cash-neutral after 10 bps costs
+    assert trades.loc["SPY", "Cost rate"] == "10 bps"  # each trade shows its market's rate
     assert any(d.label == "Download trade list (CSV)" for d in app.get("download_button"))
     assert app.session_state["ctx"].rebalance["totals"]["costs_usd"] == "12.00"
 
@@ -1621,15 +1622,27 @@ def test_improve_mode_caps_turnover_and_explains_swaps(optimise_app) -> None:
     report, run = result["report"], result["run"]
     assert report["mode"] == "improve" and report["max_turnover"] == "20.00%"
     now = run.latest_weights.loc["Current"]
-    over = report["trades_more_than_the_turnover_limit_to_meet_the_limits"]
     for name in run.latest_weights.index.drop("Current"):
-        traded = turnover(now, run.latest_weights.loc[name])
-        # within the limit, unless meeting the limits needs more (SPY 50% vs a 40% cap)
-        assert traded <= 0.20 + 1e-6 or name in over, name
+        # the turnover limit is kept by default, even while SPY (50%) is over the 40% cap
+        assert turnover(now, run.latest_weights.loc[name]) <= 0.20 + 1e-6, name
     assert any("Turnover limit 20.00%" in c.value for c in at.caption)
-    for name in over:
-        assert any(name in w.value and "meeting your limits needs it" in w.value
-                   for w in at.warning)  # fmt: skip
+    choice = report["recommendation"]["choice"]
+    assert choice in report["full_restructure_to_target"]  # SPY over the cap: a change is due
+    move = at.radio(key="improve_move")
+    assert move.options[0].startswith("Closest compliant move within 20.00% turnover")
+    assert move.options[1].startswith("Full restructure to target")
+    assert "turnover" in move.options[1] and "cost" in move.options[1]
+    default = dict(at.session_state["ctx"].proposed["weights"])
+    move.set_value(move.options[1]).run()
+    assert not at.exception, at.exception
+    full = run.full_targets.loc[choice]
+    proposed = at.session_state["ctx"].proposed
+    assert proposed["weights"] == pytest.approx(full[full > 0].to_dict())
+    assert "full restructure" in proposed["source"].lower()
+    assert proposed["weights"] != pytest.approx(default) or turnover(now, full) <= 0.20
+    at.button(key="prepare_report").click().run()  # the report follows the adviser's choice
+    assert not at.exception, at.exception
+    assert at.session_state["client_report"][0].startswith(b"%PDF")
     # default holdings SPY/AGG/GLD/KSA: SPY has an Irish twin in the universe
     assert any("Domicile (information, not tax advice)" in c.value for c in at.caption)
 
