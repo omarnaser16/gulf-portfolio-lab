@@ -578,3 +578,32 @@ days; the work itself was done in a series of sessions.
 - **Status:** 936 tests passing.
 - **Next:** decide on the three findings above; push, so the CI badge runs; deploy and add the
   live URL.
+
+## Turnover choice and real cost rates — 2026-11-06
+- **Directed:** I asked for two of the three issues found while taking screenshots to be fixed,
+  and left the "held up" rule as it is.
+  - The report's trade summary must show the cost rate each market actually charges.
+  - When the current portfolio breaks the IPS, the turnover limit stays by default, as the
+    "closest compliant move within 30% turnover". A "full restructure to target" option shows
+    its turnover and cost, and the adviser chooses.
+- **Built by Claude Code:**
+  - Each trade now carries its market's rate: on screen, in the CSV and in the report (a "Cost
+    rate" column). The summary reads e.g. "10 bps on SPY, AGG…; 30 bps on 2222.SR, QNBK.QA;
+    35 bps on EMAAR.AE" instead of a blanket "10 basis points".
+  - `construct.compliant_move`: a linear program finds the least-turnover portfolio that meets
+    every weight, group and cash limit; ties go to the one closest to the method's target. If
+    it is within the limit, the move goes there and spends the rest heading for the target. If
+    not, it goes as far as the limit allows. The walk-forward history follows the same rule
+    month by month. The old "limits come first" move is gone.
+  - The app adds a choice under the recommendation (closest compliant move, or full
+    restructure with turnover, estimated cost at each market's rate, and IPS result). The
+    choice feeds the proposal, suitability, trades and the client report; the report also
+    says when a full restructure was available.
+- **Effect on results:** in the seed-2 demo, Target volatility now moves 30% (SPY 45% → 30%,
+  Aramco +15 pp), where before it traded 107%. Its walk-forward Sharpe is 0.92 (was 0.94).
+  The full restructure is offered at 107.17% turnover and about USD 696. Dubai is unchanged:
+  target volatility, 0.73 vs 0.66, because that portfolio already meets its limits.
+- **Learned:** with several portfolios at the same least turnover, a solver picks a corner at
+  random (the first version moved the sold 15% into KSA). A tiny second objective, distance to
+  the target, makes the move sensible and deterministic.
+- **Status:** 942 tests passing.

@@ -23,7 +23,9 @@ shows its labelled fallback and says it does not beat the benchmark.
 ![Build mode: recommendation and walk-forward results against the benchmark](docs/screenshots/build-result.png)
 
 **Improve my current portfolio:** the current portfolio breaks the IPS concentration limit, so the
-rule recommends the best method that passes every rule.
+rule recommends the best method that passes every rule. By default the move stays within the 30%
+turnover limit; the adviser can choose a full restructure instead, shown with its turnover and
+estimated cost.
 
 ![Improve mode: recommendation box and walk-forward results after costs](docs/screenshots/optimise-recommendation.png)
 
@@ -44,7 +46,10 @@ rule recommends the best method that passes every rule.
    to keep the current portfolio. Build also suggests a policy benchmark that itself fits the IPS.
 2. **Improve my current portfolio.** Five re-weighting methods (max Sharpe, min variance, risk
    parity, max diversification, target volatility) plus up to three rule-based swaps, each with
-   its reason, under a 30% turnover limit. It recommends a change only if it passes the IPS and
+   its reason, under a 30% turnover limit. If the current portfolio breaks the IPS, the default
+   is the closest compliant move within that limit, and the adviser can choose a full
+   restructure instead, shown with its turnover and cost. It recommends a change only if it
+   passes the IPS and
    beats the current portfolio's walk-forward Sharpe ratio by at least 0.05. UCITS domicile ideas
    are shown separately, as information, not tax advice.
 3. **A wealth manager's workflow in six steps.** It runs from Client to Portfolio, Analyse,
@@ -157,8 +162,7 @@ found and fixed.
 - GCC-specific stress features (oil, local market volatility).
 - Verified Sharia screening from a recognised data provider (AAOIFI-style financial ratios) in
   place of the curated list.
-- Black-Litterman with a GCC view; CVaR optimisation; a minimum-turnover move to meet the IPS when
-  the current portfolio breaks it.
+- Black-Litterman with a GCC view; CVaR optimisation.
 - An evaluation set for the analyst (does every memo cite every number?).
 
 ## Run it locally
@@ -168,7 +172,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 936 tests, no network needed
+pytest -q                       # 942 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 

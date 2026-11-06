@@ -101,11 +101,20 @@ mix, or a few explained swaps, would have done better.
 - **Re-weighting**: max Sharpe, min variance, risk parity, max diversification and target
   volatility, each within the IPS and the form's limits, re-optimised monthly on the trailing
   window (Ledoit-Wolf covariance), after costs.
-- **Turnover limit** (30% of the portfolio, editable): each month's move, and today's suggested
-  change, go part-way from the current weights to the target until turnover is within the limit
-  (`construct.limit_turnover`). Because every limit is linear or convex, every point on that line
-  is feasible when both ends are. Limits come first: if today's portfolio breaks an IPS limit, the
-  move needed to meet it is made even when it is larger, and the app says so.
+- **Turnover limit** (30% of the portfolio, editable), kept by default: each month's move, and
+  today's suggested change, stay within it (`construct.compliant_move`).
+  - If the current weights meet every weight and group limit, the move goes part-way from the
+    current weights to the method's target. Every limit is linear or convex, so every point on
+    that line meets them too.
+  - If the current weights break one (e.g. a holding over the cap), a linear program finds the
+    least-turnover portfolio that meets them all. If that is within the limit, the move goes
+    there and spends the rest of the limit heading for the target. If not, it goes as far
+    towards it as the limit allows, and the app shows what still breaks. Example: 50% in one
+    holding with a 40% cap needs a turnover of 0.20, so a 0.10 limit gets half way, to 45%.
+  - **The adviser chooses** between this *closest compliant move within 30% turnover* (the
+    default) and a *full restructure to target*, shown with its turnover, its estimated cost at
+    each market's rate and its IPS result. The choice feeds the suitability checks, the trade
+    list and the client report. The walk-forward results are for the turnover-limited path.
 - **Swaps** (up to 3, from the curated universe, trailing data only): rule-based, each with a
   written reason. *Duplicates*: two holdings whose weekly returns correlate 0.95 or more (or a
   UCITS fund and the US fund it mirrors): sell the one with the lower risk-adjusted return and
@@ -307,7 +316,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 936 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
+**Testing.** 942 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -322,10 +331,11 @@ a scripted fake model, so the suite never touches the network.
   with US funds), so samples are shorter and noisier. Tilts are simple price-based scores, not
   a factor model. The "held up" test needs an in-sample Sharpe from a full-sample build; when
   that build can't meet the limits, the candidate counts as not held up.
-- **Turnover limit when limits bind.** If today's portfolio breaks an IPS limit, the turnover limit
-  gives way, and because the move runs along the line to the target, it can trade the whole way
-  (e.g. 107% of the portfolio in the demo screenshot) rather than the least needed to meet the
-  limit. The app states the turnover in each case.
+- **Turnover limit when limits bind.** The default move keeps the turnover limit, so a portfolio
+  that breaks the IPS can stay outside it for a few months while it moves towards compliance.
+  Only weight, group and cash limits are in the linear program; volatility and drawdown are
+  checked afterwards by the suitability rules. The full-restructure cost is an estimate at flat
+  per-market rates.
 - **Adviser tools are decision support, not advice.** The risk bands (e.g. band 3: 12%
   volatility, 20% drawdown, 30% in one holding) are judgement defaults, not calibrated to client
   outcomes. The required return (income ÷ investable assets after cash set aside, plus inflation)
