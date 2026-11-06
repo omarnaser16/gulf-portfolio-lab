@@ -1,391 +1,217 @@
 # Gulf Portfolio Lab
 
-🔗 **Live demo:** *LINK PENDING: add the Streamlit Community Cloud URL after deploying*
-· 🧭 **How it fits together:** [ARCHITECTURE.md](ARCHITECTURE.md)
+[![tests](https://github.com/omarnaser16/gulf-portfolio-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/omarnaser16/gulf-portfolio-lab/actions/workflows/tests.yml)
 
-**An AI-assisted portfolio analyst for GCC and global investors, where the AI is not allowed to do the maths.**
+**Portfolio construction and suitability for GCC wealth managers: tested Python does every
+calculation and makes every recommendation; the AI only fills forms and explains.**
 
-Gulf Portfolio Lab is a tested Python finance engine (data, risk metrics, portfolio optimisation,
-backtesting, Monte Carlo simulation and a machine-learning market-regime model) with a Streamlit
-dashboard on top. Its AI analyst, built on the Anthropic API, writes an investment memo for an
-investor profile ("I'm 35, in Dubai, investing in USD for 10 years…") by calling the engine's
-functions as tools. **Every number in the memo is copied from a tool result and cites the tool, and
-code flags any figure that no tool produced.**
+🔗 **Live demo:** LIVE_URL · 🧭 **How it fits together:** [ARCHITECTURE.md](ARCHITECTURE.md) ·
+📄 **Full methodology and limitations:** [docs/METHODOLOGY.md](docs/METHODOLOGY.md)
 
-> **Not investment advice.** This is an educational portfolio project. Past performance does not
-> predict future results.
+> **Not investment advice.** An educational portfolio project and decision support for a licensed
+> adviser. Past performance does not predict future results. **Do not enter real client data in
+> the public demo.**
 
-> 📸 *Screenshot placeholder: `docs/screenshots/backtest.png` (Backtest tab: strategies vs benchmarks)*
+## Screenshots
 
----
+All three come from the app with **🎲 Fill demo client** (seed 2): a fictional client, marked
+DEMO DATA everywhere.
 
-## Why it exists
+**Build a portfolio for me:** no built portfolio passed the rule against 60/40, so the rule
+shows its labelled fallback and says it does not beat the benchmark.
 
-- **Finance that holds up to scrutiny.** Return and risk measurement, mean-variance and risk parity,
-  look-ahead-free backtesting with costs, and Monte Carlo, each with tests whose expected values can
-  be checked by hand.
-- **A Gulf investor's angle.** GCC equity ETFs (Saudi Arabia, UAE, Qatar) alongside global equities,
-  bonds and gold. The Gulf currencies SAR, AED, QAR, BHD and OMR are pegged to the US dollar, so
-  USD-priced assets carry little currency risk for these investors.
-- **AI that can be audited.** The language model orchestrates and explains; deterministic, tested
-  Python produces every number.
+![Build mode: recommendation and walk-forward results against the benchmark](docs/screenshots/build-result.png)
 
-## What's inside
+**Improve my current portfolio:** the current portfolio breaks the IPS concentration limit, so the
+rule recommends the best method that passes every rule.
 
-| Part | What it does |
-|---|---|
-| **Data** | Any Yahoo Finance ticker, adjusted prices cached per ticker as parquet; converted to USD (official pegs for SAR, AED, QAR, BHD and OMR; market rates for other currencies; sub-units such as Kuwaiti fils scaled); different trading calendars aligned on common dates, date-aware (Dubai and Abu Dhabi moved from a Sunday to a Monday week in 2022); history and data notes shown for every asset. |
-| **Metrics** | Annual return, CAGR, volatility, Sharpe, Sortino, Calmar, drawdowns, historical and normal VaR, expected shortfall, trailing 1- and 3-year returns; against a benchmark: beta, Jensen's alpha, tracking error, information ratio, up/down capture, relative drawdown; correlation clusters. |
-| **Optimisation** | Min variance, max Sharpe (solved in convex form), efficient frontier, risk parity with a 40% weight cap; a constrained optimiser (max Sharpe, min variance, max return, target volatility, target return, risk parity and max diversification) with per-asset and group limits, exact feasibility checks and plain-language reasons when limits can't all be met; Ledoit-Wolf covariance shrinkage. |
-| **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, costs on turnover by market (10 bps for US listings; judgement estimates of 30–40 bps for GCC exchanges, 15 bps for London). |
-| **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
-| **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with seventeen tools wrapping the engine, including the client's IPS and a `calculate` tool so arithmetic is done in code; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
-| **Adviser workflow** | Client profile and risk questionnaire, IPS (PDF) feeding the optimiser, suitability checks, fund-domicile check, drift monitor and trade list, client report (PDF). |
-| **Dashboard** | Dark, terminal-style Streamlit app: a top bar with the benchmark and ⚙ Settings, KPI cards, a *Client* tab, and a *Portfolio* workstation (holdings, screen, analyse & backtest, benchmark comparison, optimise) whose holdings drive every other tab: Assets, Frontier, Backtest, Monte Carlo, Regime and Analyst. Latest data by default, or the fixed sample that reproduces this README. |
+![Improve mode: recommendation box and walk-forward results after costs](docs/screenshots/optimise-recommendation.png)
 
-> 📸 *Screenshot placeholder: `docs/screenshots/analyst.png` (Analyst tab: memo, audit trail, cost line)*
+**Client report (PDF), page 3:** drawdowns, stress tests and the recommendation in plain language.
 
-## For a wealth manager: plan, execute, review
+<img src="docs/screenshots/client-report.png" alt="Client report PDF, recommendation page" width="600">
 
-The tool follows the CFA portfolio-management loop as **decision support for a licensed
-adviser**. Every number comes from tested code; the AI only fills forms from the adviser's notes
-and explains results.
+## What it does
 
-| Step | In the tool |
-|---|---|
-| Discovery and risk profiling | *Client* tab: profile, classification and regulator (DFSA, FSRA, CMA…), a seven-question risk questionnaire scored by a tested rule (risk score = the lower of capacity and willingness; a gap of two or more is flagged), "describe the client in plain English" for the AI to fill the facts (never the questionnaire): name, age, dated cash needs (the AI copies "Oct 2028" or "in 18 months"; code dates it, so Oct 2028 is 24 months away), tax notes, region minimums, and the regulator from the booking jurisdiction by a fixed rule (Abu Dhabi/ADGM → FSRA, DIFC → DFSA, onshore UAE → SCA, Saudi → CMA, QFC → QFCRA). Profiles save and load as JSON. One portfolio value is used everywhere: the total of USD holdings, or entered once (no default). |
-| Investment Policy Statement | RRTTLLU (Return, Risk, Time horizon, Taxes, Liquidity, Legal, Unique) generated from the profile, with limits from the risk band (e.g. band 3: volatility 12%, drawdown 20%) or adviser overrides; exported as a signable PDF. |
-| Strategic allocation | *Optimise* uses the IPS limits automatically (volatility cap, max weight, GCC minimum, region minimums such as Saudi ≥ 10%, excluded holdings at 0%), stricter of IPS and form. Cash needs due within 36 months are a hard minimum on cash-like holdings (cash, short-term bonds, sukuk); with none held the app offers to add BIL. |
-| Suitability | Nine rules for the current and proposed portfolios: volatility, max drawdown, worst stress episode, concentration, home-market bias, region minimums, liquidity, exclusions (Sharia, sectors), currency. Each is pass, fail or review, with a reason written from the numbers; in Optimise, Analyst, the memo and the report. **Optimise only recommends portfolios that pass every rule**; if none does, it shows the closest with each breach (e.g. "Volatility: 13.10%, 1.10 pp beyond the 12.00% limit") and says so if the current portfolio fails too. Identical methods are shown once. |
-| Implementation | *Fund domicile check* for non-US clients: US-situs holdings (US-listed funds and stocks, including KSA), the illustrative US estate tax (18%–40% schedule minus the 13,000 USD non-resident credit, i.e. a 60,000 exemption), 30% vs 15% dividend withholding, and verified Irish-domiciled alternatives (SPY → CSPX.L, AGG → IUAA.L, GLD → IGLN.L…). Information, not tax advice. |
-| Monitoring and rebalancing | *Portfolio › Rebalance*: current vs editable target weights (default: the Optimise recommendation), a ±5 pp drift band, and a cash-neutral trade list (buy/sell in USD, estimated units and costs; buys + costs = sells), downloadable as CSV. The trades are checked against the cash need, and default targets are topped up so the need is still covered after costs. |
-| Reporting | One-click, date-stamped *client report* PDF in plain language: in brief, goals and limits, holdings in USD, past performance, **the optimiser's recommendation** (never a chat what-if), proposed trades, the policy checks, the adviser's commentary (AI memo without tool tags), an adviser sign-off block (name, licence, regulator, date, client acknowledgement), disclaimers and the IPS as an appendix. |
+1. **Build a portfolio for me.** From a curated universe of 62 tagged securities (global and GCC
+   ETFs, GCC blue chips when the IPS asks, bonds, sukuk, gold, cash, factor and Sharia funds),
+   screened by the client's IPS, it builds 8-15-holding candidates that maximise the information
+   ratio against the benchmark, within a 4% tracking-error limit and the benchmark's volatility,
+   with optional low-volatility, momentum or quality tilts. Securities and weights are re-chosen
+   every quarter using only data available then, after costs. A fixed rule recommends a build
+   only if it beat the benchmark out of sample (information ratio at least 0.10). Otherwise it
+   shows a clearly labelled fallback (a benchmark tracker or a diversified IPS portfolio), or says
+   to keep the current portfolio. Build also suggests a policy benchmark that itself fits the IPS.
+2. **Improve my current portfolio.** Five re-weighting methods (max Sharpe, min variance, risk
+   parity, max diversification, target volatility) plus up to three rule-based swaps, each with
+   its reason, under a 30% turnover limit. It recommends a change only if it passes the IPS and
+   beats the current portfolio's walk-forward Sharpe ratio by at least 0.05. UCITS domicile ideas
+   are shown separately, as information, not tax advice.
+3. **A wealth manager's workflow in six steps.** It runs from Client to Portfolio, Analyse,
+   Optimise, Suitability, then Report & trades:
+   - **Fact-find:** nine sections, with a completeness bar.
+   - **Risk score and IPS:** a risk questionnaire scored by a tested rule, and an Investment
+     Policy Statement (PDF, DRAFT until the fact-find is complete).
+   - **Suitability:** ten rules (volatility, drawdown, stress, concentration, home bias, region
+     minimums, liquidity, exclusions, currency, knowledge & experience), each pass, fail or
+     review with its reason.
+   - **Trades:** a cash-neutral trade list with costs per market.
+   - **Client report:** a PDF with an adviser sign-off block.
 
-## Using it as an investor
+## Key findings
 
-- **Any asset, one portfolio.** Your holdings are the universe for every tab. Search by name or
-  ticker ("Aramco", "Emaar", "SPY"), paste a list, or start from a preset (the README universe of
-  nine ETFs, GCC stocks such as Saudi Aramco `2222.SR`, Al Rajhi `1120.SR`, Emaar `EMAAR.AE`,
-  Emirates NBD `EMIRATESNBD.AE`, QNB `QNBK.QA` and NBK `NBK.KW`, or global ETFs). Tickers with no
-  data get a clear message. Abu Dhabi (ADX) listings such as FAB are not on Yahoo Finance.
-- **One currency.** Everything is analysed in USD. The Gulf pegs are used for SAR, AED, QAR, BHD and
-  OMR because Yahoo's quotes for these currencies are noisy (the riyal series is more than 1% off its
-  3.75 peg on about 100 days since 2015). Other currencies use market rates (e.g. `KWD=X`).
-- **Different trading weeks.** Saudi, Qatari and Kuwaiti markets trade Sunday to Thursday; US markets
-  Monday to Friday. When both are selected, only the dates on which every market traded are used
-  (about 183 a year for the GCC preset with SPY), and figures are annualised with that number instead
-  of 252. The dashboard says so, and shows each asset's start date, currency, conversion and trading
-  days, warning about assets with too little history.
-- **Your own portfolio (the *Portfolio* tab).** Holdings show each security's latest price and
-  quote time; edit them in USD or percent (white columns are editable), use *Equal weight* or
-  *Normalise to 100%*, and assign groups. *Screen* ranks holdings by any of 14 measures (return,
-  CAGR, 1Y and 3Y return, volatility, Sharpe, Sortino, Calmar, max drawdown, VaR, expected
-  shortfall, beta to the benchmark, share of portfolio risk, correlation to the rest). *Analyse &
-  backtest* shows share of money vs share of risk and a backtest after costs vs the strategies.
-- **Benchmarks.** Compare against 60/40 (default), the S&P 500 (SPY), FTSE 100 (ISF.L, converted
-  from pence to USD), MSCI World (URTH), the Saudi (KSA) or UAE (UAE) market, cash (13-week
-  T-bills) or any loaded asset. These are total-return ETF proxies, so dividends count as they do
-  in your portfolio. The *Benchmark* tab shows return, volatility, Sharpe, max drawdown, beta,
-  alpha, tracking error, information ratio, up/down capture and correlation, with growth-of-$1 and
-  relative-drawdown charts. A benchmark's holidays never shorten your sample.
-- **Optimise like an analyst.** (1) *Diagnose*: each holding's share of money vs share of risk,
-  volatility, Sharpe and beta, clusters of holdings that move together, and the portfolio vs the
-  benchmark. (2) *Goal*: maximise risk-adjusted return, reduce risk, reach a target return, hit a
-  target volatility, or beat the benchmark with less risk, picked from a list or described in plain
-  English (the AI fills in the goal and limits for you to check; numbers not in your text are
-  flagged). (3) *Candidates*: max Sharpe, min variance, risk parity, max diversification and target
-  volatility, each within your limits, re-optimised monthly on past data only (Ledoit-Wolf
-  covariance) and evaluated after costs against your current portfolio and the benchmark. (4)
-  *Recommendation*: a fixed rule per goal picks the method that fits the goal **and** held up out
-  of sample, or says to keep your current portfolio, and shows its reasons. (5) An optional AI memo
-  explains it. Results are historical and risk-adjusted, never presented as higher returns to come.
-- **Ask the analyst.** The Analyst page opens on your portfolio (KPI cards vs the benchmark,
-  holdings with share of risk, allocation). *Review my portfolio*, *Stress test my portfolio* or
-  *Explain the Optimise recommendation*, then ask follow-ups such as "what if I cut NVDA to 10%?".
-  Each memo section is followed by the charts the AI picked from a fixed list: current vs proposed
-  weights, growth of $1, drawdowns, a metrics table with deltas, money vs risk, a correlation
-  heatmap, rolling one-year volatility, the efficient frontier, a Monte Carlo fan, exposure by
-  region, asset type and currency, and stress tests (COVID crash 19 Feb – 23 Mar 2020, oil crash
-  6 Mar – 21 Apr 2020, rate shock 3 Jan – 12 Oct 2022). A what-if sets the holdings you name to
-  your exact weights and scales the others pro-rata; later charts compare it with today.
-- **Latest or reproducible.** The dashboard opens on the latest data ("Data as of …" at the top). The
-  *Reproduce README results* option uses the fixed sample below and reproduces this README's tables
-  exactly.
+- **A decade favoured simple portfolios.** Sep 2016 – Sep 2026, after costs: SPY had a Sharpe
+  ratio of 0.75 and 60/40 had 0.67. Max Sharpe had 0.59, risk parity 0.38 and min variance 0.30.
+  The diversified strategies had smaller drawdowns (min variance −15.21% vs SPY −33.72%) but lower
+  returns.
+- **The machine-learning regime model is no better than a one-line rule.** Predicting stressed
+  months out of sample (Jul 2009 – Aug 2026), logistic regression reached a ROC AUC of 0.72, and
+  "volatility is already high" reached 0.71 with higher precision and accuracy. De-risking on
+  the forecast cut the equal-weight COVID drawdown from −20.32% to −16.06%, but lowered its
+  Sharpe ratio from 0.49 to 0.39.
+- **Build did not beat the benchmark for the Dubai example, and the rule says so.** The run on
+  6 Nov 2026 re-selected every quarter, 39 quarters, after costs. No build reached an information
+  ratio of 0.10, against either 60/40 or the IPS-fitting policy benchmark. The fallback
+  (Diversified, Sharpe ratio 0.50) was worse than the client's current portfolio (0.67), which
+  passes the IPS, so the rule keeps the current portfolio.
+- **Improve found a modest, rule-qualifying gain.** For the same client, target volatility
+  improved the walk-forward Sharpe ratio from 0.66 to 0.73, passing every IPS rule within the 30%
+  turnover limit. It is historical and risk-adjusted, not a forecast.
+- **A calendar bug, found and pinned by a test.** Comparing a US-calendar benchmark with a
+  universe that includes Gulf stocks (fewer common trading dates) inflated tracking error: SPY
+  against 60/40 showed 10.98% instead of 7.04%, and Max IR failed the limits in 36 of 39 quarters.
+  After compounding returns onto common dates it fails in 0, and a regression test guards it.
 
-## Key results
+Detailed tables are in [docs/METHODOLOGY.md](docs/METHODOLOGY.md#key-results).
 
-Data from 17 Sep 2015 (when the youngest ETF, KSA, starts) to **30 Sep 2026**; the end date is
-fixed in `config/universe.yaml` (the dashboard's *Reproduce README results* option), so results are
-reproducible.
+## Main limitations
 
-**Backtests (Sep 2016 – Sep 2026, after 10 bps costs, max 40% per asset):**
+1. **Decision support, not advice.** The risk bands and thresholds (0.10 information ratio, 0.05
+   Sharpe gain) are judgement defaults, not calibrated to client outcomes. Sharia status comes
+   from a partial list, and anything unknown is "review".
+2. **One sample, with survivorship.** About ten years dominated by US equities. The universe is
+   today's funds, so funds that closed are missing.
+3. **History-based estimates.** Expected returns are noisy historical means. Picking the best of
+   several candidates on the same period is a mild form of hindsight.
+4. **Short and sparse data.** GCC, Sharia (from 2019) and UCITS funds have short histories, and
+   mixing Sunday–Thursday and Monday–Friday markets leaves about 180-200 common dates a year.
+5. **Simple costs, unofficial data.** Flat per-market costs (GCC rates are estimates), no market
+   impact or taxes. Prices come from `yfinance`, which is unofficial.
+6. **AI checks have gaps.** The number check covers decimals, percentages and multiples, not bare
+   integers or numbers written in words, and the model can still mis-describe a correct number.
 
-| Strategy | CAGR | Volatility | Sharpe | Max drawdown | Turnover / yr |
-|---|---|---|---|---|---|
-| SPY | 15.27% | 17.95% | 0.75 | −33.72% | 0.00× |
-| 60/40 (SPY/AGG) | 9.64% | 11.18% | 0.67 | −21.63% | 0.19× |
-| Max Sharpe | 8.72% | 11.25% | 0.59 | −26.71% | 3.90× |
-| Equal weight | 7.14% | 10.31% | 0.49 | −21.64% | 0.30× |
-| Risk parity | 5.14% | 7.81% | 0.38 | −16.29% | 0.51× |
-| Min variance | 4.28% | 6.95% | 0.30 | −15.21% | 1.05× |
+Every limitation, in detail: [docs/METHODOLOGY.md](docs/METHODOLOGY.md#limitations).
 
-A decade of strong US equities and weak bonds favoured SPY and 60/40. The diversified strategies
-had smaller drawdowns but lower returns, and the GCC ETFs added risk without matching return over
-this sample.
+## How the AI is constrained
 
-**Regime model (out of sample, Jul 2009 – Aug 2026):**
-
-| | ROC AUC | Precision | Recall | Accuracy |
-|---|---|---|---|---|
-| Logistic model | 0.72 | 47.89% | 40.45% | 77.73% |
-| "Volatility already high" rule | 0.71 | 58.33% | 51.35% | 81.65% |
-| Always predict calm | 0.50 | – | 0.00% | 78.49% |
-
-The model ranks stressed months modestly well, and its probabilities are calibrated (28.86%
-predicted on average vs 21.51% actual). However, a one-line volatility rule does at least as well at
-deciding. De-risking on the forecast cut the COVID drawdown of the equal-weight portfolio from
-−20.32% to −16.06%, but lowered its Sharpe from 0.49 to 0.39.
-
-**Monte Carlo (equal weight, 10 years, dashboard defaults):** 81.55% chance of ending at 1.50× or
-more, median 2.00×, bad case (5th percentile) 1.16×, 1.90% chance of losing money. Along the way, the
-bad-case drawdown is −35.15% with block bootstrap vs −31.53% with daily draws: keeping crashes
-together makes the path rougher.
-
-**AI analyst:** a typical memo uses 5 tool calls and about 15,500 input + 2,700 output tokens, roughly
-**$0.003** with Claude Haiku 5.5.
-
-## Methodology
-
-**Conventions** (see `CLAUDE.md`): simple daily returns; 252 trading days a year; Sharpe = annualised
-mean excess return over the 13-week T-bill ÷ annualised volatility; VaR and expected shortfall are
-1-day, 95%, reported as positive losses; weights are long-only and sum to 1.
-
-**No look-ahead bias.** At each month-end rebalance a strategy sees only returns up to that day, and
-its new weights earn from the next day. A test runs a "cheating" strategy that buys after a jump and
-checks that it never earns the jump. The regime model is refit monthly on labels already known: a
-label looks 21 days ahead, so a model refit on day *t* trains only on labels up to *t − 21*.
-Cross-validation leaves the same 21-day gap.
-
-**Optimisation details.** Max Sharpe is solved as an equivalent convex problem (minimise risk for a
-fixed excess return, then rescale), which removed solver failures seen with the direct ratio. Risk
-parity uses cyclical coordinate descent; when an asset would exceed the 40% cap it is held at the
-cap and the rest share risk equally. Solver output that breaks the cap is rejected, never rescaled.
-
-**Regime labels are relative.** "Stressed" means SPY's volatility over the next 21 trading days is
-above the 80th percentile of its own past year, so the bar moves with recent conditions. The model
-uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class weighting was removed
-because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
-
-**AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The seventeen tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
-`backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_portfolio_diagnosis`,
-`get_optimisation_result`, `show_chart`, `what_if_portfolio`, `stress_test`, `get_regime_view`,
-`check_suitability`, `check_domicile`, `get_drift_and_trades`, `get_client_profile`, `calculate`)
-wrap the engine and return pre-formatted numbers. `calculate` does simple arithmetic (sums,
-differences, shares) in code, and only on numbers already returned by a tool or written by the
-user.
-The system prompt forbids arithmetic and requires a bracketed tool citation for every figure. After
-each answer,
-code compares every decimal, percentage and multiple in it with the tool outputs and flags any that
-don't match (a re-rounded "15.3%" for "15.27%" is flagged). Every tool call is shown in an audit
-trail, and the disclaimer is appended by code.
-
-**Charts the AI can't fake.** `show_chart` takes only a chart type from a whitelist and the
-section it belongs to; its schema has no numeric fields. Code computes the chart's data with the
-engine (`gpl/agent/charts.py`), keeps it, draws it from that data alone, and returns formatted
-key figures the AI may quote. Tests check every chart type against an independent calculation
-and that the AI's text cannot change a chart. `what_if_portfolio` refuses any weight that isn't
-in the user's own message ("halve NVDA" gets a question back, not a computed 10%).
-
-**Goals to a recommendation.** A separate, single model call fills one strict tool,
-`propose_spec`, whose schema is the spec: one of five goals, a target if the goal needs one, a
-per-asset cap, asset and group limits, a volatility cap and a return floor, in percent as the user
-wrote them. There is no field for weights or methods. Code converts percent to fractions and checks
-every number against the user's text. Each candidate method is the constrained optimiser with a
-different objective; it first checks feasibility exactly (a linear program for the weight and group
-limits, then the lowest achievable volatility and highest achievable return), so impossible limits
-get a specific reason instead of a solver failure, and solver output is re-checked against every
-limit. Covariances use Ledoit-Wolf shrinkage, fitted each month on the trailing window only.
-
-The recommendation comes from `gpl/recommend.py`, not from the model. For each goal there is one
-written rule applied to the walk-forward results after costs (e.g. *reduce risk*: lowest volatility
-below the current portfolio's, with the higher Sharpe ratio winning when two are within 0.50
-percentage points). A method "held up" if it kept at least half of its in-sample Sharpe ratio out of
-sample; one that ranked first but didn't hold up is skipped, and if nothing improves on the current
-portfolio for the goal, the rule says to keep it. Where the rule compares Sharpe ratios
-(*maximise risk-adjusted return*, and the Sharpe test in *beat the benchmark with less risk*), a
-change must beat the current portfolio's Sharpe ratio by at least 0.05 (`min_sharpe_gain` in
-config): smaller gains are within estimation noise and not worth the trading. Every branch is
-unit-tested.
-
-Example on the README sample (holdings SPY 50%, AGG 30%, GLD 10%, KSA 10%; at least 10% GCC;
-walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
-- *Reduce risk* (at most 45% per asset): the rule chose risk parity, with volatility 7.69% vs
-  10.73% and max drawdown −14.47% vs −21.18%, but CAGR 7.34% vs 10.29% and Sharpe 0.65 vs 0.75. It is
-  a lower-risk choice, not a better risk-adjusted one.
-- *Beat the benchmark with less risk* (at most 40% per asset): max Sharpe ranked first (CAGR
-  9.95% vs the benchmark's 9.83%, volatility 10.16% vs 11.28%), but its Sharpe ratio beat the
-  current portfolio's by under 0.01 (0.7575 vs 0.7512) while trading 1.70× a year vs 0.24×, so the
-  rule says to keep the current portfolio. Before the 0.05 minimum was added it recommended max
-  Sharpe here, while three more weeks of data said "keep": the minimum removed that flip. Across
-  20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
-  Sharpe with NVDA in the portfolio) are still recommended.
-
-**Testing.** 582 tests (`pytest`), most with expected values small enough to check by hand. They
-include property tests (no optimiser output exceeds the weight cap across random problems; features
-and labels don't change when the future changes) and headless dashboard tests with synthetic data and
-a scripted fake model, so the suite never touches the network.
-
-## Limitations
-
-- **Adviser tools are decision support, not advice.** The risk bands (e.g. band 3: 12%
-  volatility, 20% drawdown, 30% in one holding) are judgement defaults, not calibrated to client
-  outcomes. The required return (income ÷ investable assets after cash set aside, plus inflation)
-  assumes a flat inflation rate. Sharia
-  status and sectors come from a partial config list plus Yahoo sectors; anything unknown is
-  "review", never a pass. Cash-like means the "Cash & short-term" group, a short config list
-  (T-bill, short Treasury and sukuk funds) or volatility at most 3%; it is a proxy, not market
-  depth, and a broad bond fund such as AGG does not count. The estate-tax figure is an illustration under 2026 statutory rates with no
-  treaty, deductions or other US assets; the UCITS list is small, curated and only verified to
-  exist on Yahoo (costs and tracking not compared). Suitability risk figures use the full common
-  history, while performance uses the backtest period, so their drawdowns can differ.
-- **One sample period.** About ten years dominated by US equities, COVID and the 2022 bond sell-off.
-  Results may not generalise; every figure is tied to the sample shown.
-- **Short GCC history** (from 2015) and a universe of ETFs chosen today (survivorship).
-- **Simple costs:** a flat rate per market (10 bps for US listings; 30–40 bps for GCC exchanges are
-  judgement estimates, not quotes), with no market impact by trade size and no taxes.
-- **UAE prices on Yahoo** have almost no Fridays since Dubai and Abu Dhabi moved to a Monday week
-  in 2022, so UAE stocks still trade on fewer common dates than US assets.
-- **The efficient frontier is hindsight:** it uses full-sample means and covariances. The backtests
-  are the honest test.
-- **Regime whipsaw.** 2022 was clearly stressed (55.38% of days), but the month-end probability
-  crossed 50% back and forth (January above, February and March below, April above, May below, June
-  above). So the regime strategy switched in and out of min variance, paid 0.44% in costs that year
-  vs 0.04% static, and lost 13.18% vs 12.57%. Min variance itself gave only modest shelter because
-  bonds fell too.
-- **Regime model scope:** stress is defined by SPY volatility, so GCC-specific shocks (oil, regional
-  politics) are invisible to it. There are few independent stress episodes, and fold ROC AUCs range
-  from 0.63 to 0.88.
-- **Monte Carlo** assumes the future resembles a reshuffle of this sample, with daily rebalancing and
-  no costs.
-- **AI analyst:** the number check covers decimals, percentages and multiples, not bare integers or
-  numbers written in words, and the model can still mis-describe a correct number. Treat the audit
-  trail as the source of truth.
-- **Optimisation uses history.** Expected returns are historical means, which are noisy (Ledoit-Wolf
-  only shrinks the covariance); max Sharpe is especially sensitive to them. Picking the best of five
-  methods on the same period is itself a mild form of hindsight, and the target-volatility level is
-  set from the whole period. Tight limits can leave little room: with four holdings and a 25% cap,
-  25% each is the only allowed portfolio. The spec check catches invented numbers, not a misread
-  goal, so read the confirmation before running.
-- **The minimum improvement covers Sharpe comparisons only:** goals judged on volatility or
-  return (reduce risk, target return, target volatility) accept any improvement on their own
-  metric, so a near-tie there can still flip as data is added. The 0.05 level is a judgement,
-  not estimated from the data.
-- **Analyst charts:** "proposed" growth, drawdown and metrics apply today's proposed weights to the
-  past (hindsight). Stress tests hold today's weights through each episode, rebalanced daily
-  without costs, and need the holdings' common history to cover it; with Sunday–Thursday
-  holdings an episode starts at the nearest earlier common date (e.g. the oil crash from 5 Mar
-  2020). Region tags are approximations (known fund exposure, otherwise country of listing).
-- **Benchmarks** are ETF proxies with fund fees, compared without trading costs (as indices are).
-  On dates when the benchmark's market was closed but yours traded, it shows 0% and catches up next
-  day. Against cash, beta, alpha, capture and correlation are not defined.
-- **Search and quotes** come from Yahoo Finance too: suggestions can be incomplete and quotes delayed;
-  groups are guessed from the exchange and name and can be changed in the table.
-- **Data source:** `yfinance` is unofficial and can break or rate-limit. Downloads are cached per
-  ticker (latest data refreshes at most every 6 hours) and retried; if Yahoo still refuses, the
-  dashboard says so and offers a Retry button. No price data is stored in this repository. "Latest
-  data" can include today's price before the market closes.
-- **Coverage and conversions:** Yahoo does not cover every exchange (e.g. Abu Dhabi), and market FX
-  for non-pegged currencies comes from Yahoo too. Pegs are assumed to hold.
-- **Common dates:** aligning Sunday–Thursday and Monday–Friday markets drops each market's other
-  days, so some returns span more than one day and a market's Sunday or Friday moves are only seen
-  in the next common return. With mixed markets, the sample starts when the newest asset starts.
-- **Known issue:** once, with default settings, the Frontier tab showed weights matching a 75% cap
-  instead of 40%. It could not be reproduced; safeguards and an on-screen cap caption were added.
-
-## Future work
-
-- **Smoothing rules for the regime switch, tested out of sample:** require two consecutive months
-  above the threshold, add a hysteresis band (enter at 60%, exit at 40%), or scale risk gradually with
-  P(stressed). Choose among them on 2008–2018 only, then test once on 2019–2026, to avoid tuning to
-  2022.
-- GCC-specific stress features (oil, local market volatility) and local Tadawul listings converted
-  from SAR to USD.
-- Black-Litterman with a GCC view; CVaR optimisation; a Sharia-screened universe option.
-- PDF export of the memo, and an evaluation set for the analyst (does every memo cite every number?).
-
-## Run it locally
-
-```bash
-git clone <your-repo-url> && cd gulf-portfolio-lab
-python3.14 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 582 tests, no network needed
-streamlit run app/streamlit_app.py
-```
-
-Notebooks with the full results: `notebooks/01_week1_results.ipynb` (risk, optimisation, backtests,
-Monte Carlo) and `notebooks/02_week2_regime.ipynb` (regime model and regime-aware strategies).
-
-## Project layout
-
-```
-config/universe.yaml     tickers, groups, defaults, regime, Monte Carlo and agent settings
-src/gpl/data.py          download, cache, clean, returns, risk-free rate (all I/O lives here)
-src/gpl/metrics.py       risk and performance metrics
-src/gpl/optimise.py      min variance, max Sharpe, frontier, risk parity, constrained optimiser,
-                         Ledoit-Wolf covariance
-src/gpl/recommend.py     goals, candidate methods and the recommendation rule
-src/gpl/scenarios.py     what-if weights, stress episodes, exposures, drift and trade list
-src/gpl/client.py        client profile, risk questionnaire, IPS, IPS -> optimiser limits
-src/gpl/suitability.py   pass/fail/review checks of a portfolio against the IPS
-src/gpl/domicile.py      US-situs check, illustrative US estate tax, UCITS alternatives
-src/gpl/report.py        IPS and client report PDFs (reportlab, matplotlib)
-src/gpl/backtest.py      monthly-rebalanced backtester and strategies
-src/gpl/montecarlo.py    simulations, goal probability, path drawdowns
-src/gpl/regime.py        labels, features, models, evaluation, walk-forward
-src/gpl/plots.py         plotly charts shared by notebooks and the app
-src/gpl/agent/           tools.py (tool schemas wrapping gpl), analyst.py (tool-use loop),
-                         spec.py (plain-English goals -> goal and limits),
-                         charts.py (whitelisted charts built from engine data),
-                         profile.py (adviser's notes -> client form facts)
-app/                     Streamlit dashboard (workstation.py: Portfolio tab, KPI cards;
-                         client_ui.py: Client tab)
-.streamlit/config.toml   dark theme
-tests/                   pytest suite
-```
+The LLM (Claude, via the Anthropic API) never calculates, chooses weights or picks the
+recommendation:
+- **Forms only:** it copies facts into forms through strict tool schemas with no weight, score or
+  method fields.
+- **Tools for figures:** it explains results by calling 17 tools that wrap the engine.
+- **Checked by code:** every figure in its memo is compared with the tool outputs. See
+  [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## How this was built
 
 **The code in this repository was written by [Claude Code](https://claude.com/claude-code),
-Anthropic's coding agent**, in a series of sessions following the three-week plan in `BRIEF.md`.
+Anthropic's coding agent**, over a series of sessions. My role (Omar Naser) was to **direct,
+review and test**:
 
-My role (Omar Naser) was to **direct, review and test**:
-- **Directed:** I defined the project idea, scope, tech stack and plan; the brief and Claude Code
-  instructions (`BRIEF.md`, `CLAUDE.md`) were drafted with Claude from those requirements. I set the
-  priorities for each session, approved every new dependency, and chose among the options
-  presented, for example capping risk parity at 40%, fixing the end date for reproducibility, and
-  making the block bootstrap the default. I specified the Portfolio workstation, the benchmark
-  set, the analyst-style Optimise workflow, and the rules that the AI only turns goals into limits I
-  confirm (never weights) and that a coded rule, not the AI, makes the recommendation. I asked
-  for the terminal-style UI, the Analyst's charts (chosen by the AI, built only from tool data),
-  stress tests and what-if follow-ups.
-- **Reviewed:** I read the results, notebooks and explanations, and asked for changes where something
-  looked wrong or unclear, for example checking whether the regime model's probabilities were
-  calibrated, leading with ROC AUC rather than accuracy, and stating limitations such as the 2022
-  whipsaw.
-- **Tested:** I used the dashboard and reported problems, including a weight-cap violation on the
-  Frontier tab, labels overlapping the frontier, a truncated table and inconsistent percentage
-  formats.
+- **Directed:** I defined the idea, scope, stack and plan ([docs/BRIEF.md](docs/BRIEF.md),
+  drafted with Claude from my requirements) and set each session's priorities. I approved every
+  dependency and chose between the options presented: the 40% risk-parity cap, the fixed end
+  date, block bootstrap, the 0.05 Sharpe and 0.10 information-ratio thresholds, the 4%
+  tracking-error and 30% turnover limits, and GCC blue chips only when the IPS asks. I set the
+  rules that the AI only fills forms and explains, and that a coded rule, not the AI, makes every
+  recommendation.
+- **Phases:**
+  1. The finance core: data, metrics, optimisation, backtests, Monte Carlo.
+  2. The ML regime model and the dashboard.
+  3. The AI analyst.
+  4. Real-investor features: any asset, GCC currencies, mixed calendars.
+  5. The wealth-manager workflow: client, IPS, suitability, domicile, trades, report.
+  6. A professional upgrade: full fact-find, the six-step workflow, light theme, *Fill demo
+     client*.
+  7. The two Optimise modes, Build and Improve, with the policy benchmark.
+  8. Fixing the mixed-calendar bug above.
+- **Reviewed:** I read the results, notebooks and explanations, and asked for changes where
+  something looked wrong. For example, I checked whether the regime probabilities were calibrated,
+  led with ROC AUC instead of accuracy, and stated limitations such as the 2022 whipsaw.
+- **Tested, including an AI-driven end-to-end walkthrough:** I set up a separate AI agent (Claude
+  in Chrome) to role-play a GCC wealth manager. It invented a client, used the live app only
+  through the browser, and reported the bugs it hit. I reviewed its report and had the fixes made
+  in two batches (a six-part fix, then a nine-fix QA batch). This was an AI-driven test I set up
+  and acted on, not a human or independent review. I also used the app myself and reported
+  problems, such as a weight-cap violation and inconsistent formats.
 
-Claude Code worked in a "build and explain" mode (described in `CLAUDE.md`): after each function it
-explained the finance idea in plain language, and after each module it asked me interview-style
-questions, so that I can explain every part of the code. `PROGRESS.md` is the session-by-session log
-of what was built, what I directed and what I learned, including mistakes found and fixed.
+Claude Code worked in a "build and explain" mode ([.claude/CLAUDE.md](.claude/CLAUDE.md)): after
+each function it explained the finance idea, and after each module it asked me interview-style
+questions. [docs/PROGRESS.md](docs/PROGRESS.md) is the session-by-session log, including mistakes
+found and fixed.
+
+## Future work
+
+- Smoothing rules for the regime switch (two months above the threshold, or a hysteresis band),
+  chosen on 2008–2018 only and tested once on 2019–2026.
+- GCC-specific stress features (oil, local market volatility).
+- Verified Sharia screening from a recognised data provider (AAOIFI-style financial ratios) in
+  place of the curated list.
+- Black-Litterman with a GCC view; CVaR optimisation; a minimum-turnover move to meet the IPS when
+  the current portfolio breaks it.
+- An evaluation set for the analyst (does every memo cite every number?).
+
+## Run it locally
+
+```bash
+git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portfolio-lab
+python3.14 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
+pytest -q                       # 936 tests, no network needed
+streamlit run app/streamlit_app.py
+```
+
+Notebooks with the fixed-sample results: `notebooks/01_week1_results.ipynb` and
+`notebooks/02_week2_regime.ipynb`.
+
+## Project layout
+
+```
+ARCHITECTURE.md                what is calculation, what is ML, what the AI may and may not do
+config/universe.yaml           tickers, groups, defaults, IPS bands, Optimise limits, agent settings
+config/investable_universe.yaml  the curated Build universe (62 tagged securities)
+config/investable_history.yaml   first price dates, written by scripts/verify_universe.py
+src/gpl/data.py                download, cache, USD conversion, calendars (all I/O lives here)
+src/gpl/metrics.py             risk, performance and benchmark-relative metrics
+src/gpl/optimise.py            constrained optimiser (incl. max information ratio), Ledoit-Wolf
+src/gpl/construct.py           universe screen, Build candidates, swaps, turnover limit, policy benchmark
+src/gpl/backtest.py            walk-forward backtester with costs per market
+src/gpl/recommend.py           the fixed recommendation rules (Improve and Build)
+src/gpl/client.py              client profile, risk questionnaire, IPS, IPS -> optimiser limits
+src/gpl/factfind.py            fact-find sections, completeness, required return, review date
+src/gpl/suitability.py         ten pass/fail/review rules against the IPS
+src/gpl/scenarios.py           what-ifs, stress episodes, exposures, drift and trade list
+src/gpl/domicile.py            US-situs check, illustrative US estate tax, UCITS alternatives
+src/gpl/demo.py                seeded demo client and portfolio (no AI)
+src/gpl/report.py              IPS and client report PDFs
+src/gpl/montecarlo.py          simulations, goal probability, path drawdowns
+src/gpl/regime.py              the ML regime model: labels, features, models, walk-forward
+src/gpl/plots.py               plotly charts (gpl_light template)
+src/gpl/agent/                 tools.py (17 tools wrapping gpl), analyst.py (tool-use loop, number
+                               check), spec.py (goals -> limits), profile.py (notes -> form facts),
+                               charts.py (charts built from engine data)
+app/                           Streamlit app: streamlit_app.py, layout.py (six steps, header),
+                               client_ui.py, workstation.py, inputs.py, formatting.py
+.streamlit/config.toml         light theme
+scripts/verify_universe.py     checks every universe ticker on Yahoo Finance
+tests/                         pytest suite (run by .github/workflows/tests.yml)
+docs/                          METHODOLOGY.md, BRIEF.md, PROGRESS.md, screenshots/
+.claude/CLAUDE.md              instructions Claude Code followed (build + explain mode)
+```
 
 ## Licence and disclaimer
 
-Educational project. Nothing here is investment advice or a recommendation to buy or sell any
-security. Data © its providers, via Yahoo Finance.
+Educational project. Nothing here is investment, tax or legal advice, or a recommendation to buy
+or sell any security. **Do not enter real client data in the public demo.** Data © its providers,
+via Yahoo Finance.
