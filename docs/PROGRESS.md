@@ -541,3 +541,40 @@ days; the work itself was done in a series of sessions.
   and read all 9 pages. It recommends keeping the current portfolio (Sharpe 0.67 vs the
   fallback's 0.52; the earlier version understated both, 0.54 vs 0.41) with no trades. The
   domicile heading, note and table now stay on one page. 935 tests passing.
+
+## Public-ready repo — 2026-11-06 · README, methodology, CI, screenshots
+- **Directed:** I asked for the repo to be ready for employers and admissions readers and to
+  match the current app exactly: a short README, the detail moved to `docs/METHODOLOGY.md`,
+  three real screenshots, CI with a badge, and the docs moved into `docs/`. I chose to keep
+  Claude Code's instructions at `.claude/CLAUDE.md` so they still load automatically, and to
+  describe my QA walkthrough as what it was: an AI agent (Claude in Chrome) I set up to play a
+  GCC wealth manager through the browser, whose bug report I reviewed and acted on.
+- **Built by Claude Code:**
+  - A README of about 200 lines (pitch, demo link placeholder, screenshots, three features,
+    five findings, six limitations, how it was built) and `docs/METHODOLOGY.md` with the
+    full method, results and limitations, updated for Build and Improve, the policy
+    benchmark, the fact-find, ten suitability rules and the six-step workflow.
+  - Screenshots from the real app with *Fill demo client* (seed 2): the Build result, the
+    Improve recommendation, and page 3 of the client report.
+  - `.github/workflows/tests.yml`: ruff and the full suite on every push.
+  - A regression test for the old "75% cap" sighting: the Frontier obeys 40% in a fresh
+    session and after the cap goes to 75% and back. It passes, so the known-issue bullet is
+    gone; the cause was never found, and METHODOLOGY says so.
+- **Checked:**
+  - The fixed-sample backtest and regime numbers reproduce exactly when the notebooks re-run.
+  - The live Dubai numbers moved a little with new data: the Build fallback's Sharpe is now
+    0.50 (was 0.52), and Improve's target volatility is 0.73 vs 0.66 (was 0.74).
+  - The suite passes in a fresh copy with an empty price cache and the network blocked, the
+    same conditions as CI.
+  - Git has only ever tracked `data/cache/.gitkeep`.
+- **Found while taking screenshots (not changed yet, my decision):**
+  - Build counts a candidate as "not held up" when its full-sample build can't meet the
+    limits (no in-sample Sharpe). The headline reason then says no build "beat the
+    benchmark", even when one had an information ratio of 0.30 but failed the other tests.
+    It didn't change today's outcome.
+  - When today's portfolio breaks the IPS, the turnover limit gives way and the move can be
+    the whole way to the target (107% traded in the demo).
+  - The report's trade summary says "10 basis points" even when GCC trades cost 30-35.
+- **Status:** 936 tests passing.
+- **Next:** decide on the three findings above; push, so the CI badge runs; deploy and add the
+  live URL.
