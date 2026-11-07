@@ -172,9 +172,14 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 942 tests, no network needed
+pytest -q                       # 951 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
+
+**Deploying (Streamlit Community Cloud):** main file `app/streamlit_app.py`; `requirements.txt`
+installs the package normally (not editable), and the code finds `config/` and `data/cache/`
+from the working directory (the repository root). Elsewhere, set `GPL_PROJECT_ROOT` to the
+repository folder. Put `ANTHROPIC_API_KEY` in the app's secrets.
 
 Notebooks with the fixed-sample results: `notebooks/01_week1_results.ipynb` and
 `notebooks/02_week2_regime.ipynb`.

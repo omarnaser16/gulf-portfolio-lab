@@ -607,3 +607,29 @@ days; the work itself was done in a series of sessions.
   random (the first version moved the sold 15% into KSA). A tiny second objective, distance to
   the target, makes the move sensible and deterministic.
 - **Status:** 942 tests passing.
+
+## 2026-11-07 — Streamlit Cloud start-up crash
+- **Decided:** the deployed app crashed on start-up (`FileNotFoundError` in `load_universe`).
+  Fix it properly, check every file the app reads, and test a non-editable install.
+- **Cause:** Streamlit Cloud runs `pip install .`, which copies `src/gpl` into
+  `site-packages`. The code found `config/` by going two folders up from its own file. That
+  works in my editable install, but on the server it points into the Python installation.
+- **Built by Claude Code:**
+  - `data.find_project_root` tries, in order: the `GPL_PROJECT_ROOT` environment variable, two
+    levels above the package (editable install), then the working directory and its parents
+    (Streamlit starts from the repository root). It takes the first folder that has
+    `config/universe.yaml`, and otherwise fails with a message listing where it looked.
+  - The config files, the price cache and `.env` (the analyst) all use that one root. The
+    PDFs use reportlab's built-in fonts, so they read no font files. The app itself opens no
+    other files.
+  - `tests/test_install.py`:
+    - unit tests of the resolver;
+    - a copy of the package outside `src/` run as a separate process: it finds the repo's
+      config from the repo and from `app/`, follows the environment variable, and fails clearly
+      outside the repo;
+    - a real `pip install --target` test, which runs in CI (setuptools added there).
+  - I reproduced the crash with the old code installed outside `src/` before fixing it.
+- **Learned:** an editable install hides packaging bugs: paths relative to `__file__` only
+  point at the repository when the code is run from inside it.
+- **Status:** 951 tests (950 run locally; the real-install test needs setuptools and runs in CI,
+  and passed locally with setuptools added temporarily).
