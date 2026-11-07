@@ -9,6 +9,7 @@ and one column per ticker. Returns are simple daily returns unless stated otherw
 """
 
 import logging
+import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -23,7 +24,50 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ROOT_ENV = "GPL_PROJECT_ROOT"
+_MARKER = Path("config") / "universe.yaml"
+
+
+def find_project_root(
+    package_file: Path | str = __file__,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """The project folder that holds ``config/`` and ``data/cache/``.
+
+    The package can be installed two ways. In editable mode (``pip install -e .``, local work)
+    the code stays in ``src/gpl`` and the project folder is two levels up. In a normal install
+    (``pip install .``, Streamlit Community Cloud) the code is copied into ``site-packages``, so
+    "two levels up" points into the Python installation, not the repository. The candidates are
+    therefore tried in order, and the first that contains ``config/universe.yaml`` wins:
+
+    1. the ``GPL_PROJECT_ROOT`` environment variable, if set;
+    2. two levels above this file (editable install);
+    3. the working directory and its parents (Streamlit runs the app from the repository root).
+
+    Raises
+    ------
+    FileNotFoundError
+        If none of them holds the config, listing the folders searched.
+    """
+    env = os.environ if env is None else env
+    cwd = Path.cwd() if cwd is None else Path(cwd)
+    candidates: list[Path] = []
+    if env.get(ROOT_ENV):
+        candidates.append(Path(env[ROOT_ENV]).expanduser())
+    candidates.append(Path(package_file).resolve().parents[2])
+    candidates += [cwd.resolve(), *cwd.resolve().parents]
+    for folder in candidates:
+        if (folder / _MARKER).is_file():
+            return folder
+    searched = ", ".join(str(c) for c in dict.fromkeys(candidates))
+    raise FileNotFoundError(
+        f"Could not find {_MARKER} in any of: {searched}. Run the app from the repository "
+        f"folder or set {ROOT_ENV} to it."
+    )
+
+
+PROJECT_ROOT = find_project_root()
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 DEFAULT_UNIVERSE = PROJECT_ROOT / "config" / "universe.yaml"
 INVESTABLE = PROJECT_ROOT / "config" / "investable_universe.yaml"

@@ -17,15 +17,15 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import anthropic
 from dotenv import load_dotenv
 
+from gpl import data
 from gpl.agent.tools import AnalystContext, ToolError, execute_tool, tool_definitions
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = data.PROJECT_ROOT  # repository folder, found the same way as config/
 
 DISCLAIMER = (
     "*This memo was produced by an automated analysis of historical data for educational "

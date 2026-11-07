@@ -24,7 +24,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pytest ruff
+          pip install -e . pytest ruff setuptools  # setuptools: the non-editable install test
       - name: Lint
         run: ruff check .
       - name: Test
