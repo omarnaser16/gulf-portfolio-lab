@@ -776,3 +776,15 @@ days; the work itself was done in a series of sessions.
 - **Learned:** in Streamlit what is drawn last updates last; anything that reflects a click
   belongs at the top of the script.
 - **Status:** 1026 tests: 1025 pass locally; the real-install test runs in CI.
+
+## 2026-11-08 — The demo starts at step 1
+- **Decided:** *▶ Try a demo client* opens step 1 (Client), at the top of the page, instead of
+  jumping to Analyse. The toast says "Demo client loaded. Review the client and IPS, then use Next
+  to walk through each step."
+- **Built by Claude Code:** the callback sets step 1; a one-time script scrolls back to the top.
+  Every step's content is still computed in the same run, so later steps open instantly.
+  Checked in headless Chrome: pressed while scrolled down, the demo lands on step 1 at the top
+  with the toast, and the Next buttons go Client → Portfolio → Analyse → Optimise → Suitability →
+  Report & trades, with the highlighted card matching the page each time. A test clicks through
+  every Next button.
+- **Status:** 1026 tests: 1025 pass locally; the real-install test runs in CI.
