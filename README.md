@@ -17,9 +17,9 @@ calculation and makes every recommendation; the AI only fills forms and explains
 All three come from the app with **▶ Try a demo client** (seed 2, 8 Nov 2026): a fictional
 client whose portfolio fits their IPS, marked DEMO DATA everywhere.
 
-**Build a portfolio for me:** a plain-English summary first (what we did, what we found, what we
-recommend and why, what changes), then current against recommended on four measures, and each
-candidate's status with a one-line reason. Here no build beats 60/40 reliably, so the rule's
+**Build a portfolio for me:** the settings of the run, then a four-part summary (what we did,
+what we found, what we recommend, what changes), current against recommended on four measures,
+and each candidate's status. Here no build beats 60/40 reliably, so the rule's
 fallback, Diversified (IPS), is shown as the next best option, not as a forecast.
 
 ![Build mode: recommendation and walk-forward results against the benchmark](docs/screenshots/build-result.png)
@@ -184,7 +184,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 1026 tests, no network needed (live AI tests skip without a key)
+pytest -q                       # 1034 tests, no network needed (live AI tests skip without a key)
 streamlit run app/streamlit_app.py
 ```
 

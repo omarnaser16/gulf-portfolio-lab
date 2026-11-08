@@ -796,3 +796,31 @@ days; the work itself was done in a series of sessions.
   (repeated elements, long pages, states to design for). 19 full-page screenshots of every step
   and sub-tab with demo seed 2 are in `docs/ui-screens/`. The element lists were read from the
   rendered page in headless Chrome, then checked against the code.
+
+## 2026-11-08 — The app redesigned to the mockups
+- **Decided:** redesign every screen to my mockups (`docs/ui-target/redesign.pdf`): look and
+  layout, with each element once in its natural step. Rollback point: git tag `pre-redesign`.
+- **Built by Claude Code (no finance logic changed):**
+  - Design tokens defined once in `gpl/theme.py` (#FCFFFF background, brand blue #0593C6,
+    accent pink #D83995 for one primary action per screen, charcoal text, Inter, 12px cards,
+    8px spacing, 1200px width); `.streamlit/config.toml` mirrors them (a test keeps them equal)
+    and the plotly template and the app's stylesheet use them.
+  - A blue header band, step cards, one guidance line per screen (the rest in tooltips) and a
+    sticky Back/Next bar.
+  - Welcome hero; Client as one fact-find card with one-line section summaries, a risk score card
+    and an IPS card; Portfolio as a holdings card beside an allocation donut; Analyse with KPI
+    cards and tabs in one row; Optimise with a *Run with* bar, *Edit & re-run*, a four-part
+    summary, current-vs-recommended cards and a candidates list; Suitability as one rules table
+    with a rationale card; Report & trades with KPI cards, one trade table with editable targets
+    and the client report card, and the AI analyst as a second tab.
+  - Removed repeats: the suitability table and domicile notes now live on Suitability only; the
+    IPS downloads on Client only; the KPI row on Analyse only; the portfolio value input no
+    longer sits on the trades.
+- **Checked:** every step in headless Chrome after *Try a demo client* (seed 2); after-shots in
+  `docs/ui-screens/after/`; README screenshots re-shot. Two bugs found that way and fixed: two
+  identical charts got the same element ID (crash), and Optimise drew its header from before the
+  run (now it reruns once after a run).
+- **Differs from the mockups (Streamlit limits):** expander labels show the title and summary on
+  one line; the sub-view pills sit under the page title, not to its right; the client report is
+  two clicks (prepare, then download).
+- **Status:** 1034 tests; 1033 pass locally, the real-install test runs in CI.

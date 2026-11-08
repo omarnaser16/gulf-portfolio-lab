@@ -12,6 +12,35 @@ power-user option that could move to an expander, a tooltip or a second level).
   Streamlit with a light private-bank theme (`.streamlit/config.toml`, brand blue `#2563EB`);
   layout CSS is in `app/layout.py`.
 
+> **Redesigned on 8 Nov 2026** to the mockups in [`docs/ui-target/redesign.pdf`](ui-target/redesign.pdf)
+> (git tag `pre-redesign` marks the version described below). After-screenshots are in
+> [`docs/ui-screens/after/`](ui-screens/after/). What moved, so each element appears once in its
+> natural step:
+>
+> - **Header:** a blue band; *Try a demo client* is a white header button, and the welcome
+>   screen's pink button is the main call to action.
+> - **Welcome:** a hero card plus "Load a worked example" and "Reopen a saved client"; it replaces
+>   the old banner and the Client empty state.
+> - **Client:** one fact-find card (sections show a one-line summary), a Risk score card and an
+>   IPS card with the downloads; *Switch client* holds examples, upload and new blank client. The
+>   IPS downloads are no longer repeated on Reports.
+> - **Portfolio:** a holdings card (search, entry mode, equal weight / normalise, an import
+>   popover, a total row) beside an allocation donut; data notes and market costs are details.
+> - **Analyse:** KPI cards; tabs in one row (Performance, Benchmark, Monte Carlo, Assets ·
+>   analyst, Regime · analyst); tables and secondary charts in details.
+> - **Optimise:** the mode switch and a *Frontier & strategy backtests* link in the header;
+>   settings in *Run settings* / *Edit & re-run* with a *Run with* bar; a four-part summary;
+>   current vs recommended cards; a weights card and a candidates card; one line on suitability;
+>   full results, walk-forward charts, swap ideas and the diagnosis in details. The suitability
+>   table and domicile notes moved to step 5 only.
+> - **Suitability:** count pills, one rules table (recommended column tinted), a rationale card,
+>   a collapsed fund-domicile card.
+> - **Report & trades:** *Trades & report* (KPI cards, one trade table with editable targets, the
+>   client report card) and *AI analyst* as two tabs. The AI analyst no longer repeats the KPI row,
+>   holdings table or allocation chart, and the trades no longer repeat the portfolio value input.
+> - **Everywhere:** one guidance line per screen (the rest in (i) tooltips) and a sticky Back/Next
+>   bar.
+
 Priority key: **E** = essential, S = secondary.
 
 | Screenshot | Screen |

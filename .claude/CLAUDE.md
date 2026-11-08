@@ -64,14 +64,19 @@ it switched to build + explain mode, which has been used since:
   rules use the full history and also show the backtest-period figure.
 - **Display:** percentages shown with exactly two decimals (e.g. `9.00%`).
 - **Portfolio value:** one value (USD) everywhere: the total of USD holdings, or entered once on
-  Holdings/Client/Rebalance (`workstation.portfolio_value`). No default amount.
+  Holdings (weights mode) or the Client fact-find (`workstation.portfolio_value`). No default
+  amount.
 - **Cash needs:** dated (YYYY-MM); those due within `cash_need_window_months` (36) must be held
   in cash-like holdings (`client.cash_like_holdings`: the "Cash & short-term" group, config
   `cash_like`, or volatility <= 3%). They are a hard optimiser set and checked on the trade list.
-- **UI:** light private-bank theme (`.streamlit/config.toml`) and one plotly template
-  (`gpl_light`); show figures with `formatting.plot` (theme=None). Six-step workflow: the step cards
-  are the navigation (the top-level tab row is hidden), with a sticky header (`app/layout.py`). Benchmarks are grey dashed reference series. No sidebar:
-  settings live in the top-bar popover.
+- **UI:** design tokens defined once in `src/gpl/theme.py` (background #FCFFFF, brand blue
+  #0593C6, accent pink #D83995 for one primary action per screen, charcoal #1A2530, Inter,
+  12px cards); mirrored in `.streamlit/config.toml` (a test keeps them equal) and used by the one
+  plotly template (`gpl_light`) and the app CSS (`app/layout.py`). Show figures with
+  `formatting.plot` (theme=None). Six-step workflow following `docs/ui-target/redesign.pdf`:
+  step cards are the navigation (the top-level tab row is hidden), one guidance line per screen,
+  details collapsed, a sticky Back/Next bar, each element once in its natural step. Benchmarks
+  are grey dashed reference series. No sidebar: settings live in the header popover.
 
 ## Code style
 - Python 3.14, type hints everywhere, numpy-style docstrings.
