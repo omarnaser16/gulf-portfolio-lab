@@ -1292,8 +1292,15 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     assert 'class="gpl-step todo active"' in html and "no client loaded" in html
     assert "Client <b>none loaded</b>" in html and "IPS <b>–</b>" in html
     # the step cards are the navigation (the tab row is hidden)
+    first_tabs = app.session_state["_step_tabs_n"]
     app.button(key="step_nav_3").click().run()
     assert app.session_state["main_tab"] == "4 Optimise"
+    # each change of step rebuilds the hidden tabs under a new key, open at that step, so the
+    # browser can't keep showing the old step if the run that changed it was cut short
+    assert app.session_state["_step_tabs_n"] == first_tabs + 1
+    assert app.session_state["_step_tabs_for"] == "4 Optimise"
+    app.run()
+    assert app.session_state["_step_tabs_n"] == first_tabs + 1  # a plain rerun keeps it
     html = " ".join(m.value for m in app.markdown)
     assert re.search(r'class="gpl-step \w+ active"><span class="gpl-dot">4</span>', html)
     app.button(key="step_nav_0").click().run()

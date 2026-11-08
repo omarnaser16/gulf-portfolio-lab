@@ -916,15 +916,15 @@ def render_rebalance(
             column_config={
                 "_index": st.column_config.TextColumn("Ticker", width=82),
                 "Action": st.column_config.TextColumn(width=55),
-                "Current": st.column_config.NumberColumn("Current %", format="%.2f", width=72),
-                "Amount (USD)": st.column_config.NumberColumn(format="localized", width=96),
-                "After (USD)": st.column_config.NumberColumn(format="localized", width=92),
+                "Current": st.column_config.NumberColumn("Current %", format="%.2f", width=80),
+                "Amount (USD)": st.column_config.NumberColumn(format="localized", width=112),
+                "After (USD)": st.column_config.NumberColumn(format="localized", width=100),
                 TARGET_COL: st.column_config.NumberColumn(
                     "Target %",
                     format="%.2f",
                     min_value=0.0,
                     max_value=100.0,
-                    width=70,
+                    width=92,  # room for the header's edit icon
                     help="Edit any target.",
                 ),
                 "Drift": st.column_config.TextColumn(width=78),

@@ -2326,10 +2326,8 @@ except (ValueError, DataUnavailable) as e:
     bench = None
     st.warning(f"Couldn't load the benchmark: {e} Choose another one.")
 
-tab_client, step_portfolio, step_analyse, step_optimise, step_suitability, step_report = st.tabs(
-    layout.STEPS,
-    key=layout.STEP_KEY,  # tracked, so a rerun keeps the step and "Next" can move to one
-    on_change="rerun",
+tab_client, step_portfolio, step_analyse, step_optimise, step_suitability, step_report = (
+    layout.step_tabs()
 )
 with step_analyse:
     analyse_head = st.container()  # page header, filled once the backtest period is known

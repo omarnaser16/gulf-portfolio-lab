@@ -4,9 +4,10 @@ Pure presentation: every figure shown is passed in (computed by tested code else
 type and spacing come from the design tokens in ``gpl.theme`` (one place); ``APP_CSS`` turns
 them into the page's stylesheet.
 
-Steps are the top-level tabs (``st.tabs(key=STEP_KEY)``), so a button can move to a step by
-setting ``st.session_state[STEP_KEY]`` in a callback. The tab row itself is hidden (CSS): the
-step cards are the navigation, each with a full-size button over it. Sub-views are tabs too,
+Steps are the top-level tabs (``step_tabs``); the open step lives in
+``st.session_state[STEP_KEY]``, so a button moves to a step by setting it in a callback. The tab
+row itself is hidden (CSS): the step cards are the navigation, each with a full-size button over
+it. Sub-views are tabs too,
 restyled as segmented pills.
 """
 
@@ -19,6 +20,8 @@ import streamlit as st
 from gpl import theme as t
 
 STEP_KEY = "main_tab"
+# sub-view tabs drawn as segmented pills: every tab row except the steps and Analyse
+_PILLS = '[data-testid="stTabs"]:not([class*="st-key-step_tabs_"]):not(.st-key-analyse_tab)'
 STEPS = [
     "1 Client",
     "2 Portfolio",
@@ -52,6 +55,22 @@ class HeaderInfo:
 def go_to(step: str) -> None:
     """Callback: open ``step``."""
     st.session_state[STEP_KEY] = step
+
+
+def step_tabs() -> Sequence:
+    """The six step tabs, open at ``st.session_state[STEP_KEY]``.
+
+    The step is our own state, not the widget's: Streamlit sends a widget a value set in session
+    state only on the run where it changed, so if that run is cut short by another rerun the
+    browser keeps showing the old step while the step cards show the new one. Instead, each
+    change of step builds the tabs under a new key with the step as their default, which every
+    later run sends again.
+    """
+    step = st.session_state.setdefault(STEP_KEY, STEPS[0])
+    if st.session_state.get("_step_tabs_for") != step:
+        st.session_state["_step_tabs_for"] = step
+        st.session_state["_step_tabs_n"] = st.session_state.get("_step_tabs_n", 0) + 1
+    return st.tabs(STEPS, default=step, key=f"step_tabs_{st.session_state['_step_tabs_n']}")
 
 
 # ---------------------------------------------------------------------------------- HTML bits
@@ -287,7 +306,8 @@ h1, h2, h3, h4 {{ color: var(--gpl-text) !important; letter-spacing: -0.01em; }}
   letter-spacing: .03em; }}
 
 /* ---- step cards (the navigation; the top-level tab row is hidden) */
-.st-key-main_tab > div > [role="tablist"], .st-key-main_tab > div > div > [role="tablist"] {{
+[class*="st-key-step_tabs_"] > div > [role="tablist"],
+[class*="st-key-step_tabs_"] > div > div > [role="tablist"] {{
   display: none; }}
 [class*="st-key-step_card_"] {{ position: relative; }}
 [class*="st-key-step_nav_"] {{ position: absolute; inset: 0; z-index: 5; margin: 0; }}
@@ -353,16 +373,16 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
   color: var(--gpl-muted); }}
 
 /* ---- sub-view tabs as segmented pills (Analyse keeps an underline row, as in the mockup) */
-[data-testid="stTabs"]:not(.st-key-main_tab):not(.st-key-analyse_tab) [role="tablist"] {{
+{_PILLS} [role="tablist"] {{
   background: var(--gpl-subtle); border-radius: 10px; padding: 4px; gap: 2px;
   width: fit-content; }}
-[data-testid="stTabs"]:not(.st-key-main_tab):not(.st-key-analyse_tab) [role="tab"] {{
+{_PILLS} [role="tab"] {{
   border-radius: 8px; padding: 6px 14px; height: auto; }}
-[data-testid="stTabs"]:not(.st-key-main_tab):not(.st-key-analyse_tab) [aria-selected="true"] {{
+{_PILLS} [aria-selected="true"] {{
   background: #fff; box-shadow: 0 1px 3px rgba(26,37,48,.12); }}
-[data-testid="stTabs"]:not(.st-key-main_tab):not(.st-key-analyse_tab)
+{_PILLS}
   [data-baseweb="tab-highlight"],
-[data-testid="stTabs"]:not(.st-key-main_tab):not(.st-key-analyse_tab) [data-baseweb="tab-border"] {{
+{_PILLS} [data-baseweb="tab-border"] {{
   display: none; }}
 [data-testid="stTabs"] [aria-selected="true"] p {{ font-weight: 600; }}
 .st-key-analyse_tab [aria-selected="true"] p {{ color: var(--gpl-brand-btn); }}
