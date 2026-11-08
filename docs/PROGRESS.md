@@ -788,3 +788,11 @@ days; the work itself was done in a series of sessions.
   Report & trades, with the highlighted card matching the page each time. A test clicks through
   every Next button.
 - **Status:** 1026 tests: 1025 pass locally; the real-install test runs in CI.
+
+## 2026-11-08 — UI inventory for a designer
+- **Built by Claude Code (no app code changed):** `docs/ui-inventory.md` lists every section,
+  input, button, table, chart and message on the header, welcome screen, the six steps and the
+  AI analyst, with what each is for and whether it is essential or secondary, plus observations
+  (repeated elements, long pages, states to design for). 19 full-page screenshots of every step
+  and sub-tab with demo seed 2 are in `docs/ui-screens/`. The element lists were read from the
+  rendered page in headless Chrome, then checked against the code.
