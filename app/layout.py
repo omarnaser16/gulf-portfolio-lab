@@ -2,7 +2,8 @@
 
 Pure presentation: every figure shown is passed in (computed by tested code elsewhere).
 Steps are the top-level tabs (``st.tabs(key=STEP_KEY)``), so a button can move to a step by
-setting ``st.session_state[STEP_KEY]`` in a callback.
+setting ``st.session_state[STEP_KEY]`` in a callback. The tab row itself is hidden (CSS): the
+step cards are the navigation, each with a full-size button over it.
 """
 
 from collections.abc import Sequence
@@ -71,20 +72,28 @@ def render_header(container, info: HeaderInfo) -> None:
 
 
 def render_stepper(statuses: Sequence[StepStatus], active: str | None) -> None:
-    """The six steps with done / to-do marks; the active step is highlighted."""
-    items = []
-    for step, status in zip(STEPS, statuses, strict=True):
+    """The six steps with done / to-do marks; click a card to open its step."""
+    columns = st.columns(len(STEPS), gap="small")
+    for i, (column, step, status) in enumerate(zip(columns, STEPS, statuses, strict=True)):
         number, title = step.split(" ", 1)
         cls = "done" if status.done else "todo"
         if step == active:
             cls += " active"
         mark = "✓" if status.done else number
-        items.append(
-            f'<div class="gpl-step {cls}"><span class="gpl-dot">{mark}</span>'
-            f'<span class="gpl-step-text"><b>{escape(title)}</b>'
-            f"<small>{escape(status.note)}</small></span></div>"
-        )
-    st.markdown(f'<div class="gpl-stepper">{"".join(items)}</div>', unsafe_allow_html=True)
+        with column.container(key=f"step_card_{i}"):
+            st.markdown(
+                f'<div class="gpl-step {cls}"><span class="gpl-dot">{mark}</span>'
+                f'<span class="gpl-step-text"><b>{escape(title)}</b>'
+                f"<small>{escape(status.note)}</small></span></div>",
+                unsafe_allow_html=True,
+            )
+            st.button(
+                f"Open step {step}",
+                key=f"step_nav_{i}",
+                on_click=go_to,
+                args=(step,),
+                help=f"Open {title}: {status.note}",
+            )
 
 
 def step_footer(step: str, status: StepStatus) -> None:
@@ -147,9 +156,16 @@ LAYOUT_CSS = """
   background: var(--gpl-accent); color: #fff; border-color: transparent;
   font-weight: 700; letter-spacing: 0.04em;
 }
-.gpl-stepper { display: flex; gap: 0.5rem; margin: 0.6rem 0 0.2rem 0; }
+/* the step cards are the navigation: the top-level tab row is hidden */
+.st-key-main_tab > div > [role="tablist"] { display: none; }
+[class*="st-key-step_card_"] { position: relative; }
+[class*="st-key-step_nav_"] { position: absolute; inset: 0; z-index: 5; margin: 0; }
+[class*="st-key-step_nav_"] button {
+  width: 100%; height: 100%; opacity: 0; cursor: pointer;
+}
+[class*="st-key-step_card_"]:hover .gpl-step { border-color: var(--gpl-accent); }
 .gpl-step {
-  flex: 1; display: flex; gap: 0.5rem; align-items: center; padding: 0.45rem 0.6rem;
+  height: 100%; display: flex; gap: 0.5rem; align-items: center; padding: 0.45rem 0.6rem;
   border: 1px solid var(--gpl-border); border-radius: 0.5rem;
   background: var(--gpl-card); min-width: 0;
 }
@@ -173,6 +189,5 @@ LAYOUT_CSS = """
 .gpl-step-text small {
   font-size: 0.72rem; opacity: 0.75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-@media (max-width: 900px) { .gpl-stepper { flex-wrap: wrap; } .gpl-step { flex: 1 1 45%; } }
 </style>
 """

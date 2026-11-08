@@ -1390,8 +1390,15 @@ def test_blank_cell_in_the_app_warns_without_a_rerun_loop(app: AppTest) -> None:
 
 def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     html = " ".join(m.value for m in app.markdown)
-    assert 'class="gpl-stepper"' in html and "no client loaded" in html
+    assert 'class="gpl-step todo active"' in html and "no client loaded" in html
     assert "<b>Client</b> none loaded" in html and "<b>IPS</b> –" in html
+    # the step cards are the navigation (the tab row is hidden)
+    app.button(key="step_nav_3").click().run()
+    assert app.session_state["main_tab"] == "4 Optimise"
+    html = " ".join(m.value for m in app.markdown)
+    assert re.search(r'class="gpl-step \w+ active"><span class="gpl-dot">4</span>', html)
+    app.button(key="step_nav_0").click().run()
+    assert app.session_state["main_tab"] == "1 Client"
     app.button(key="next_0").click().run()
     assert app.session_state["main_tab"] == "2 Portfolio"
     app.button(key="ask_analyst").click().run()

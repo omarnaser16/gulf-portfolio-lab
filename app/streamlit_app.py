@@ -2005,10 +2005,12 @@ with step_analyse:
         on_change="rerun",
     )
 with step_optimise:
+    st.subheader("Optimise")
     sec_opt, tab_frontier, tab_backtest = st.tabs(
         ["Optimise", "Frontier", "Strategy backtests"], key="optimise_tab", on_change="rerun"
     )
 with step_report:
+    st.subheader("Report & trades")
     sec_rebal, sec_reports, tab_agent = st.tabs(
         layout.REPORT_TABS, key=layout.REPORT_KEY, on_change="rerun"
     )
