@@ -28,7 +28,7 @@ flowchart TB
         MC["montecarlo.py<br/>bootstrap / GBM, seeded"]
         CLI["client.py · factfind.py<br/>risk score, IPS limits"]
         SUIT["suitability.py · domicile.py<br/>scenarios.py<br/>pass / fail / review rules"]
-        REC["recommend.py<br/>fixed rule picks the<br/>recommendation"]
+        REC["recommend.py · summary.py<br/>fixed rule picks the<br/>recommendation; plain-English<br/>summary and statuses"]
         REP["report.py<br/>client report and IPS PDFs"]
     end
 
@@ -99,8 +99,13 @@ Everything that produces a number a client might rely on:
 - **The decision** (`recommend.py`): a fixed rule per goal chooses the recommendation from
   walk-forward, after-cost results. A change needs a Sharpe gain of at least 0.05 (Improve) or an
   information ratio of at least 0.10 that beats the benchmark (Build), and must pass every IPS
-  rule. Otherwise the rule keeps the current portfolio, falls back to a labelled next-best option,
-  or shows the closest portfolio with its breaches.
+  rule. Otherwise the rule keeps the current portfolio, falls back to a labelled next-best option
+  (in Build, held to the same tests as every candidate, and never one another IPS-passing
+  candidate beats on every measure), or shows the closest portfolio with its breaches.
+- **The plain-English summary** (`summary.py`, `recommend.candidate_statuses`): the summary
+  card ("what we did / found / recommend / what changes"), each candidate's status and reason,
+  and the current-vs-recommended cards are assembled by code from the report's facts. They are
+  not written by the AI.
 - **Output** (`report.py`, `plots.py`, `agent/charts.py`): PDFs and charts drawn from engine data.
 
 ## Machine learning

@@ -633,3 +633,41 @@ days; the work itself was done in a series of sessions.
   point at the repository when the code is run from inside it.
 - **Status:** 951 tests (950 run locally; the real-install test needs setuptools and runs in CI,
   and passed locally with setuptools added temporarily).
+
+## 2026-11-08 — Fixes from a live end-to-end test: Build rule, turnover, clearer results
+- **Decided:** a live test of the deployed app (demo seed 44593) recommended Diversified
+  (Sharpe 0.39, tracking error 14.77%) over the rejected low-vol tilt (0.49, 4.95%), which was
+  better on every measure. I asked for the fallback to face the same tests as the builds, for a
+  Build turnover limit, a note on why CAGR/Sharpe differ between steps, one global equity fund
+  in the policy benchmark, some polish, and results a non-expert can follow. I chose ACWI alone,
+  exempt from the per-holding cap (a benchmark isn't a holding), and 25% turnover a quarter.
+- **Built by Claude Code:**
+  - **Build rule:** every candidate faces the same four tests (IPS, held up, volatility,
+    tracking error). The fallback is the best Sharpe among those passing all four; if none do,
+    the IPS-passing one failing the fewest tests, with the failures named. A guard means the
+    pick is never a portfolio another IPS-passing candidate beats on Sharpe, volatility,
+    drawdown, tracking error and turnover. The seed-44593 numbers are a test.
+  - **Turnover:** "Turnover / yr" was annualised ×12 although Build rebalances quarterly, so the
+    6–10× figures were really 2–3.5×; `backtest.annual_turnover` fixes it for every mode. Build
+    now moves at most 25% a quarter after the first build, and leftovers under 0.5% the new build
+    doesn't want are sold within that limit, so no tail of tiny holdings.
+  - **Policy benchmark:** ACWI alone (no URTH); the Dubai mix is unchanged (45/10/35/10,
+    volatility 9.21%, largest fall −19.50%).
+  - **Polish:** Data notes stay collapsed after Fill demo client; the Portfolio value box follows
+    every USD holdings edit; nothing shows as −0.00% (one helper, `metrics.no_negative_zero`).
+  - **Easier to follow:** live progress (4 steps and a bar, "about a minute"); a summary card
+    first (what we did, found, recommend and why, what changes), written by code
+    (`gpl/summary.py`); current vs recommended (weights and four cards with arrows); a status
+    and one-line reason per candidate, with the full table in "Full results (for analysts)";
+    "How to read this"; the page scrolls to the summary and highlights it; a note on each step's
+    dates.
+- **Effect on results:** seed 44593 now gets the low-vol tilt (fewest failed tests) instead of
+  Diversified. Dubai against 60/40: still keep (current 0.67 vs next best 0.55). Dubai against
+  the policy benchmark: the quality tilt is now recommended (information ratio 0.21, +0.67% a
+  year, tracking error 3.02%), where on 6 Nov nothing reached 0.10. Both changes contributed:
+  ACWI alone without the limit gives the low-vol tilt 0.13. A better result after a method
+  change is a mild form of hindsight, and the margins are small, so I say so in the README.
+- **Learned:** a fallback must be held to the same standard as the main choice, or it can pick
+  something worse than what it rejected. A turnover number is only as good as its annualisation.
+  A turnover limit on its own leaves dust; selling it has to fit inside the same limit.
+- **Status:** 972 tests (971 pass locally; the real-install test runs in CI).

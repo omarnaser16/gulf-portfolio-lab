@@ -17,8 +17,9 @@ calculation and makes every recommendation; the AI only fills forms and explains
 All three come from the app with **🎲 Fill demo client** (seed 2): a fictional client, marked
 DEMO DATA everywhere.
 
-**Build a portfolio for me:** no built portfolio passed the rule against 60/40, so the rule
-shows its labelled fallback and says it does not beat the benchmark.
+**Build a portfolio for me:** a plain-English summary first (what we did, what we found, what we
+recommend and why, what changes), then current against recommended on four measures, and each
+candidate's status with a one-line reason.
 
 ![Build mode: recommendation and walk-forward results against the benchmark](docs/screenshots/build-result.png)
 
@@ -40,10 +41,11 @@ estimated cost.
    screened by the client's IPS, it builds 8-15-holding candidates that maximise the information
    ratio against the benchmark, within a 4% tracking-error limit and the benchmark's volatility,
    with optional low-volatility, momentum or quality tilts. Securities and weights are re-chosen
-   every quarter using only data available then, after costs. A fixed rule recommends a build
-   only if it beat the benchmark out of sample (information ratio at least 0.10). Otherwise it
-   shows a clearly labelled fallback (a benchmark tracker or a diversified IPS portfolio), or says
-   to keep the current portfolio. Build also suggests a policy benchmark that itself fits the IPS.
+   every quarter using only data available then, after costs, trading at most 25% a quarter. A
+   fixed rule recommends a build only if it beat the benchmark out of sample (information ratio at
+   least 0.10). Otherwise it shows a clearly labelled next best option, held to the same tests as
+   every candidate and never one another candidate beats on every measure, or says to keep the
+   current portfolio. Build also suggests a policy benchmark that itself fits the IPS.
 2. **Improve my current portfolio.** Five re-weighting methods (max Sharpe, min variance, risk
    parity, max diversification, target volatility) plus up to three rule-based swaps, each with
    its reason, under a 30% turnover limit. If the current portfolio breaks the IPS, the default
@@ -74,11 +76,19 @@ estimated cost.
   "volatility is already high" reached 0.71 with higher precision and accuracy. De-risking on
   the forecast cut the equal-weight COVID drawdown from −20.32% to −16.06%, but lowered its
   Sharpe ratio from 0.49 to 0.39.
-- **Build did not beat the benchmark for the Dubai example, and the rule says so.** The run on
-  6 Nov 2026 re-selected every quarter, 39 quarters, after costs. No build reached an information
-  ratio of 0.10, against either 60/40 or the IPS-fitting policy benchmark. The fallback
-  (Diversified, Sharpe ratio 0.50) was worse than the client's current portfolio (0.67), which
-  passes the IPS, so the rule keeps the current portfolio.
+- **Build beat the IPS-fitting benchmark only after the fixes, and lost to 60/40.** For the
+  Dubai example (live run, 8 Nov 2026, 39 quarters re-selected, after costs):
+  - Against 60/40 no build reached an information ratio of 0.10. The next best (the low-vol
+    tilt, Sharpe ratio 0.55) was worse than the client's current portfolio (0.67), which passes
+    the IPS, so the rule keeps it.
+  - Against the policy benchmark (ACWI alone, the first change) with the 25%-a-quarter turnover
+    limit (the second), the quality tilt is recommended: information ratio 0.21, 0.67% a year
+    above the benchmark, tracking error 3.02%.
+  - On 6 Nov, with ACWI plus URTH and no turnover limit, no build reached 0.10. With ACWI alone
+    but no limit, the low-vol tilt reaches 0.13; the limit cut trading from 2.6–3.1× a year to
+    under 1× and lifted most builds. The changes came from a test finding, not from chasing
+    this number, but a better result after changing the method is still a mild form of
+    hindsight, and the margins are small.
 - **Improve found a modest, rule-qualifying gain.** For the same client, target volatility
   improved the walk-forward Sharpe ratio from 0.66 to 0.73, passing every IPS rule within the 30%
   turnover limit. It is historical and risk-adjusted, not a forecast.
@@ -172,7 +182,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 951 tests, no network needed
+pytest -q                       # 972 tests, no network needed
 streamlit run app/streamlit_app.py
 ```
 
@@ -196,7 +206,8 @@ src/gpl/metrics.py             risk, performance and benchmark-relative metrics
 src/gpl/optimise.py            constrained optimiser (incl. max information ratio), Ledoit-Wolf
 src/gpl/construct.py           universe screen, Build candidates, swaps, turnover limit, policy benchmark
 src/gpl/backtest.py            walk-forward backtester with costs per market
-src/gpl/recommend.py           the fixed recommendation rules (Improve and Build)
+src/gpl/recommend.py           the fixed recommendation rules (Improve and Build), candidate statuses
+src/gpl/summary.py             the plain-English summary card, written by code from the report
 src/gpl/client.py              client profile, risk questionnaire, IPS, IPS -> optimiser limits
 src/gpl/factfind.py            fact-find sections, completeness, required return, review date
 src/gpl/suitability.py         ten pass/fail/review rules against the IPS

@@ -79,19 +79,45 @@ beat the benchmark on a risk-adjusted basis, judged walk-forward after costs.
 - **No look-ahead**: securities as well as weights are re-chosen every quarter using only data
   available then (risk from all history so far, returns from the last year), held to the next
   quarter, after costs per market. Quarterly re-selection keeps a run under a minute.
-- **The rule** (`recommend.recommend_build`, every branch tested): among builds that pass the IPS,
-  held up out of sample, kept volatility at most the benchmark's (+0.50 pp) and tracking error
-  within the limit (+0.50 pp), and beat the benchmark out of sample after costs (excess return
-  above zero and information ratio at least 0.10), pick the highest information ratio. Below 0.10
-  the difference is treated as noise. If none qualifies, the *next best option*, clearly labelled
-  "does not beat the benchmark": the tracker if it passes the IPS, else the diversified portfolio.
-  If the current portfolio passes the IPS and its walk-forward Sharpe ratio is at least the
-  fallback's, the rule says keep it. If nothing passes the IPS, the closest is shown with its
-  breaches (`closest_fails`), never as suitable.
-- **Shown**: securities chosen and why (tags and the reason each was picked), latest weights,
-  walk-forward table (CAGR, volatility, Sharpe, max drawdown, turnover, excess return,
-  information ratio, tracking error, hit rate, worst relative drawdown), growth and
-  relative-drawdown charts against the benchmark (grey dashed), and the suitability checks.
+- **Turnover limit** (25% of the portfolio per quarter after the first build, editable; config
+  `build_max_turnover`): each quarter moves along the straight line from the last weights towards
+  the new build only as far as the limit allows, so a build trades at most 1.0× its value a year.
+  Every limit that both ends meet and that is linear or convex (weights, groups, volatility,
+  tracking error) is met on the way. Leftovers the new build doesn't want are sold outright once
+  they fall under 0.5%, and that sale counts towards the same limit
+  (`construct.limit_turnover_clean`), so the move ends without a tail of tiny holdings. While a
+  move is spread over quarters a portfolio can briefly hold a little more than 15 names, or a
+  name under 2%. The one-off move from today's portfolio into the build is shown separately.
+  Before the limit, builds traded about 2–3.5× a year (the app had shown 6–10×: turnover was
+  annualised as if Build rebalanced monthly; `backtest.annual_turnover` now divides total
+  trading by the years covered, whatever the frequency).
+- **The rule** (`recommend.recommend_build`, every branch tested). Every candidate, the builds,
+  the benchmark tracker and the diversified portfolio alike, faces the same four tests: it passes
+  the IPS, held up out of sample, kept volatility at most the benchmark's (+0.50 pp) and tracking
+  error within the limit (+0.50 pp).
+  - *Recommended*: among builds that pass all four and beat the benchmark out of sample after
+    costs (excess return above zero and information ratio at least 0.10), the highest
+    information ratio. Below 0.10 the difference is treated as noise.
+  - *Next best option* (labelled "does not beat the benchmark reliably"): otherwise, the highest
+    walk-forward Sharpe ratio among candidates that pass all four tests. If none passes all four,
+    among those that pass the IPS, the one failing the fewest tests and then the highest Sharpe
+    ratio, with the tests it failed named and the other candidates' Sharpe ratios listed.
+  - *Never a dominated portfolio*: if another IPS-passing candidate is at least as good on Sharpe
+    ratio, volatility, drawdown, tracking error and turnover, and better on one, it is chosen
+    instead, and the reason says so.
+  - *Keep*: if the current portfolio passes the IPS and its walk-forward Sharpe ratio is at least
+    the chosen option's, the rule says keep it.
+  - If nothing passes the IPS, the closest is shown with its breaches (`closest_fails`), never as
+    suitable.
+  - *Why the rule changed (8 Nov 2026)*: a live test with demo seed 44593 recommended Diversified
+    (Sharpe 0.39, tracking error 14.77%) over the rejected low-vol tilt (0.49, 4.95%), which was
+    better on every measure and also passed the IPS: the old fallback skipped the tests the
+    builds faced. That case is now a test (`test_build_never_falls_back_to_a_portfolio_worse…`).
+- **Shown**: the summary card and comparison (see *Reading the results* below), securities chosen
+  and why (tags and the reason each was picked), the full walk-forward table for analysts (CAGR,
+  volatility, Sharpe, max drawdown, turnover, excess return, information ratio, tracking error,
+  hit rate, worst relative drawdown), growth and relative-drawdown charts against the benchmark
+  (grey dashed), and the suitability checks.
 
 ## Improve my current portfolio
 
@@ -128,6 +154,31 @@ mix, or a few explained swaps, would have done better.
   portfolio. If the current portfolio fails the IPS, the best passing method is recommended and
   labelled as needed for suitability, even without a gain.
 
+## Reading the results (both modes)
+
+Results are written for someone who isn't an analyst; every sentence is put together by code
+(`gpl/summary.py`, `recommend.candidate_statuses`) from the report's own facts, not by the AI.
+
+- **Progress while it runs**: four steps with a progress bar, e.g. "1/4 Screened 62 securities
+  against the IPS: 54 eligible", "2/4 Building Max IR and testing it quarter by quarter, after
+  costs (1 of 5 built portfolios)", "3/4 Comparing every candidate with 60/40", "4/4 Applying the
+  recommendation rule". When it finishes, the page scrolls to the summary and highlights it.
+- **Summary card** first: *What we did* (three bullets), *What we found*, *What we recommend and
+  why* (the rule's own reason) and *What changes* (the trades in words, e.g. "Sell 15.00% SPY;
+  buy 10.00% AGG… (turnover 30.00%)", or "No trades needed"; the turnover counts every change).
+- **Current vs recommended**: the weights side by side and four cards (CAGR, volatility, Sharpe
+  ratio, max drawdown) with the change and an arrow coloured by whether it is better (lower
+  volatility counts as better).
+- **Candidates**: one status per row (✓ Recommended, ✓ Next best, ✗ Breaks IPS, ✗ Didn't hold
+  up out of sample, ✗ Too much tracking error, ✗ More volatile than the benchmark, ✗ Didn't beat
+  the benchmark enough…) with a one-line reason using the numbers. The full technical table is
+  in *Full results (for analysts)*. *How to read this* defines Sharpe ratio, information ratio,
+  tracking error, held up out of sample and turnover in one sentence each.
+- **Different dates, different figures**: the current portfolio's CAGR and Sharpe ratio differ
+  a little between Analyse (the holdings' own backtest window), Improve (the dates every method
+  shares) and Build (the investable universe's dates and calendar). Each place says which dates
+  it uses.
+
 ## Benchmarks, including the policy benchmark
 
 60/40 (SPY/AGG) is the default; the S&P 500, MSCI World, FTSE 100, Saudi and UAE market ETFs,
@@ -135,7 +186,11 @@ cash or any loaded asset can be chosen. A 60/40 benchmark can itself break a con
 limits, so Build also suggests a **policy benchmark that fits the IPS**: a mix of global equity,
 GCC equity, bonds and cash funds (Sharia funds for a Sharia client) with the most equity whose
 full-history volatility and largest fall stay within the IPS, that meets its GCC minimum and cash
-need, and that holds no fund over the weight cap. For the Dubai example it is 45% equity, 10% GCC,
+need, and that holds no fund over the weight cap. Global equity is one fund, ACWI (MSCI All
+Country World, about 2,300 companies in 47 markets), at any weight: a benchmark is not a holding,
+so the per-holding cap doesn't apply to a broad index (until 8 Nov 2026 it was split half and
+half between ACWI and URTH, MSCI World, to stay under the cap). For the Dubai example it is 45%
+equity, 10% GCC,
 35% bonds and 10% cash; when no mix fits (the conservative Sharia example), the app says so and
 keeps 60/40. 60/40 stays selectable.
 
@@ -316,7 +371,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 951 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
+**Testing.** 972 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -330,7 +385,10 @@ a scripted fake model, so the suite never touches the network.
   histories (Sharia from 2019), and Gulf stocks reduce the common dates (about 180-200 a year
   with US funds), so samples are shorter and noisier. Tilts are simple price-based scores, not
   a factor model. The "held up" test needs an in-sample Sharpe from a full-sample build; when
-  that build can't meet the limits, the candidate counts as not held up.
+  that build can't meet the limits, the candidate counts as not held up. Build's turnover limit
+  and the next-best rule were changed after a live test (8 Nov 2026); results after a method
+  change are a mild form of hindsight too. When no candidate passes every test, the next best
+  still fails some (named in the reason).
 - **Turnover limit when limits bind.** The default move keeps the turnover limit, so a portfolio
   that breaks the IPS can stay outside it for a few months while it moves towards compliance.
   Only weight, group and cash limits are in the linear program; volatility and drawdown are
