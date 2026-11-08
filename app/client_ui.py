@@ -10,7 +10,9 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date
+from html import escape
 
+import layout
 import pandas as pd
 import streamlit as st
 import workstation as ws
@@ -33,12 +35,12 @@ from gpl.client import (
     example_holdings,
     ips_constraints,
     liquidity_need_score,
+    month_text,
     parse_month,
 )
 from gpl.demo import demo_client
 from gpl.factfind import (
     ASSET_TYPES,
-    DEMO_LABEL,
     INCOME_TYPES,
     LIABILITY_TYPES,
     PUBLIC_NOTICE,
@@ -62,11 +64,13 @@ DEMO_BUTTON = "▶ Try a demo client"
 DEMO_TOAST = (
     "Demo client loaded. Review the client and IPS, then use Next to walk through each step."
 )
+WELCOME_TITLE = "Turn a client's facts into a suitable, tested portfolio"
 WELCOME = (
-    "**Gulf Portfolio Lab** turns a GCC client's facts into an Investment Policy Statement, "
-    "checks their portfolio against it and finds a suitable improvement, with every figure "
-    "from tested code."
+    "Fact-find, IPS, analysis, optimisation, suitability and trades in six steps. Every figure "
+    "comes from tested code."
 )
+SCORED_QUESTIONS = [q["id"] for q in QUESTIONS if q["dimension"] in SCORED]
+RISK_WORDS = {1: "Conservative", 2: "Cautious", 3: "Moderate", 4: "Growth", 5: "Aggressive"}
 EXAMPLE = "client_example_loaded"  # the example whose own portfolio was loaded
 SECTOR_CHOICES = [
     "Tobacco",
@@ -153,11 +157,6 @@ def start_blank() -> None:
     st.session_state["main_tab"] = "1 Client"
 
 
-def demo_button(key: str, **kwargs) -> None:
-    """The primary "Try a demo client" button (same action everywhere)."""
-    st.button(DEMO_BUTTON, key=key, on_click=fill_demo, type="primary", **kwargs)
-
-
 def closest_mix_note(ips) -> str | None:
     """The Riyadh-style label and reason while that example's own portfolio is loaded.
 
@@ -177,6 +176,145 @@ def closest_mix_note(ips) -> str | None:
 
 def _example_label(name: str) -> str:
     return f"{name} · closest mix" if name in CLOSEST_MIX_EXAMPLES else name
+
+
+def _usd(x: float) -> str:
+    """'USD 1.31m', 'USD 260k', 'USD 950' (short, for one-line summaries)."""
+    if abs(x) >= 1e6:
+        return f"USD {x / 1e6:.2f}m"
+    if abs(x) >= 1e3:
+        return f"USD {x / 1e3:,.0f}k"
+    return f"USD {x:,.0f}"
+
+
+def _join(parts) -> str:
+    return " · ".join(p for p in parts if p)
+
+
+def section_summary(key: str, p: ClientProfile) -> str:
+    """One line summing up a fact-find section, from the recorded facts (no new figures)."""
+    if key == "household":
+        deps = f"{p.dependants} dependant{'s' if p.dependants != 1 else ''}" if p.dependants else ""
+        return _join([p.name, f"age {p.age}" if p.age else "", p.residency,
+                      p.marital_status.lower() if p.marital_status else "", deps])  # fmt: skip
+    if key == "kyc":
+        return _join([
+            f"{p.classification} client" if p.classification else "",
+            "PEP" if p.pep else "not a PEP",
+            p.expected_activity.split(" (")[0].lower() + " activity" if p.expected_activity else "",
+        ])  # fmt: skip
+    if key == "financial":
+        f = finances(p)
+        return _join([
+            f"Net worth USD {f.net_worth:,.0f}",
+            f"investable USD {f.investable:,.0f}",
+            f"savings rate {f.savings_rate:.1%}" if f.savings_rate is not None else "",
+            f"emergency fund {f.emergency_months:.1f} months" if f.emergency_months else "",
+        ])  # fmt: skip
+    if key == "objectives":
+        goals = [
+            f"{g.get('description', 'goal').lower()} {_usd(g['amount_usd'])}"
+            for g in p.goals if g.get("amount_usd")
+        ]  # fmt: skip
+        needs = [
+            f"{n['description'].lower()} {_usd(n['amount_usd'])} ({month_text(n['date'])})"
+            for n in p.liquidity_needs
+        ]
+        return _join([p.primary_objective, f"{p.horizon_years:g} years" if p.horizon_years else "",
+                      *goals, *needs])  # fmt: skip
+    if key == "risk":
+        missing = [q for q in SCORED_QUESTIONS if q not in p.answers]
+        return _join([
+            "Questionnaire complete" if not missing else f"{len(missing)} answers missing",
+            f"capacity for loss {p.max_acceptable_drawdown_pct:g}%"
+            if p.max_acceptable_drawdown_pct else "",
+            f"adviser override to {p.override_score}"
+            if p.override_score
+            else "no adviser override",
+        ])  # fmt: skip
+    if key == "knowledge":
+        return _join([
+            f"{p.years_investing:g} years investing" if p.years_investing else "",
+            ", ".join(x.lower() for x in p.products_used),
+            p.background.lower() if p.background else "",
+        ])  # fmt: skip
+    if key == "constraints":
+        regions = [f"{r} at least {v:g}%" for r, v in p.region_minimums.items() if v]
+        return _join([
+            "Optional",
+            "Sharia-compliant only" if p.sharia_only else "",
+            f"GCC at least {p.home_bias_gcc_pct:g}%" if p.home_bias_gcc_pct else "",
+            *regions,
+            f"non-USD-pegged currencies at most {p.max_non_pegged_currency_pct:g}%",
+            ("excluding " + ", ".join(x.lower() for x in p.excluded_sectors))
+            if p.excluded_sectors else "",
+        ])  # fmt: skip
+    if key == "estate":
+        return _join([p.will_status, "beneficiaries noted" if p.beneficiaries_noted else "",
+                      ", ".join(p.structures)])  # fmt: skip
+    if key == "service":
+        fee = p.fee_basis.replace(" a year of assets under advice", " of assets")
+        review = f"{p.review_frequency.lower()} review" if p.review_frequency else ""
+        adviser = f"adviser {p.adviser_name}" if p.adviser_name else ""
+        return _join([p.service_type, review, fee, adviser])
+    return ""
+
+
+def ips_rows(ips) -> list[tuple[str, str]]:
+    """The IPS in short rows (Return, Risk, Time, Taxes, Liquidity, Legal, Unique) for the card.
+
+    Built from the IPS's own limits and facts; the full RRTTLLU text stays in the expander.
+    """
+    p, lim = ips.client, ips.limits
+
+    def pc(x):
+        return "–" if x is None else f"{x * 100:g}%"
+
+    req = lim.get("required_return")
+    target = p.return_target_pct
+    ret = (
+        f"{req:.2%} a year needed" if req is not None else "No income drawn from the portfolio"
+    ) + (f"; target {target:g}%" if target is not None else "; no target set")
+    risk = (
+        f"Volatility ≤ {pc(lim['max_volatility'])}, drawdown ≤ {pc(lim['max_drawdown'])}, "
+        f"≤ {pc(lim['max_weight'])} in one holding"
+        if lim["max_volatility"] is not None
+        else "Limits set once the questionnaire is complete"
+    )
+    due = lim["cash_needs_due"]
+    liquidity = (
+        "; ".join(
+            f"{n['description']}, USD {n['amount_usd']:,.0f} by {month_text(n['date'])}"
+            for n in due
+        )  # fmt: skip
+        if due
+        else f"No cash need within {lim['cash_need_window_months']} months"
+    )
+    unique = _join([
+        "Sharia only" if lim["sharia_only"] else "",
+        f"GCC ≥ {pc(lim['home_bias_gcc'])}" if lim["home_bias_gcc"] else "",
+        *(f"{r} ≥ {pc(v)}" for r, v in lim["region_minimums"].items()),
+        f"non-USD-pegged currencies ≤ {pc(lim['max_non_pegged_currency'])}",
+        ("no " + ", ".join(x.lower() for x in lim["excluded_sectors"]))
+        if lim["excluded_sectors"] else "",
+    ])  # fmt: skip
+    return [
+        ("Return", ret),
+        ("Risk", risk),
+        ("Time", _join([f"{p.horizon_years:g} years", f"client aged {p.age}" if p.age else ""])),
+        (
+            "Taxes",
+            _join(
+                [
+                    f"Resident in {p.residency}" if p.residency else "",
+                    "US person" if p.us_person else "not a US person",
+                ]
+            ),
+        ),  # fmt: skip
+        ("Liquidity", liquidity),
+        ("Legal", _join([f"{p.classification} client", effective_regulator(p)])),
+        ("Unique", unique),
+    ]
 
 
 def _default_regulator(k: str) -> None:
@@ -290,14 +428,14 @@ def _field(col, f: Field, p: ClientProfile, k: str, **kw):
 
 
 def _fields(p: ClientProfile, k: str, section: str, skip: tuple[str, ...] = ()) -> dict:
-    """Draw a section's simple fields in two columns; returns name -> value."""
+    """Draw a section's simple fields in three columns; returns name -> value."""
     simple = [
         f
         for f in SECTION_BY_KEY[section].fields
         if f.kind not in ("custom", "money_map") and f.name not in skip
     ]
-    cols = st.columns(2)
-    return {f.name: _field(cols[i % 2], f, p, k) for i, f in enumerate(simple)}
+    cols = st.columns(3)
+    return {f.name: _field(cols[i % 3], f, p, k) for i, f in enumerate(simple)}
 
 
 def _money_map(p: ClientProfile, k: str, name: str, types: Mapping[str, str], label: str) -> dict:
@@ -321,13 +459,21 @@ def _money_map(p: ClientProfile, k: str, name: str, types: Mapping[str, str], la
     return out
 
 
-def _card(section: str, parts: Mapping[str, Completeness]):
-    """A collapsible card titled with the section's completeness."""
+def _card(section: str, parts: Mapping[str, Completeness], p: ClientProfile | None = None):
+    """A collapsible section: its title and a one-line summary; a check when complete."""
     s = SECTION_BY_KEY[section]
     c = parts[section]
-    mark = "✅" if not c.missing else f"{c.done}/{c.total}"
-    title = f"{s.title} · {mark}" if c.total else f"{s.title} · optional"
-    box = st.expander(title, expanded=bool(c.missing) and section in ("household",))
+    summary = section_summary(section, p) if p is not None else ""
+    if c.total and c.missing:
+        summary = f"{c.done} of {c.total} done · " + summary if summary else f"{c.done}/{c.total}"
+    label = f"**{s.title}**" + (f" &nbsp; :gray[{summary}]" if summary else "")
+    icon = (
+        ":material/check_circle:"
+        if c.total and not c.missing
+        else ":material/radio_button_unchecked:"
+    )
+    first_open = section == next((k for k, v in parts.items() if v.missing), "household")
+    box = st.expander(label, expanded=first_open, icon=icon)
     box.caption(s.helper)
     return box
 
@@ -341,8 +487,9 @@ def _form(
     parts = completeness(p)
 
     # 1 Client & household -------------------------------------------------------------
-    with _card("household", parts):
-        c1, c2, c3, c4 = st.columns(4)
+    with _card("household", parts, p):
+        c1, c2, c3 = st.columns(3)
+        c4 = st
         vals["residency"] = c1.text_input(
             "Residency (country)",
             p.residency,
@@ -378,7 +525,7 @@ def _form(
             vals["age"] = age_on(vals["dob"], date.today())
 
     # 2 KYC / AML ------------------------------------------------------------------------
-    with _card("kyc", parts):
+    with _card("kyc", parts, p):
         vals |= _fields(p, k, "kyc")
         if vals["pep"]:
             st.warning(
@@ -387,7 +534,7 @@ def _form(
             )
 
     # 3 Financial situation --------------------------------------------------------------
-    with _card("financial", parts):
+    with _card("financial", parts, p):
         vals["income"] = _money_map(p, k, "income", INCOME_TYPES, "Annual income by source (USD)")
         c1, _ = st.columns(2)
         vals["annual_expenses_usd"] = _field(c1, SECTION_BY_KEY["financial"].fields[1], p, k)
@@ -410,7 +557,7 @@ def _form(
         )
 
     # 4 Objectives & goals ---------------------------------------------------------------
-    with _card("objectives", parts):
+    with _card("objectives", parts, p):
         c1, c2, c3 = st.columns(3)
         vals["primary_objective"] = _field(c1, SECTION_BY_KEY["objectives"].fields[0], p, k)
         vals["horizon_years"] = c2.number_input(
@@ -509,7 +656,7 @@ def _form(
         st.markdown(f"**Return needed to meet the goals:** {need.reason}")
 
     # 5 Risk profile ---------------------------------------------------------------------
-    with _card("risk", parts):
+    with _card("risk", parts, p):
         st.markdown("**Risk questionnaire** (the client's own answers)")
         answers = {}
         q1, q2 = st.columns(2)
@@ -593,7 +740,7 @@ def _form(
         vals["overrides"] = {key: val for key, val in ov.items() if val is not None}
 
     # 6 Knowledge & experience -----------------------------------------------------------
-    with _card("knowledge", parts):
+    with _card("knowledge", parts, p):
         vals |= _fields(p, k, "knowledge")
         for i, q in enumerate(QUESTIONS):
             if q["dimension"] in SCORED:
@@ -613,7 +760,7 @@ def _form(
     vals["answers"] = answers
 
     # 7 Constraints & preferences --------------------------------------------------------
-    with _card("constraints", parts):
+    with _card("constraints", parts, p):
         c1, c2, c3 = st.columns(3)
         vals["sharia_only"] = c1.checkbox(
             "Sharia-compliant holdings only", p.sharia_only, key="cl_sharia" + k
@@ -671,12 +818,12 @@ def _form(
         )
 
     # 8 Estate & succession --------------------------------------------------------------
-    with _card("estate", parts):
+    with _card("estate", parts, p):
         vals |= _fields(p, k, "estate")
         st.info(SPECIALIST_REMINDER)
 
     # 9 Service & review -----------------------------------------------------------------
-    with _card("service", parts):
+    with _card("service", parts, p):
         if not p.next_review and p.review_frequency:
             p = replace(p, next_review=next_review(p.review_frequency, date.today()))
         vals |= _fields(p, k, "service")
@@ -719,6 +866,111 @@ def _need_rows(needs: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def _client_pickers(where: str) -> None:
+    """Example client, saved profile (JSON) and a new blank client (welcome or Switch client)."""
+    st.selectbox(
+        "Load a worked example",
+        list(EXAMPLE_CLIENTS),
+        key="client_example",
+        format_func=_example_label,
+    )
+    st.button("Load", key="client_load_example", on_click=_load_example)
+    st.file_uploader(
+        "Reopen a saved client (JSON)", type=["json"], key="client_upload", on_change=_load_json
+    )
+    if where == "switch":
+        st.button("New blank client", key="client_new", on_click=_new_client)
+
+
+def render_welcome() -> None:
+    """Step 1 with no client: what the tool does, the demo, an example or a saved client."""
+    _, mid, _ = st.columns([1, 3.2, 1])
+    with mid:
+        with st.container(border=True, key="welcome"):
+            st.markdown(
+                f'<div class="gpl-eyebrow">For GCC wealth managers</div><h1>{escape(WELCOME_TITLE)}'
+                f'</h1><p class="gpl-lead">{escape(WELCOME)}</p>',
+                unsafe_allow_html=True,
+            )
+            st.button(DEMO_BUTTON, key="cta_welcome_demo", on_click=fill_demo, type="primary")
+            st.button(
+                "or start a blank client",
+                key="welcome_blank",
+                type="tertiary",
+                on_click=start_blank,
+            )
+        c1, c2 = st.columns(2)
+        with c1.container(border=True, key="welcome_example"):
+            ex, go = st.columns([3, 1], vertical_alignment="bottom")
+            ex.selectbox(
+                "Load a worked example",
+                list(EXAMPLE_CLIENTS),
+                key="client_example",
+                format_func=_example_label,
+            )
+            go.button("Load", key="client_load_example", on_click=_load_example, width="stretch")
+        with c2.container(border=True, key="welcome_upload"):
+            st.file_uploader(
+                "Reopen a saved client (JSON)",
+                type=["json"],
+                key="client_upload",
+                on_change=_load_json,
+            )
+        st.markdown(f'<p class="gpl-meta" style="text-align:center">{escape(PUBLIC_NOTICE)}</p>',
+                    unsafe_allow_html=True)  # fmt: skip
+        if st.session_state.get("client_error"):
+            st.error(st.session_state.client_error)
+
+
+def _risk_card(ips) -> None:
+    r = ips.risk
+    calculated = r.override in ("", "ignored")
+
+    def bar(n):
+        return (
+            '<span class="gpl-bar">'
+            + "".join(f'<i class="{"on" if n and i < n else ""}"></i>' for i in range(5))
+            + "</span>"
+        )
+
+    word = RISK_WORDS.get(r.score, "") if r.score else "Questionnaire incomplete"
+    over = "" if calculated else f" · adviser override (calculated {r.calculated})"
+    with st.container(border=True, key="risk_card"):
+        st.markdown('<div class="gpl-section">Risk score</div>', unsafe_allow_html=True,
+                    help=r.explanation)  # fmt: skip
+        st.markdown(
+            f'<div style="display:flex;align-items:baseline;gap:10px;margin:4px 0 10px">'
+            f'<span style="font-size:2.4rem;font-weight:700">{r.score or "–"}</span>'
+            f'<span style="color:var(--gpl-muted)">/ 5</span>'
+            f'<span style="margin-left:6px">{escape(word + over)}</span></div>'
+            f'<div class="gpl-kv" style="grid-template-columns:40% 45% 15%">'
+            f"<div>Capacity</div><div>{bar(r.capacity)}</div><div>{r.capacity or '–'}</div>"
+            f"<div>Willingness</div><div>{bar(r.willingness)}</div>"
+            f"<div>{r.willingness or '–'}</div></div>",
+            unsafe_allow_html=True,
+        )
+        if r.mismatch or r.score is None or r.override in ("higher", "ignored"):
+            st.warning(r.explanation)
+
+
+def _ips_card(profile: ClientProfile, ips, notes: list[str]) -> None:
+    missing = ips_missing(profile)
+    badge = layout.pill("Draft", "warn") if missing else layout.pill("Ready", "pass")
+    with st.container(border=True, key="ips_card"):
+        st.markdown(
+            f'<div class="gpl-section">Investment Policy Statement &nbsp;{badge}</div>'
+            '<div class="gpl-kv">'
+            + "".join(f"<div>{escape(k)}</div><div>{escape(v)}</div>" for k, v in ips_rows(ips))
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+        render_ips_downloads(profile, ips, "client")
+        with st.expander("Full IPS text (RRTTLLU)"):
+            st.markdown("\n\n".join(f"**{name}.** {text}" for name, text in ips.sections.items()))
+            for note in notes:
+                st.caption("• " + note)
+
+
 def render_client_tab(
     cfg: Mapping,
     holdings: list[str],
@@ -727,87 +979,62 @@ def render_client_tab(
     cash_like: list[str] | None = None,
     regions: Mapping[str, str] | None = None,
     product_types: Mapping[str, str] | None = None,
+    data_as_of: str = "",
+    data_help: str | None = None,
 ) -> None:
-    st.subheader("Client fact-find and Investment Policy Statement")
-    st.caption(
-        "Decision support for a licensed adviser: record the client's facts and their own "
-        "questionnaire answers; the risk score, IPS limits and checks come from tested rules. "
-        f"**{PUBLIC_NOTICE}**"
-    )
-    empty = st.session_state.get(CLIENT) is None
-    if empty:
-        with st.container(key="client_empty"):
-            st.markdown("#### No client yet")
-            st.caption(
-                f"Use **{DEMO_BUTTON}** at the top, or load an example or a saved profile, or "
-                "start a new blank client:"
-            )
-    c1, c2, c3 = st.columns([3, 3, 2])
-    with c1:
-        st.selectbox(
-            "Example client",
-            list(EXAMPLE_CLIENTS),
-            key="client_example",
-            format_func=_example_label,
-        )
-        st.button("Load example", key="client_load_example", on_click=_load_example)
-    c2.file_uploader(
-        "Load a saved profile (JSON)", type=["json"], key="client_upload", on_change=_load_json
-    )
-    c3.button("New blank client", key="client_new", on_click=_new_client)
-    if st.session_state.get("client_error"):
-        st.error(st.session_state.client_error)
-
     profile = current_profile()
     if profile is None:
+        render_welcome()
         return
+    first = (profile.name or "the client").split(" ")[0]
+    right = layout.page_header(
+        "Client fact-find & IPS",
+        f"Check {first}'s facts; the risk score and IPS update as you go.",
+        help="Decision support for a licensed adviser: record the client's facts and their own "
+        "questionnaire answers; the risk score, IPS limits and checks come from tested rules. "
+        + PUBLIC_NOTICE,
+    )
+    with right:
+        m, sw = st.columns([1.6, 1], vertical_alignment="center")
+        if data_as_of:
+            layout.meta(data_as_of, help=data_help, container=m)
+        with sw.popover("Switch client", width="stretch"):
+            _client_pickers("switch")
+    if st.session_state.get("client_error"):
+        st.error(st.session_state.client_error)
     note = closest_mix_note(build_ips(profile, cfg))
     if note:
         st.warning(
             f"**{CLOSEST_MIX_LABEL}** {note} The measured figures are on step 5 (Suitability)."
         )
-    if profile.demo:
-        st.info(f"**{DEMO_LABEL}.**")
-    bar = st.container()
-    profile = _form(profile, st.session_state.get(VERSION, 0), product_types)
+    left, side = st.columns([1.75, 1], gap="medium")
+    with left.container(border=True, key="factfind"):
+        bar = st.container()
+        profile = _form(profile, st.session_state.get(VERSION, 0), product_types)
     st.session_state[CLIENT] = profile.to_dict()  # the form is the source of truth
     parts = completeness(profile)
     share = overall_completeness(parts)
-    bar.progress(
-        share,
-        text=f"Fact-find {share:.0%} complete"
-        + (
-            " · to do: "
-            + ", ".join(SECTION_BY_KEY[key].title for key, c in parts.items() if c.missing)
-            if share < 1
-            else ""
-        ),
-    )
-
+    with bar:
+        h1, h2 = st.columns([2, 1])
+        h1.markdown('<div class="gpl-section">Fact-find</div>', unsafe_allow_html=True)
+        h2.markdown(f'<p class="gpl-meta" style="color:var(--gpl-brand-btn);font-weight:600">'
+                    f"{share:.0%} complete</p>", unsafe_allow_html=True)  # fmt: skip
+        st.progress(
+            share,
+            text=None
+            if share == 1
+            else "To do: "
+            + ", ".join(SECTION_BY_KEY[key].title for key, c in parts.items() if c.missing),
+        )
     ips = build_ips(profile, cfg)
-    st.divider()
-    r = ips.risk
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Risk capacity", "–" if r.capacity is None else f"{r.capacity} / 5")
-    m2.metric("Risk willingness", "–" if r.willingness is None else f"{r.willingness} / 5")
-    calculated = r.override in ("", "ignored")
-    m3.metric(
-        "Risk score (lower of the two)" if calculated else "Risk score (override)",
-        "–" if r.score is None else f"{r.score} / 5",
-        delta=None if calculated else f"calculated {r.calculated}",
-        delta_color="off",
-    )
-    alert = r.mismatch or r.score is None or r.override in ("higher", "ignored")
-    (st.warning if alert else st.caption)(r.explanation)
-    st.markdown("**Investment Policy Statement (RRTTLLU)**")
-    st.markdown("\n\n".join(f"**{name}.** {text}" for name, text in ips.sections.items()))
+    notes = []
     if holdings:
         _, notes = ips_constraints(
             ips, holdings, dict(groups), dict(attributes), cash_like, dict(regions or {})
         )
-        for note in notes:
-            st.caption("• " + note)
-    render_ips_downloads(profile, ips, "client")
+    with side:
+        _risk_card(ips)
+        _ips_card(profile, ips, notes)
 
 
 def render_ips_downloads(profile: ClientProfile, ips, where: str) -> None:
@@ -823,23 +1050,27 @@ def render_ips_downloads(profile: ClientProfile, ips, where: str) -> None:
         )
         with st.expander("What's missing"):
             st.markdown("\n".join(f"- {m}" for m in missing))
-    d1, d2, d3 = st.columns(3)
     ref = (profile.reference or "client").replace(" ", "_")
-    d1.download_button(
-        "Download IPS (PDF)",
-        b"" if missing else ips_pdf(ips),
-        file_name=f"IPS_{ref}_{ips.created}.pdf",
-        mime="application/pdf",
-        key=f"{where}_ips_pdf",
-        type="primary",
-        disabled=bool(missing),
-    )
+    with st.container(key=f"cta_{where}_ips"):
+        st.download_button(
+            "Download IPS (PDF)",
+            b"" if missing else ips_pdf(ips),
+            file_name=f"IPS_{ref}_{ips.created}.pdf",
+            mime="application/pdf",
+            key=f"{where}_ips_pdf",
+            type="primary",
+            disabled=bool(missing),
+            icon=":material/download:",
+            width="stretch",
+        )
+    d2, d3 = st.columns(2)
     d2.download_button(
-        "Download DRAFT IPS (PDF)",
+        "Draft IPS (PDF)",
         ips_pdf(ips, draft=True),
         file_name=f"IPS_DRAFT_{ref}_{ips.created}.pdf",
         mime="application/pdf",
         key=f"{where}_ips_draft",
+        type="tertiary",
     )
     d3.download_button(
         "Save profile (JSON)",
@@ -847,4 +1078,5 @@ def render_ips_downloads(profile: ClientProfile, ips, where: str) -> None:
         file_name=f"client_{ref}.json",
         mime="application/json",
         key=f"{where}_save_json",
+        type="tertiary",
     )

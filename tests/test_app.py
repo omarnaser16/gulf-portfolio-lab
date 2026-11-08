@@ -127,26 +127,24 @@ def test_app_renders_every_tab(app: AppTest) -> None:
     assert {x for x in labels if not x[0].isdigit()} == {
         "Holdings",
         "Screen",
-        "Performance & backtest",
+        "Performance",
         "Benchmark",
-        "Assets",
+        "Assets · analyst",
         "Monte Carlo",
-        "Regime",
+        "Regime · analyst",
         "Optimise",
         "Frontier",
         "Strategy backtests",
-        "Trades",
-        "Reports",
+        "Trades & report",
         "AI analyst",
     }
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
-    # by holding, diagnosis vs benchmark, assets, strategies, regime folds, analyst holdings,
-    # domicile check, Optimise's active limits (the rebalance drift table needs a portfolio
-    # value: none by default);
+    # by holding, diagnosis vs benchmark, assets, strategies, regime folds, domicile check,
+    # Optimise's active limits (the AI analyst no longer repeats the holdings table);
     # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
     # limits editors, the rebalance targets and the frontier weights
-    assert len(app.table) == 12 and len(app.dataframe) == 6
+    assert len(app.table) == 11 and len(app.dataframe) == 6
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -170,7 +168,9 @@ def test_no_sidebar_settings_in_a_popover_and_light_charts(app: AppTest) -> None
     assert app.selectbox(key="ws_benchmark").label == "Benchmark"  # top bar
     charts = app.get("plotly_chart")
     assert charts and all(c.proto.theme == "" for c in charts)  # theme=None: our template
-    assert all(json.loads(c.proto.spec)["layout"]["paper_bgcolor"] == "#ffffff" for c in charts)
+    assert all(
+        json.loads(c.proto.spec)["layout"]["paper_bgcolor"].lower() == "#ffffff" for c in charts
+    )
     before = _metric_tables(app)[1].loc["Max Sharpe", "CAGR"]
     app.number_input[0].set_value(100.0).run()  # costs (bps) in the settings popover
     assert not app.exception, app.exception
@@ -219,6 +219,34 @@ def test_frontier_obeys_the_default_cap_after_a_change_is_undone(app: AppTest) -
     weights = _frontier_weights(app)
     assert (weights.max(axis=1) <= default + 1e-9).all(), weights.max(axis=1)
     assert any(f"{default:.2%}" in c.value for c in app.caption)
+
+
+def _suit(at: AppTest) -> pd.DataFrame:
+    """The Suitability step's rules table (HTML) as rule x portfolio: "✅ Pass 8.65%" etc."""
+    import html as _html
+
+    page = next(
+        m.value for m in at.markdown if 'class="gpl-table"' in m.value and ">Rule</th>" in m.value
+    )
+    names = [_html.unescape(n) for n in re.findall(r'<th class="num[^"]*">(.*?)</th>', page)][:-1]
+    mark = {"✓": "✅ Pass", "✗": "❌ Fail", "⚠": "⚠️ Review"}
+    word = {"Pass": "✅ Pass", "Fail": "❌ Fail", "Review": "⚠️ Review"}
+    rows = {}
+    for tr in re.findall(r"<tr>(.*?)</tr>", page.split("<tbody>")[1], re.S):
+        tds = re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)
+        rule = _html.unescape(re.search(r"<b>(.*?)</b>", tds[0]).group(1))
+        status = word[re.sub(r"<[^>]+>", "", tds[-1]).strip()]
+        cells = {}
+        for j, name in enumerate(names):
+            raw = tds[2 + j]
+            value = _html.unescape(re.sub(r"<span.*?</span>", "", raw)).strip()
+            sym = re.search(r"<span[^>]*>(.*?)</span>", raw)
+            if j == len(names) - 1 and len(names) > 1:
+                cells[name] = f"{status} {value}"
+            else:
+                cells[name] = f"{mark.get(sym.group(1) if sym else '', status)} {value}"
+        rows[rule] = cells
+    return pd.DataFrame(rows).T
 
 
 def _metric_tables(app: AppTest) -> list[pd.DataFrame]:
@@ -428,10 +456,11 @@ def test_analyst_follow_up_continues_the_conversation(analyst_app) -> None:
 
 def test_latest_data_is_the_default_with_as_of_line(app: AppTest) -> None:
     assert app.radio(key="data_period").value == "Latest data"
-    assert any("Data as of 22 Oct 2026" in m.value for m in app.markdown)
+    # the as-of line sits in the Data notes (Portfolio) and the Client page header's tooltip
+    assert any("Latest price 22 Oct 2026" in c.value for c in app.caption)
     app.radio(key="data_period").set_value(app.radio(key="data_period").options[1]).run()
     assert not app.exception, app.exception
-    assert any("Data as of 30 Sep 2026" in m.value and "README" in m.value for m in app.markdown)
+    assert any("Latest price 30 Sep 2026" in c.value and "README" in c.value for c in app.caption)
 
 
 def test_invalid_holding_gets_a_friendly_warning(app: AppTest) -> None:
@@ -650,8 +679,7 @@ def test_benchmark_tab_compares_with_the_chosen_benchmark(app: AppTest) -> None:
     table = next(t.value for t in app.table if "Information ratio" in t.value.index)
     assert table.loc["Beta", "Benchmark"] == "–" and table.loc["Beta", "Your portfolio"] != "–"
     assert set(table.columns) == {"Your portfolio", "Benchmark"}
-    titles = [json.loads(c.proto.spec)["layout"]["title"]["text"] for c in app.get("plotly_chart")]
-    assert any(t.startswith("Relative drawdown") for t in titles)
+    assert any('class="gpl-section">Relative drawdown' in m.value for m in app.markdown)
     app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
     assert not app.exception, app.exception
     table = next(t.value for t in app.table if "Information ratio" in t.value.index)
@@ -763,13 +791,13 @@ def test_manual_goal_runs_candidates_and_recommends_by_rule(optimise_app) -> Non
         "Target volatility",
     }
     starred = [n for n in table.index if n.startswith("★ ")]
-    recommended = any(s.value.startswith("**Recommended method") for s in at.success)
+    recommended = any("Move to " in m.value for m in at.markdown)  # the summary card
     assert len(starred) == (1 if recommended else 0)
     if recommended:  # reduce risk: lower walk-forward volatility than current
         vol = lambda n: float(table.loc[n, "Volatility (ann.)"].rstrip("%"))  # noqa: E731
         assert vol(starred[0]) < vol("Current")
     assert any("Lowest walk-forward volatility" in c.value for c in at.caption)
-    assert any("not a forecast or a promise" in i.value for i in at.info)
+    assert any("not a forecast or a promise" in c.value for c in at.caption)
     weights = _latest_weights(at)
     assert all(
         float(v.rstrip("%")) <= 40.0 + 1e-6 for v in weights.drop("Current").to_numpy().ravel()
@@ -816,7 +844,7 @@ def test_impossible_limits_are_explained_without_weights(optimise_app) -> None:
     assert not at.exception, at.exception
     warnings = " ".join(w.value for w in at.warning)
     assert "can't meet your limits" in warnings and "Group 'GCC' needs at least 90.00%" in warnings
-    assert any("Keep your current portfolio" in i.value for i in at.info)
+    assert any("Keep your current portfolio" in m.value for m in at.markdown)  # summary card
     assert _latest_weights(at) is None  # no method ran, so no weights are shown
 
 
@@ -877,7 +905,7 @@ def test_kpi_cards_with_deltas_vs_the_benchmark(app: AppTest) -> None:
     ]
     assert app.metric[0].value == "–"
     assert app.metric[1].delta.endswith(" pp") and app.metric[1].value.endswith("%")
-    assert any("deltas against 60/40 (SPY/AGG)" in c.value for c in app.caption)
+    assert any("compared with 60/40 (SPY/AGG)." in m.value for m in app.markdown)  # guidance
     app.number_input(key="pf_value_holdings_0").set_value(10_000.0).run()  # entered once
     assert app.metric[0].value == "$10.0k" and app.metric[0].help == "USD 10,000.00"
     app.selectbox(key="ws_benchmark").set_value("Cash (13-week T-bills)").run()
@@ -908,16 +936,13 @@ def _titles(at: AppTest) -> list[str]:
     return [json.loads(c.proto.spec)["layout"]["title"]["text"] for c in at.get("plotly_chart")]
 
 
-def test_analyst_page_shows_the_portfolio_first(app: AppTest) -> None:
-    holdings = next(
-        t.value
-        for t in app.table
-        if "Share of risk" in t.value.columns
-        and "Volatility (ann.)" in t.value.columns
-        and "Name" in t.value.columns
-    )
-    assert list(holdings.index) == ["SPY", "AGG", "GLD", "KSA"]
-    assert "Allocation by holding" in _titles(app)
+def test_analyst_page_shows_its_context_and_no_second_kpi_row(app: AppTest) -> None:
+    # each element appears once: the KPI cards live on Analyse, not on the AI analyst page
+    assert [m.label for m in app.metric].count("Return (CAGR)") == 1
+    context = next(m.value for m in app.markdown if "<div>Holdings</div>" in m.value)
+    assert ">4</div>" in context.replace(" · ", "</div>") or ">4 · " in context
+    assert "60/40 (SPY/AGG)" in context and "not run yet" in context
+    assert app.button(key="analyst_to_analyse").label == "See the figures on Analyse"
 
 
 def test_memo_sections_are_paired_with_charts_built_by_code(chart_app) -> None:
@@ -1016,14 +1041,14 @@ def test_memo_sections_pairing_and_disclaimer_last() -> None:
 
 
 def test_client_tab_starts_empty_and_loads_an_example(app: AppTest) -> None:
-    # empty state points at the demo button at the top (not a third copy of it)
-    assert not any(b.key == "client_try_demo" for b in app.button)
-    assert any("at the top, or load an example or a saved profile" in c.value for c in app.caption)
+    # no client: the welcome screen, with a worked example and a saved client to reopen
+    assert any("suitable, tested portfolio" in m.value for m in app.markdown)
+    assert app.selectbox(key="client_example").label == "Load a worked example"
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
     assert not app.exception, app.exception
-    scores = {m.label: m.value for m in app.metric}
-    assert scores["Risk score (lower of the two)"] == "2 / 5"
+    risk = next(m.value for m in app.markdown if "Capacity</div>" in m.value)
+    assert ">2</span>" in risk and "Cautious" in risk  # risk score 2 of 5
     ips = next(m.value for m in app.markdown if m.value.startswith("**Return.**"))
     assert "**Risk.** Risk score 2 of 5" in ips and "volatility at most 9.00% a year" in ips
     assert "**Unique circumstances.** Sharia-compliant holdings only." in ips
@@ -1031,11 +1056,11 @@ def test_client_tab_starts_empty_and_loads_an_example(app: AppTest) -> None:
 
 
 def test_final_ips_blocked_until_complete_draft_always_available(app: AppTest) -> None:
-    app.button(key="client_new").click().run()
+    app.button(key="welcome_blank").click().run()
     assert not app.exception, app.exception
     buttons = {d.label: d for d in app.get("download_button")}
     assert buttons["Download IPS (PDF)"].proto.disabled
-    assert not buttons["Download DRAFT IPS (PDF)"].proto.disabled
+    assert not buttons["Draft IPS (PDF)"].proto.disabled
     assert any("final IPS can't be issued yet" in w.value for w in app.warning)
     # the blank client lives in the UAE: regulator SCA by default, not "Other"
     assert app.selectbox(key="cl_reg_1").value == "SCA (UAE)"
@@ -1073,7 +1098,7 @@ def test_example_clients_load_their_own_portfolio(app: AppTest) -> None:
     assert app.session_state[ws.MODE] == "USD amount" and _metric(app, "Portfolio value") == (
         "$1.00m"
     )
-    table = next(t.value for t in app.table if "Exclusions" in t.value.index)
+    table = _suit(app)
     assert table.loc["Liquidity", "Current"].startswith("✅ Pass")  # SPSK holds the cash need
     assert table.loc["Exclusions", "Current"].startswith("⚠️ Review")  # GLD: status unknown
     notes = " ".join(c.value for c in app.caption)
@@ -1120,7 +1145,7 @@ def test_ips_limits_flow_into_optimise(app: AppTest) -> None:
 def test_profile_json_round_trip_in_the_app(app: AppTest) -> None:
     from gpl.client import EXAMPLE_CLIENTS, ClientProfile
 
-    app.button(key="client_new").click().run()
+    app.button(key="welcome_blank").click().run()
     assert app.text_input(key="cl_ref_1").value == ""
     saved = next(d for d in app.get("download_button") if d.label == "Save profile (JSON)")
     assert saved.proto.label == "Save profile (JSON)"
@@ -1141,7 +1166,7 @@ def test_suitability_panels_need_a_client_then_show_reasons(app: AppTest) -> Non
     app.button(key="client_load_example").click().run()
     _set_holdings(app, OLD_DEFAULT)  # SPY 50% and AGG instead of the example's Sharia funds
     assert not app.exception, app.exception
-    table = next(t.value for t in app.table if "Exclusions" in t.value.index)
+    table = _suit(app)
     assert table.loc["Exclusions", "Current"].startswith("❌ Fail")  # SPY, AGG not compliant
     assert table.loc["Concentration", "Current"].startswith("❌ Fail")  # SPY 50% > 40%
     reasons = " ".join(m.value for m in app.markdown)
@@ -1149,16 +1174,19 @@ def test_suitability_panels_need_a_client_then_show_reasons(app: AppTest) -> Non
     assert "**Liquidity.**" in reasons and "USD 100,000" in reasons  # the client's need
 
 
-def test_optimise_results_include_suitability(optimise_app) -> None:
+def test_optimise_results_point_to_suitability_without_repeating_it(optimise_app) -> None:
     at, _ = optimise_app([])
     at.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     at.button(key="client_load_example").click().run()
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
-    tables = [
-        t.value for t in at.table if "Volatility" in t.value.index and "Current" in t.value.columns
-    ]
-    assert tables and all(v.split(" ")[0] in ("✅", "❌", "⚠️") for v in tables[0]["Current"])
+    recommended = any("Move to " in m.value for m in at.markdown)
+    if recommended:  # one line on Optimise; the full table lives on step 5 only
+        assert any("IPS rules</span>" in m.value for m in at.markdown)
+    assert at.button(key="opt_see_suitability").label == "See Suitability"
+    tables = [m.value for m in at.markdown if 'class="gpl-table"' in m.value]
+    assert len(tables) == 1  # the Suitability step's table, not a copy in Optimise
+    assert set(_suit(at)["Current"].str.split(" ").str[0]) <= {"✅", "❌", "⚠️"}
 
 
 def test_optimise_never_recommends_a_portfolio_that_fails_the_ips(optimise_app) -> None:
@@ -1175,7 +1203,7 @@ def test_optimise_never_recommends_a_portfolio_that_fails_the_ips(optimise_app) 
     starred = [n for n in table.index if n.startswith("★ ")]
     for name in starred:  # anything starred passed every rule
         assert table.loc[name, "Passes IPS?"] == "yes"
-    if not any(s.value.startswith("**Recommended method") for s in at.success):
+    if not any("Move to " in m.value for m in at.markdown):
         warning = next(w.value for w in at.warning if "No method meets the client's IPS" in w.value)
         assert "pp beyond" in warning or "pp below" in warning or "held (" in warning
         assert "current portfolio fails the IPS too" in warning
@@ -1215,9 +1243,9 @@ def test_rebalance_no_drift_by_default(app: AppTest) -> None:
     assert any("Enter the portfolio value" in i.value for i in app.info)
     app.number_input(key="pf_value_holdings_0").set_value(250_000.0).run()
     assert not app.exception, app.exception
-    drift = next(t.value for t in app.table if "Outside band" in t.value.columns)
-    assert set(drift["Outside band"]) == {"no"}
-    assert any("no rebalance needed" in s.value for s in app.success)
+    rb = app.session_state["ctx"].rebalance
+    assert {row["Outside band"] for row in rb["drift"].values()} == {"no"}
+    assert any("no rebalance needed" in m.value for m in app.markdown)  # the drift KPI card
 
 
 def test_rebalance_trade_list_against_proposed_target(app: AppTest) -> None:
@@ -1236,13 +1264,17 @@ def test_rebalance_trade_list_against_proposed_target(app: AppTest) -> None:
     }
     app.run()
     assert not app.exception, app.exception
-    drift = next(t.value for t in app.table if "Outside band" in t.value.columns)
-    assert drift.loc["SPY", "Drift"] == "+6.00 pp" and drift.loc["SPY", "Outside band"] == "⚠️ yes"
-    trades = next(t.value for t in app.table if "Est. cost (USD)" in t.value.columns)
-    assert trades.loc["SPY", "Action"] == "Sell" and trades.loc["AGG", "Action"] == "Buy"
-    assert trades.loc["SPY", "Amount (USD)"] == "6,007.20"  # cash-neutral after 10 bps costs
-    assert trades.loc["SPY", "Cost rate"] == "10 bps"  # each trade shows its market's rate
-    assert any(d.label == "Download trade list (CSV)" for d in app.get("download_button"))
+    rb = app.session_state["ctx"].rebalance
+    assert rb["drift"]["SPY"]["Drift"] == "+6.00 pp" and rb["drift"]["SPY"]["Outside band"] == (
+        "⚠️ yes"
+    )
+    trades = rb["trades"]
+    assert trades["SPY"]["Action"] == "Sell" and trades["AGG"]["Action"] == "Buy"
+    assert trades["SPY"]["Amount (USD)"] == "6,007.20"  # cash-neutral after 10 bps costs
+    assert trades["SPY"]["Cost rate"] == "10 bps"  # each trade shows its market's rate
+    assert any(d.label == "Trade list (CSV)" for d in app.get("download_button"))
+    cards = " ".join(m.value for m in app.markdown)
+    assert "Rebalance suggested" in cards and "USD 6,007" in cards  # the KPI cards
     assert app.session_state["ctx"].rebalance["totals"]["costs_usd"] == "12.00"
 
 
@@ -1274,16 +1306,17 @@ def test_one_portfolio_value_everywhere(app: AppTest) -> None:
     app.button(key="client_load_example").click().run()
     assert not app.exception, app.exception
     v = app.session_state[ws.PF_VERSION]
-    for key in ("pf_value_holdings", "pf_value_client", "pf_value_rebalance"):
-        # USD amounts: the key carries the total (in cents), so the box follows every edit
-        assert app.number_input(key=f"{key}_{v}_100000000").value == 1_000_000.0
+    # USD amounts: the key carries the total (in cents), so the box follows every edit; the
+    # value appears once more, on the Client step (Holdings shows the total row instead)
+    assert app.number_input(key=f"pf_value_client_{v}_100000000").value == 1_000_000.0
+    assert not any((n.key or "").startswith("pf_value_rebalance") for n in app.number_input)
     assert _metric(app, "Portfolio value") == "$1.00m"
-    # editing a USD amount updates the (read-only) value box at once
+    # editing a USD amount updates the value at once
     rows = [dict(r) for r in app.session_state[ws.ROWS]]
     rows[0]["value"] += 50_000.0
     app.session_state[ws.ROWS] = rows
     app.run()
-    assert app.number_input(key=f"pf_value_holdings_{v}_105000000").value == 1_050_000.0
+    assert app.number_input(key=f"pf_value_client_{v}_105000000").value == 1_050_000.0
     assert _metric(app, "Portfolio value") == "$1.05m"
     rows[0]["value"] -= 50_000.0
     app.session_state[ws.ROWS] = rows
@@ -1391,7 +1424,7 @@ def test_blank_cell_in_the_app_warns_without_a_rerun_loop(app: AppTest) -> None:
 def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     html = " ".join(m.value for m in app.markdown)
     assert 'class="gpl-step todo active"' in html and "no client loaded" in html
-    assert "<b>Client</b> none loaded" in html and "<b>IPS</b> –" in html
+    assert "Client <b>none loaded</b>" in html and "IPS <b>–</b>" in html
     # the step cards are the navigation (the tab row is hidden)
     app.button(key="step_nav_3").click().run()
     assert app.session_state["main_tab"] == "4 Optimise"
@@ -1407,8 +1440,8 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     app.button(key="client_load_example").click().run()
     html = " ".join(m.value for m in app.markdown)
-    assert "<b>Client</b> Example client (Dubai)" in html and "<b>Risk score</b> 3 / 5" in html
-    assert "<b>IPS</b> Ready" in html  # the example's fact-find is complete
+    assert "Client <b>Example client (Dubai)</b>" in html and "Risk score <b>3 / 5</b>" in html
+    assert "<b>Ready</b></span>" in html  # the IPS chip: the example's fact-find is complete
     # the example's own portfolio passes; with 50% in SPY the step isn't marked done
     assert "Suitability</b><small>Current: passes every rule" in html
     _set_holdings(app, OLD_DEFAULT)
@@ -1419,35 +1452,36 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
 
 def test_first_visit_shows_the_welcome_banner_and_primary_demo_buttons(app: AppTest) -> None:
     demo = [b for b in app.button if b.label == "▶ Try a demo client"]
-    assert sorted(b.key for b in demo) == ["fill_demo", "welcome_demo"]  # header and banner only
-    assert all(b.proto.type == "primary" for b in demo)
+    assert sorted(b.key for b in demo) == ["cta_welcome_demo", "fill_demo"]  # header + welcome
+    assert app.button(key="cta_welcome_demo").proto.type == "primary"  # the pink action
     welcome = " ".join(m.value for m in app.markdown)
-    assert "turns a GCC client's facts into an Investment Policy Statement" in welcome
+    assert "suitable, tested portfolio" in welcome and "For GCC wealth managers" in welcome
     # nothing loaded yet: steps 2-6 are neutral, not "4 holdings" or "analysis ready"
     for title in ("Portfolio", "Analyse", "Optimise", "Suitability", "Report &amp; trades"):
         assert f"<b>{title}</b><small>not started</small>" in welcome, title
-    assert "analysis ready" not in welcome and "4 holdings" not in welcome
+    assert "Analyse</b><small>analysis ready" not in welcome
+    assert "<small>4 holdings" not in welcome
     assert welcome.count('class="gpl-step done') == 0
     app.button(key="welcome_blank").click().run()  # "or start a blank client"
     assert not app.exception, app.exception
     assert app.session_state["main_tab"] == "1 Client"
     assert app.session_state["client"]["demo"] is False
-    assert not any(b.key == "welcome_demo" for b in app.button)  # banner gone once a client exists
+    assert not any(b.key == "cta_welcome_demo" for b in app.button)  # welcome gone with a client
 
 
 def test_demo_button_loads_a_client_with_a_toast(app: AppTest) -> None:
-    app.button(key="welcome_demo").click().run()
+    app.button(key="cta_welcome_demo").click().run()
     assert not app.exception, app.exception
     assert app.session_state["client"]["demo"] is True
     assert [t.value for t in app.toast] == [
         "Demo client loaded. Review the client and IPS, then use Next to walk through each step."
     ]
-    assert not any(b.key == "welcome_demo" for b in app.button)
+    assert not any(b.key == "cta_welcome_demo" for b in app.button)
     # opens step 1 (Client), not further on; later steps are already computed in this run
     assert app.session_state["main_tab"] == "1 Client"
     html = " ".join(m.value for m in app.markdown)  # chips and cards updated in this same run
     assert "DEMO DATA · seed" in html and "<b>Analyse</b><small>analysis ready</small>" in html
-    assert re.search(r'class="gpl-step done active">.{0,80}<b>Client</b>', html)
+    assert re.search(r'class="gpl-step done active">.{0,600}?<b>Client</b>', html)
     assert len(app.get("iframe")) == 1  # the one-time scroll to the top
     app.run()
     assert not app.toast and not app.get("iframe")  # shown once
@@ -1460,8 +1494,13 @@ def test_demo_button_loads_a_client_with_a_toast(app: AppTest) -> None:
         assert app.session_state["main_tab"] == steps[i + 1]
         html = " ".join(m.value for m in app.markdown)
         title = steps[i + 1].split(" ", 1)[1].replace("&", "&amp;")
-        assert re.search(rf'active">.{{0,80}}<b>{re.escape(title)}</b>', html), title
-    assert not any(b.key == "next_5" for b in app.button)  # the last step has no Next
+        assert re.search(rf'active">.{{0,600}}?<b>{re.escape(title)}</b>', html), title
+    # on the last step, Next opens its second tab, the AI analyst, and Back returns
+    app.button(key="next_5").click().run()
+    assert app.session_state["report_tab"] == "AI analyst"
+    assert app.button(key="back_5").label == "← Back to trades & report"
+    app.button(key="back_5").click().run()
+    assert app.session_state["report_tab"] == "Trades & report"
 
 
 def test_fill_demo_client_fills_everything_and_opens_the_client_step(app: AppTest) -> None:
@@ -1478,8 +1517,7 @@ def test_fill_demo_client_fills_everything_and_opens_the_client_step(app: AppTes
     assert app.session_state["client"]["reference"] == "DEMO-7"
     assert app.session_state["client"]["demo"] is True
     html = " ".join(m.value for m in app.markdown)
-    assert "DEMO DATA · seed 7" in html and "<b>IPS</b> Ready" in html
-    assert any("DEMO DATA" in i.value for i in app.info)  # the Client step says so too
+    assert "DEMO DATA · seed 7" in html and "<b>Ready</b></span>" in html
     notes = next(e for e in app.expander if e.label.startswith("Data notes"))
     assert notes.proto.expanded is False  # kept collapsed after loading the demo
     final = next(d for d in app.get("download_button") if d.proto.label == "Download IPS (PDF)")
@@ -1494,12 +1532,12 @@ def test_fill_demo_client_fills_everything_and_opens_the_client_step(app: AppTes
 def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
     assert app.session_state["main_tab"] == "1 Client"
     app.session_state["main_tab"] = "6 Report & trades"
-    app.session_state["report_tab"] = "Trades"
+    app.session_state["report_tab"] = "Trades & report"
     app.run()
     _set_holdings(app, [{"ticker": "SPY", "group": "Global equity", "value": 100.0}])
     assert not app.exception, app.exception
     assert app.session_state["main_tab"] == "6 Report & trades"
-    assert app.session_state["report_tab"] == "Trades"
+    assert app.session_state["report_tab"] == "Trades & report"
 
 
 def test_client_facts_fill_the_client_tab_and_constrain_optimise(optimise_app) -> None:
@@ -1577,16 +1615,13 @@ def test_report_uses_the_optimiser_recommendation_not_a_chat_what_if(
 
 
 def test_headline_figures_and_suitability_name_their_periods(app: AppTest) -> None:
-    caption = next(c.value for c in app.caption if c.value.startswith("**Backtest period "))
-    assert "–" in caption and "deltas against" in caption
+    meta = next(m.value for m in app.markdown if 'class="gpl-meta">Backtest ' in m.value)
+    assert "–" in meta  # the Analyse page header names the backtest period
     app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     app.button(key="client_load_example").click().run()
     periods = next(c.value for c in app.caption if c.value.startswith("**Periods.**"))
     assert "full history" in periods and "backtest period" in periods
-    assert any(
-        m.value.startswith("**Your portfolio vs") and "backtest period" in m.value
-        for m in app.markdown
-    )
+    assert any('class="gpl-section">Your portfolio vs 60/40' in m.value for m in app.markdown)
 
 
 def _limits(at: AppTest) -> dict[str, tuple[str, str]]:
@@ -1675,32 +1710,35 @@ def test_build_mode_screens_builds_and_recommends_by_rule(optimise_app) -> None:
     for name in report["infeasible_candidates"]:
         assert any(name in w.value and "can't meet your limits" in w.value for w in at.warning)
     assert "Information ratio" in table.columns and "Hit rate (months)" in table.columns
-    shown = " ".join(b.value for b in [*at.success, *at.info, *at.warning])
+    shown = " ".join(m.value for m in at.markdown) + " ".join(w.value for w in at.warning)
     assert rec["choice"] in shown
     if rec["status"] in ("recommended", "next_best"):  # keep: nothing to buy
         securities = next(t.value for t in at.table if "Asset class" in t.value.columns)
         assert set(securities.index) == set(report["securities_chosen"])
     assert any(e.label.startswith("Universe after the IPS screen") for e in at.expander)
-    assert "survivorship" in " ".join(i.value for i in at.info)
+    assert "survivorship" in " ".join(c.value for c in at.caption)
     # plain-English summary card before any table, written by code from the report
     text = " ".join(m.value for m in at.markdown)
-    for part in ("#### Summary", "**What we did**", "**What we found:**",
-                 "**What we recommend and why:**", "**What changes:**"):  # fmt: skip
+    for part in ("<h5>What we did</h5>", "<h5>What we found</h5>",
+                 "<h5>What we recommend</h5>", "<h5>What changes</h5>"):  # fmt: skip
         assert part in text, part
     assert "Screened " in text and " eligible." in text
     # simple status table first; the technical table sits in an expander for analysts
     status = next(t.value for t in at.table if "Status" in t.value.columns)
     assert set(status.index) == set(report["walk_forward_after_costs"])
     assert status.loc["Benchmark", "Status"] == "— Reference"
-    assert any(e.label == "Full results (for analysts)" for e in at.expander)
-    labels = {m.label for m in at.metric}
-    assert {"Return (CAGR)", "Volatility", "Sharpe ratio", "Max drawdown"} <= labels
-    assert any("each uses its own dates" in c.value for c in at.caption)  # the window note
+    assert any(e.label.startswith("**Full results for analysts**") for e in at.expander)
+    for label in ("Return (CAGR)", "Volatility", "Sharpe ratio", "Max drawdown"):
+        assert f'class="gpl-kpi-label">{label}</div>' in text, label  # current vs recommended
+    assert any('class="gpl-meta">Walk-forward after costs' in m.value for m in at.markdown)
     assert report["turnover_limit_per_rebalance"].startswith("25.00% a quarter")
     gate = report["suitability_gate"]
     assert "Current" in gate["failed_rules"]
-    table = next(t.value for t in at.table if "Exclusions" in t.value.index)
-    assert rec["choice"] in table.columns or rec["status"] in ("closest_fails", "keep")
+    table = _suit(at)  # the Suitability step checks the build's recommendation
+    assert any(rec["choice"] in c for c in table.columns) or rec["status"] in (
+        "closest_fails",
+        "keep",
+    )
     at.button(key="prepare_report").click().run()  # the report checks the new securities too
     assert not at.exception, at.exception
     assert at.session_state["client_report"][0].startswith(b"%PDF")
@@ -1738,23 +1776,28 @@ def test_improve_mode_caps_turnover_and_explains_swaps(optimise_app) -> None:
     at.button(key="prepare_report").click().run()  # the report follows the adviser's choice
     assert not at.exception, at.exception
     assert at.session_state["client_report"][0].startswith(b"%PDF")
-    # default holdings SPY/AGG/GLD/KSA: SPY has an Irish twin in the universe
-    assert any("Domicile (information, not tax advice)" in c.value for c in at.caption)
+    # default holdings SPY/AGG/GLD/KSA: SPY has an Irish twin (on the Suitability step only)
+    dom = next(t.value for t in at.table if "Irish-domiciled alternative" in t.value.columns)
+    assert dom.loc["SPY", "Irish-domiciled alternative"].startswith("CSPX.L")
 
 
 def test_build_suggests_a_policy_benchmark_that_fits_the_ips(optimise_app) -> None:
     from gpl.construct import POLICY_NAME
 
     at, _ = optimise_app([])
-    assert POLICY_NAME not in at.selectbox(key="ws_benchmark").options  # no client yet
+
+    def names():  # options are shown as "Benchmark · <name>"
+        return [o.split(" · ", 1)[1] for o in at.selectbox(key="ws_benchmark").options]
+
+    assert POLICY_NAME not in names()  # no client yet
     at.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     at.button(key="client_load_example").click().run()
     at.radio(key="opt_mode").set_value("Build a portfolio for me").run()
     assert not at.exception, at.exception
-    options = at.selectbox(key="ws_benchmark").options
+    options = names()
     assert POLICY_NAME in options and "60/40 (SPY/AGG)" in options  # 60/40 stays selectable
     assert any(f"Suggested benchmark for Build: {POLICY_NAME}" in i.value for i in at.info)
     at.button(key="use_policy_bench").click().run()
     assert not at.exception, at.exception
     assert at.session_state["ws_benchmark"] == POLICY_NAME
-    assert any("itself passes the client's IPS" in c.value for c in at.caption)
+    assert not any("Suggested benchmark for Build" in i.value for i in at.info)  # now in use

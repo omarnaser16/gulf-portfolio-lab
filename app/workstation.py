@@ -32,6 +32,7 @@ from gpl.metrics import (
 )
 from gpl.optimise import risk_contributions
 from gpl.plots import allocation_chart
+from gpl.theme import COMPOSITION
 
 ROWS, MODE, VERSION, META = "ws_rows", "ws_mode", "ws_version", "ws_meta"
 SEARCH = "ws_search"
@@ -241,10 +242,11 @@ def render_holdings(
     names: Mapping[str, str],
     presets: Mapping[str, Sequence[str]] | None = None,
     has_data: Callable[[str], tuple[bool, str]] | None = None,
-) -> None:
-    """Search box, editable holdings table, import box and allocation chart.
+) -> str:
+    """Search box, entry controls, import popover and the editable holdings table.
 
     ``has_data``: checks a ticker has prices before it is added (``gpl.data.has_price_data``).
+    Returns when each holding's price is from ("prices as of"), for the page header.
     """
     presets = presets or {}
 
@@ -269,8 +271,8 @@ def render_holdings(
 
     st_searchbox(
         suggestions,
-        placeholder="Search by name or ticker, e.g. Aramco, Emaar, Apple, SPY",
-        label="Add a security",
+        placeholder="Add a security: search Aramco, Emaar, Apple, SPY…",
+        label=None,
         key=SEARCH,
         debounce=300,
         clear_on_submit=True,
@@ -280,13 +282,56 @@ def render_holdings(
     if st.session_state.get("ws_add_error"):
         st.error(st.session_state.pop("ws_add_error"))
     rows = st.session_state[ROWS]
-    m1, m2 = st.columns([1, 1])
-    m1.radio("Enter holdings as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
-    value_input(m2, "pf_value_holdings")
+    m1, b1, b2, b3 = st.columns([2.9, 1.35, 1.75, 2.0], vertical_alignment="bottom")
+    m1.radio("Enter as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
+    if st.session_state.get(MODE) != USD:
+        value_input(st.columns([1, 2])[0], "pf_value_holdings")
+    mode_col = st.session_state[MODE]
+    b1.button(
+        "Equal weight",
+        key="ws_equal",
+        on_click=_set_equal,
+        help="Give every holding the same weight.",
+        width="stretch",
+        disabled=not rows,
+    )
+    b2.button(
+        "Normalise to 100%",
+        key="ws_normalise",
+        on_click=_set_normalised,
+        disabled=mode_col == USD or not rows,
+        help="Rescale the inputs so they add up to exactly 100%."
+        if mode_col == PCT
+        else "Amounts are always normalised; switch to Weight (%) to rescale inputs.",
+        width="stretch",
+    )
+    with b3.popover("Import a list or preset", width="stretch"):
+        if presets:
+            st.selectbox("Preset list (equal weights)", list(presets), key="ws_preset")
+            st.button(
+                "Replace holdings with this preset",
+                key="ws_preset_go",
+                on_click=_load_preset,
+                args=(presets, quote, config_groups, has_data),
+            )
+            st.divider()
+        st.text_area("One holding per line, e.g. 'SPY 40' or '2222.SR 30'", key="ws_import")
+        st.radio(
+            "Values are", ["Weights (%)", "Amounts (USD)"], key="ws_import_kind", horizontal=True
+        )
+        st.button(
+            "Replace holdings",
+            key="ws_import_go",
+            on_click=_import_list,  # runs before widgets are drawn, so it may set the mode
+            args=(quote, config_groups, has_data),
+        )
+    for problem in st.session_state.pop("ws_import_problems", []):
+        st.error(problem)
     if st.session_state.get("ws_mode_error"):
         st.warning(st.session_state.pop("ws_mode_error"))
+    as_of = ""
     if not rows:
-        st.info("Search above to add your first holding, or import a list below.")
+        st.info("Search above to add your first holding, or import a list.")
     else:
         weights, _, _ = current_weights()
         quotes = {r["ticker"]: quote(r["ticker"]) for r in rows}
@@ -315,9 +360,8 @@ def render_holdings(
             },
             index=pd.Index([r["ticker"] for r in rows], name="Ticker"),
         )
-        mode_col = st.session_state[MODE]
-        st.caption(
-            f"Click a cell in the **{EDIT_LABEL[mode_col]}** column to change it; weights update "
+        edit_help = (
+            f"Click a cell in the {EDIT_LABEL[mode_col]} column to change it; weights update "
             "automatically. White columns are editable, grey ones are calculated. Tick Remove "
             "to drop a holding."
         )
@@ -331,21 +375,21 @@ def render_holdings(
             on_change=_apply_edits,
             args=(key, [r["ticker"] for r in rows], mode_col),
             column_config={
-                "_index": st.column_config.TextColumn("Ticker", width=95),
-                "Name": st.column_config.TextColumn(width=180),
-                "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=110),
+                "_index": st.column_config.TextColumn("Ticker", width=70),
+                "Name": st.column_config.TextColumn(width=150),
+                "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=100),
                 mode_col: st.column_config.NumberColumn(
                     EDIT_LABEL[mode_col],
                     min_value=0.0,
                     format="%.2f",
                     width=100,
-                    help="Click to edit: what you hold. Weights are normalised to 100%.",
+                    help=edit_help,
                 ),
-                "Weight": st.column_config.TextColumn(width=75),
+                "Weight": st.column_config.TextColumn(width=68),
                 "Remove": st.column_config.CheckboxColumn(
-                    width=75, help="Tick to remove this holding."
+                    "✕", width=40, help="Tick to remove this holding."
                 ),
-                "Price": st.column_config.TextColumn(width=165),
+                "Price": st.column_config.TextColumn(width=120),
             },
             disabled=READ_ONLY_COLUMNS,
         )
@@ -355,55 +399,21 @@ def render_holdings(
                 f"Enter a positive {'amount' if mode_col == USD else 'weight'} for "
                 f"{', '.join(blanks)}, or tick Remove; until then it is left out."
             )
-        left, right, _ = st.columns([1, 1, 2])
-        left.button(
-            "Equal weight",
-            key="ws_equal",
-            on_click=_set_equal,
-            help="Give every holding the same weight.",
-            width="stretch",
-        )
-        right.button(
-            "Normalise to 100%",
-            key="ws_normalise",
-            on_click=_set_normalised,
-            disabled=mode_col == USD,
-            help="Rescale the inputs so they add up to exactly 100%."
-            if mode_col == PCT
-            else "Amounts are always normalised; switch to Weight (%) to rescale inputs.",
-            width="stretch",
+        total = sum(r["value"] or 0 for r in rows if (r["value"] or 0) > 0)
+        st.markdown(
+            f'<div class="gpl-kv" style="grid-template-columns:70% 30%;font-weight:600">'
+            f"<div>Total · {len(rows)} holding{'s' if len(rows) != 1 else ''}</div>"
+            f'<div style="text-align:right">'
+            f"{f'{total:,.2f}' if mode_col == USD else f'{total:.2f}%'}</div></div>",
+            unsafe_allow_html=True,
         )
         times: dict[str, list[str]] = {}
         for r in rows:
             times.setdefault(getattr(quotes[r["ticker"]], "as_of", "not available"), []).append(
                 r["ticker"]
             )
-        st.caption(
-            "Prices as of: " + "; ".join(f"{when} ({', '.join(ts)})" for when, ts in times.items())
-        )
-
-    with st.expander("Import a list or start from a preset"):
-        if presets:
-            st.selectbox("Preset list (equal weights)", list(presets), key="ws_preset")
-            st.button(
-                "Replace holdings with this preset",
-                key="ws_preset_go",
-                on_click=_load_preset,
-                args=(presets, quote, config_groups, has_data),
-            )
-            st.divider()
-        st.text_area("One holding per line, e.g. 'SPY 40' or '2222.SR 30'", key="ws_import")
-        st.radio(
-            "Values are", ["Weights (%)", "Amounts (USD)"], key="ws_import_kind", horizontal=True
-        )
-        st.button(
-            "Replace holdings",
-            key="ws_import_go",
-            on_click=_import_list,  # runs before widgets are drawn, so it may set the mode
-            args=(quote, config_groups, has_data),
-        )
-        for problem in st.session_state.pop("ws_import_problems", []):
-            st.error(problem)
+        as_of = "; ".join(f"{when} ({', '.join(ts)})" for when, ts in times.items())
+    return as_of
 
 
 def _load_preset(
@@ -478,10 +488,57 @@ def set_holdings(rows: list[dict]) -> None:
     _bump()
 
 
+def key_finding(weights: pd.Series, risk_share: pd.Series) -> str:
+    """The holding whose share of risk most exceeds its share of money, in one sentence.
+
+    E.g. "EEM is 26% of the money but 58% of the risk." From the risk contributions already
+    computed (``gpl.optimise.risk_contributions``); no new figures.
+    """
+    gap = (risk_share - weights).dropna()
+    if gap.empty:
+        return ""
+    t = gap.idxmax()
+    if gap[t] <= 0.005:
+        return "Each holding's share of risk is close to its share of money."
+    return f"{t} is {weights[t]:.0%} of the money but {risk_share[t]:.0%} of the risk."
+
+
 def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
-    by = st.radio("Show allocation by", ["Holding", "Group"], key="ws_alloc_by", horizontal=True)
-    shown = weights if by == "Holding" else weights.groupby(lambda t: groups.get(t, "Other")).sum()
-    plot(allocation_chart(shown, title=f"Allocation by {by.lower()}"))
+    """The Allocation card: a donut with the total in the middle and a legend beside it."""
+    h1, h2 = st.columns([1, 1.2], vertical_alignment="center")
+    h1.markdown('<div class="gpl-section">Allocation</div>', unsafe_allow_html=True)
+    by = h2.radio(
+        "Show allocation by",
+        ["Holding", "Group"],
+        key="ws_alloc_by",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    if by == "Holding":
+        shown = weights.sort_values(ascending=False)
+        names = {t: f"{t} · {groups.get(t, 'Other')}" for t in shown.index}
+    else:
+        shown = weights.groupby(lambda t: groups.get(t, "Other")).sum().sort_values(ascending=False)
+        names = {g: str(g) for g in shown.index}
+    value = portfolio_value()
+    center = (
+        f"Total<br><span style='font-size:24px'><b>{compact_usd(value)}</b></span>"
+        f"<br>{len(weights)} holdings"
+        if value
+        else f"{len(weights)} holdings"
+    )
+    plot(allocation_chart(shown, "", center=center, labels=False))
+    colours = COMPOSITION
+    rows = "".join(
+        f'<div><i style="display:inline-block;width:9px;height:9px;border-radius:2px;'
+        f'background:{colours[i % len(colours)]};margin-right:8px"></i>{names[k]}</div>'
+        f'<div style="text-align:right;font-weight:600">{v:.2%}</div>'
+        for i, (k, v) in enumerate(shown.items())
+    )
+    st.markdown(
+        f'<div class="gpl-kv" style="grid-template-columns:75% 25%">{rows}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def screen_table(
@@ -706,6 +763,20 @@ def memo_sections(text: str, charts: Sequence[tuple[str, object]]) -> list[tuple
     return out
 
 
+TARGET_COL = "Target % (edit)"
+
+
+def _edited_targets(key: str, base: pd.Series) -> pd.Series:
+    """The targets with the adviser's pending edits applied (read before the editor is drawn,
+    so the drift, trades and totals shown in the same table follow the edits)."""
+    target = base.copy()
+    for row, change in ((st.session_state.get(key) or {}).get("edited_rows") or {}).items():
+        new = change.get(TARGET_COL)
+        if new is not None and int(row) < len(target):
+            target.iloc[int(row)] = float(new) / 100
+    return target
+
+
 def render_rebalance(
     current: pd.Series,
     default_target: pd.Series,
@@ -716,140 +787,220 @@ def render_rebalance(
     cost_bps: float,
     cash_need: Mapping | None = None,
     cost_by_suffix: Mapping[str, float] | None = None,
+    kpis=None,
 ) -> dict | None:
-    """Drift monitor and trade list (``gpl.scenarios``). Returns the formatted result.
+    """Trade list card: one table with each holding's action, current and editable target
+    weight, drift, amount, cost and value after (``gpl.scenarios``); totals as KPI cards in
+    ``kpis``. Returns the formatted result.
 
     ``cash_need``: ``{"need_usd", "due", "cash_like"}`` from the client's IPS; the trades are
     checked against it (``gpl.scenarios.cash_need_check``).
     """
     from gpl.scenarios import cash_need_check, drift, needs_rebalance, trade_list
 
-    st.caption(
-        f"Targets start from the {target_source}; edit any target. Drift = current minus "
-        "target weight. A rebalance brings every holding back to its target, with costs paid "
-        "from the sales."
-    )
+    kpis = kpis if kpis is not None else st.container()
     tickers = list(dict.fromkeys([*current.index, *default_target.index]))
     key = "rb_" + "_".join(tickers) + "_" + target_source.replace(" ", "")
-    edited = st.data_editor(
-        pd.DataFrame(
+    base = default_target.reindex(tickers).fillna(0.0)
+    target = _edited_targets(key, base)
+    result = None
+    with st.container(border=True, key="trades_card"):
+        head, band_col, csv_col = st.columns([2.2, 1.3, 1.5], vertical_alignment="bottom")
+        head.markdown(
+            '<div class="gpl-section">Trade list</div>',
+            unsafe_allow_html=True,
+            help=f"Targets start from the {target_source}; edit any target. Drift = current minus "
+            "target weight. A rebalance brings every holding back to its target, with costs "
+            "paid from the sales.",
+        )
+        band = (
+            band_col.number_input(
+                "Drift band ± (pp)",
+                0.5,
+                50.0,
+                5.0,
+                0.5,
+                key="rb_band",
+                help="A holding further than this from its target, in percentage points, "
+                "triggers a rebalance suggestion.",
+            )
+            / 100
+        )
+        ok = value is not None and abs(target.sum() - 1) <= 1e-4
+        d = drift(current, target, band) if ok else None
+        values = usd_values if usd_values is not None else current * (value or 0)
+        prices = pd.Series({t: price_usd(t) for t in tickers}, dtype=float)
+        trades = (
+            trade_list(
+                values,
+                target,
+                prices,
+                cost_bps,
+                None if usd_values is not None else value,
+                cost_by_suffix,
+            )  # fmt: skip
+            if ok
+            else None
+        )
+
+        def col(series, fmt):
+            return [fmt(series[t]) if series is not None and t in series.index else "–"
+                    for t in tickers]  # fmt: skip
+
+        frame = pd.DataFrame(
             {
-                "Current %": current.reindex(tickers).fillna(0.0) * 100,
-                "✏️ Target %": default_target.reindex(tickers).fillna(0.0) * 100,
+                "Action": col(None if trades is None else trades["action"], str),
+                "Current": [pct(current.get(t, 0.0)) for t in tickers],
+                TARGET_COL: base * 100,
+                "Drift": col(
+                    None if d is None else d["drift"],
+                    lambda x: f"{no_negative_zero(x * 100, 2):+.2f} pp",
+                ),
+                "Amount (USD)": col(
+                    None if trades is None else trades["trade_usd"].abs(), "{:,.2f}".format
+                ),
+                "Est. cost": col(None if trades is None else trades["cost_usd"], "{:,.2f}".format),
+                "After (USD)": col(
+                    None if trades is None else trades["target_usd"], "{:,.2f}".format
+                ),
             },
             index=pd.Index(tickers, name="Ticker"),
-        ),
-        key=key,
-        disabled=["Current %"],
-        width="stretch",
-        column_config={
-            "Current %": st.column_config.NumberColumn(format="%.2f"),
-            "✏️ Target %": st.column_config.NumberColumn(
-                format="%.2f", min_value=0.0, max_value=100.0
-            ),
-        },
-    )
-    target = edited["✏️ Target %"].fillna(0.0) / 100
-    c1, c2 = st.columns(2)
-    band = (
-        c1.number_input("Drift band (± percentage points)", 0.5, 50.0, 5.0, 0.5, key="rb_band")
-        / 100
-    )
-    value_input(c2, "pf_value_rebalance")
-    if value is None:
-        st.info("Enter the portfolio value (here or on Holdings) to see the drift and trades.")
-        return None
-    if abs(target.sum() - 1) > 1e-4:
-        st.warning(f"Targets add up to {target.sum():.2%}; they must add up to 100.00%.")
-        return None
-    d = drift(current, target, band)
-    shown = pd.DataFrame(
-        {
-            "Current": d["current"].map(pct),
-            "Target": d["target"].map(pct),
-            "Drift": d["drift"].map(lambda x: f"{no_negative_zero(x * 100, 2):+.2f} pp"),
-            "Outside band": d["outside_band"].map({True: "⚠️ yes", False: "no"}),
-        },
-        index=d.index,
-    )
-    st.table(shown)
-    flagged = list(d.index[d["outside_band"]])
-    if needs_rebalance(d):
-        st.warning(
-            f"Outside the ±{band * 100:.2f} pp band: {', '.join(flagged)}. A rebalance is "
-            "suggested for the adviser's review."
         )
-    else:
-        st.success(
-            f"Every holding is within ±{band * 100:.2f} pp of its target: no rebalance needed."
+        outside = set() if d is None else set(d.index[d["outside_band"]])
+        styled = frame.style.apply(
+            lambda c: [
+                "background-color: #FFF4E0; color: #B26B00; font-weight: 600"
+                if t in outside else "" for t in frame.index
+            ],
+            subset=["Drift"],
+        )  # fmt: skip
+        st.data_editor(
+            styled,
+            key=key,
+            width="stretch",
+            disabled=[c for c in frame.columns if c != TARGET_COL],
+            column_config={
+                "_index": st.column_config.TextColumn("Ticker", width=65),
+                "Action": st.column_config.TextColumn(width=55),
+                "Current": st.column_config.TextColumn(width=65),
+                TARGET_COL: st.column_config.NumberColumn(
+                    "Target %",
+                    format="%.2f",
+                    min_value=0.0,
+                    max_value=100.0,
+                    width=70,
+                    help="Edit any target.",
+                ),
+                "Drift": st.column_config.TextColumn(width=78),
+                "Est. cost": st.column_config.TextColumn(width=62),
+            },
         )
-    show = needs_rebalance(d) or st.toggle("Show the trades anyway", key="rb_show")
-    result = {"band": pct(band), "outside_band": flagged, "drift": shown.to_dict(orient="index")}
-    values = usd_values if usd_values is not None else current * value
-    prices = pd.Series({t: price_usd(t) for t in tickers}, dtype=float)
-    trades = trade_list(
-        values,
-        target,
-        prices,
-        cost_bps,
-        None if usd_values is not None else value,
-        cost_by_suffix,
-    )
-    if cash_need and cash_need["need_usd"] > 0:
-        check = cash_need_check(trades["target_usd"], cash_need["cash_like"], cash_need["need_usd"])
-        held_in = ", ".join(cash_need["cash_like"]) or "none held"
-        if check["ok"]:
-            st.success(
-                f"✅ After these trades, cash-like holdings ({held_in}) are USD "
-                f"{check['held']:,.0f}, covering the USD {check['need']:,.0f} needed "
-                f"({cash_need['due']})."
-            )
-        else:
-            st.warning(
-                f"⚠️ After these trades, cash-like holdings ({held_in}) are USD "
-                f"{check['held']:,.0f}, USD {check['shortfall']:,.0f} short of the USD "
-                f"{check['need']:,.0f} the client needs ({cash_need['due']}). Raise the target "
-                "for cash, short-term bonds or sukuk."
-            )
-        result["cash_need_check"] = {
-            "cash_like_after_trades_usd": f"{check['held']:,.0f}",
-            "needed_usd": f"{check['need']:,.0f}",
-            "shortfall_usd": f"{check['shortfall']:,.0f}",
-            "due": cash_need["due"],
+        st.caption(
+            "Units are estimates at the latest price; round to the broker's lot size. Check "
+            "taxes and liquidity before trading."
+        )
+        if value is None:
+            st.info("Enter the portfolio value on step 2 (Portfolio) to see the drift and trades.")
+            return None
+        if not ok:
+            st.warning(f"Targets add up to {target.sum():.2%}; they must add up to 100.00%.")
+            return None
+        flagged = list(d.index[d["outside_band"]])
+        shown = pd.DataFrame(
+            {
+                "Current": d["current"].map(pct),
+                "Target": d["target"].map(pct),
+                "Drift": d["drift"].map(lambda x: f"{no_negative_zero(x * 100, 2):+.2f} pp"),
+                "Outside band": d["outside_band"].map({True: "⚠️ yes", False: "no"}),
+            },
+            index=d.index,
+        )
+        result = {
+            "band": pct(band),
+            "outside_band": flagged,
+            "drift": shown.to_dict(orient="index"),
         }
-    if not show:
-        return result
-    table = pd.DataFrame(
-        {
-            "Action": trades["action"],
-            "Amount (USD)": trades["trade_usd"].abs().map("{:,.2f}".format),
-            "Est. units": trades["units"].map(lambda u: "–" if pd.isna(u) else f"{abs(u):,.2f}"),
-            "Cost rate": trades["cost_bps"].map("{:g} bps".format),
-            "Est. cost (USD)": trades["cost_usd"].map("{:,.2f}".format),
-            "After (USD)": trades["target_usd"].map("{:,.2f}".format),
-        },
-        index=trades.index,
-    )
-    st.markdown("**Trade list**")
-    st.table(table)
+        if cash_need and cash_need["need_usd"] > 0:
+            check = cash_need_check(
+                trades["target_usd"], cash_need["cash_like"], cash_need["need_usd"]
+            )
+            held_in = ", ".join(cash_need["cash_like"]) or "none held"
+            if check["ok"]:
+                st.success(
+                    f"✅ After these trades, cash-like holdings ({held_in}) are USD "
+                    f"{check['held']:,.0f}, covering the USD {check['need']:,.0f} needed "
+                    f"({cash_need['due']})."
+                )
+            else:
+                st.warning(
+                    f"⚠️ After these trades, cash-like holdings ({held_in}) are USD "
+                    f"{check['held']:,.0f}, USD {check['shortfall']:,.0f} short of the USD "
+                    f"{check['need']:,.0f} the client needs ({cash_need['due']}). Raise the "
+                    "target for cash, short-term bonds or sukuk."
+                )
+            result["cash_need_check"] = {
+                "cash_like_after_trades_usd": f"{check['held']:,.0f}",
+                "needed_usd": f"{check['need']:,.0f}",
+                "shortfall_usd": f"{check['shortfall']:,.0f}",
+                "due": cash_need["due"],
+            }
+        csv_col.download_button(
+            "Trade list (CSV)",
+            trades.to_csv(),
+            file_name="trade_list.csv",
+            mime="text/csv",
+            key="rb_csv",
+            icon=":material/download:",
+            width="stretch",
+        )
     buys = trades.loc[trades.trade_usd > 0, "trade_usd"].sum()
     sells = -trades.loc[trades.trade_usd < 0, "trade_usd"].sum()
     costs = trades["cost_usd"].sum()
-    st.caption(
-        f"Sells USD {sells:,.2f}, buys USD {buys:,.2f}, estimated costs USD {costs:,.2f} at "
-        f"{cost_bps:g} bps for US listings and local-market rates for the others (buys + "
-        "costs = sells). Units are estimates at the latest price "
-        "(fractional; round to the broker's lot size). Decision support for a licensed adviser: "
-        "check taxes and liquidity before trading."
-    )
-    st.download_button(
-        "Download trade list (CSV)",
-        trades.to_csv(),
-        file_name="trade_list.csv",
-        mime="text/csv",
-        key="rb_csv",
-    )
-    result["trades"] = table.to_dict(orient="index")
+    rebalance = needs_rebalance(d)
+    with kpis:
+        layout_cards = [
+            ("Sells", f"USD {sells:,.0f}", ""),
+            ("Buys", f"USD {buys:,.0f}", ""),
+            ("Estimated costs", f"USD {costs:,.2f}", ""),
+        ]
+        from html import escape as _esc
+
+        cards = "".join(
+            f'<div class="gpl-kpi"><div class="gpl-kpi-label">{lab}</div>'
+            f'<div class="gpl-kpi-value">{val}</div></div>'
+            for lab, val, _ in layout_cards
+        )
+        if rebalance:
+            cards += (
+                '<div class="gpl-kpi warn"><div class="gpl-kpi-label">Rebalance suggested</div>'
+                f'<div class="gpl-kpi-value">{_esc(", ".join(flagged))} '
+                f"{'is' if len(flagged) == 1 else 'are'} outside the ±{band * 100:g} pp band."
+                "</div></div>"
+            )
+        else:
+            cards += (
+                '<div class="gpl-kpi"><div class="gpl-kpi-label">Drift</div>'
+                f'<div class="gpl-kpi-value" style="font-size:.9rem;font-weight:400;'
+                f'white-space:normal">Every holding is within ±{band * 100:g} pp of its target: '
+                "no rebalance needed.</div></div>"
+            )
+        st.markdown(f'<div class="gpl-kpis" style="--n:4">{cards}</div>', unsafe_allow_html=True,
+                    help=f"Estimated costs at {cost_bps:g} bps for US listings and local-market "
+                    "rates for the others (buys + costs = sells).")  # fmt: skip
+    if rebalance:
+        result["trades"] = pd.DataFrame(
+            {
+                "Action": trades["action"],
+                "Amount (USD)": trades["trade_usd"].abs().map("{:,.2f}".format),
+                "Est. units": trades["units"].map(
+                    lambda u: "–" if pd.isna(u) else f"{abs(u):,.2f}"
+                ),
+                "Cost rate": trades["cost_bps"].map("{:g} bps".format),
+                "Est. cost (USD)": trades["cost_usd"].map("{:,.2f}".format),
+                "After (USD)": trades["target_usd"].map("{:,.2f}".format),
+            },
+            index=trades.index,
+        ).to_dict(orient="index")
     result["totals"] = {
         "sells_usd": f"{sells:,.2f}",
         "buys_usd": f"{buys:,.2f}",

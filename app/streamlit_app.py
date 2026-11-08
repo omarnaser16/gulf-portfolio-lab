@@ -9,6 +9,7 @@ inputs, calls the engine, and draws the results. Run with::
 import json
 import os
 from datetime import date
+from html import escape
 
 import anthropic
 import client_ui
@@ -18,9 +19,9 @@ import pandas as pd
 import streamlit as st
 import workstation as ws
 from inputs import asset_groups, combine_tickers
-from layout import LAYOUT_CSS
+from layout import APP_CSS
 
-from formatting import NUMBERS_CSS, pct, plot, show_metrics_table, style_columns, style_percent
+from formatting import pct, plot, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
@@ -43,6 +44,7 @@ from gpl.agent.tools import (
 )
 from gpl.client import (
     CLOSEST_MIX_LABEL,
+    ClientProfile,
     build_ips,
     cash_like_holdings,
     ips_constraints,
@@ -108,7 +110,6 @@ from gpl.optimise import (
 )
 from gpl.plots import (
     SERIES_COLORS,
-    allocation_chart,
     drawdown_chart,
     equity_chart,
     fan_chart,
@@ -132,7 +133,6 @@ from gpl.suitability import (
     check_suitability,
     failures,
     rationale,
-    suitability_table,
 )
 from gpl.summary import GLOSSARY, kpi_comparison, result_summary, window_note
 
@@ -180,10 +180,8 @@ GROUP_LABELS = {
     "bonds": "Bonds",
     "real_assets": "Gold",
 }
-DISCLAIMER = (
-    "Educational project, **not investment advice**. "
-    "Past performance does not predict future results."
-)
+ANALYSE_TABS = ["Performance", "Benchmark", "Monte Carlo", "Assets · analyst", "Regime · analyst"]
+OPTIMISE_TABS = ["Optimise", "Frontier", "Strategy backtests"]
 
 
 # ----------------------------------------------------------------------------- data layer
@@ -383,20 +381,27 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-st.markdown(NUMBERS_CSS + LAYOUT_CSS, unsafe_allow_html=True)
+st.markdown(APP_CSS, unsafe_allow_html=True)
 header = st.container(key="gpl_header")
-head_title, head_chips, head_bench, head_demo, head_actions, head_settings = header.columns(
-    [2.0, 4.2, 2.0, 1.7, 1.6, 0.7], vertical_alignment="center"
+head_title, head_bench, head_actions, head_demo, head_settings = header.columns(
+    [3.3, 3.0, 1.75, 1.95, 0.55], vertical_alignment="center"
 )
+head_chips = header.container()
 with head_demo:
-    client_ui.demo_button(
-        "fill_demo",
+    st.button(
+        "▶ Try a demo client",
+        key="fill_demo",
+        on_click=client_ui.fill_demo,
         width="stretch",
         help="Fills every field with a random, realistic GCC client and a 5-10 holding "
         "portfolio of real tickers (no AI), then opens step 1 (Client). Marked DEMO DATA "
         "everywhere; the seed in the header reproduces it (⚙ Settings › Demo seed).",
     )
-head_title.markdown("### Gulf Portfolio Lab")
+head_title.markdown(
+    '<p class="gpl-brandmark"><i><b style="height:6px"></b><b style="height:11px"></b>'
+    '<b style="height:16px"></b></i>Gulf Portfolio Lab</p>',
+    unsafe_allow_html=True,
+)
 
 
 def header_info() -> layout.HeaderInfo:
@@ -422,14 +427,15 @@ step_slots = layout.render_stepper(
     st.session_state.get("step_statuses"), st.session_state.get(layout.STEP_KEY)
 )
 head_actions.button(
-    "💬 Ask the analyst",
+    "Ask the analyst",
+    icon=":material/chat_bubble:",
     key="ask_analyst",
     on_click=layout.go_to,
     args=(layout.STEPS[-1], "AI analyst"),
     width="stretch",
     help="Open the AI analyst (Report & trades step) with this client and portfolio.",
 )
-with head_settings.popover("⚙", width="stretch", help="Settings"):
+with head_settings.popover("", icon=":material/settings:", width="stretch", help="Settings"):
     period = st.radio(
         "Data period",
         [LATEST, README_MODE],
@@ -494,19 +500,6 @@ doc.querySelectorAll('[data-testid="stMain"], [data-testid="stAppViewContainer"]
 if st.session_state.pop("demo_toast", False):
     st.toast(client_ui.DEMO_TOAST, icon="✅")
     st.iframe(SCROLL_TOP_JS, height=1)  # our own constant script: back to the top of step 1
-if st.session_state.get(client_ui.CLIENT) is None:  # first visit: point at the demo
-    with st.container(border=True, key="welcome"):
-        st.markdown(client_ui.WELCOME)
-        w_demo, w_blank, _ = st.columns([2.2, 2.2, 5.6], vertical_alignment="center")
-        with w_demo:
-            client_ui.demo_button("welcome_demo", width="stretch")
-        w_blank.button(
-            "or start a blank client",
-            key="welcome_blank",
-            type="tertiary",
-            on_click=client_ui.start_blank,
-        )
-
 end = None if period == LATEST else date.fromisoformat(D["end"])
 # Set on step 4 (Optimise); read here so every tab uses the current value.
 max_weight = float(st.session_state.get("max_weight", D["max_weight"]))
@@ -561,14 +554,13 @@ groups = asset_groups(universe, CFG["groups"], GROUP_LABELS)
 missing_holdings = [t for t in my_weights if t not in data.prices.columns]
 portfolio_ok = bool(my_weights) and not missing_holdings
 my_key = tuple(sorted(my_weights.items()))
-st.markdown(
-    f"**Data as of {data.price_as_of:%d %b %Y}** (latest price) · loaded {data.loaded_at} · "
-    f"{'latest data' if end is None else 'fixed sample used in the README'}"
-)
-st.caption(
-    f"Sample: **{data.prices.index[0]:%d %b %Y} – {data.prices.index[-1]:%d %b %Y}** "
-    f"({len(returns):,} daily returns from {len(returns) + 1:,} price dates, about {periods} "
-    "a year). Every result depends on this period."
+DATA_AS_OF = f"Data as of {data.price_as_of:%d %b %Y}"
+DATA_HELP = (
+    f"Latest price {data.price_as_of:%d %b %Y}, loaded {data.loaded_at} · "
+    f"{'latest data' if end is None else 'fixed sample used in the README'}. Sample: "
+    f"{data.prices.index[0]:%d %b %Y} – {data.prices.index[-1]:%d %b %Y} ({len(returns):,} daily "
+    f"returns from {len(returns) + 1:,} price dates, about {periods} a year). Every result "
+    "depends on this period."
 )
 
 
@@ -591,41 +583,46 @@ def render_data_notes(history: pd.DataFrame) -> None:
 
 
 short = data.history[data.history["too_short"] & data.history.index.isin(universe)]
-with st.expander(
-    "Data notes: start dates, currencies and trading calendars",
-    # open when there is something to read, but not straight after loading the demo
-    expanded=bool(data.mixed_calendars or len(short))
-    and sorted(universe) != st.session_state.get("demo_tickers"),
-):
-    render_data_notes(data.history)
-    if data.mixed_calendars:
-        sun_thu = {
-            t: data.history.loc[t, "trading_days"]
-            for t in data.history.index
-            if "Sun" in data.history.loc[t, "trading_days"]
-        }
-        st.info(
-            "**Different trading calendars.** "
-            + "; ".join(f"{t} trades {days}" for t, days in sun_thu.items())
-            + ", while US-listed assets trade Mon–Fri. (Dubai and Abu Dhabi moved from a "
-            "Sunday to a Monday week on 1 Jan 2022, but Yahoo has no Friday prices for them, so "
-            "they still differ from US markets.) The analysis uses only the "
-            f"{data.alignment['kept']:,} price dates ({data.alignment['kept'] - 1:,} returns) on "
-            "which every selected market traded (about "
-            f"{periods} a year), so some returns span more than one day; figures are annualised "
-            f"with {periods} periods a year instead of 252."
-        )
+
+
+def render_data_warnings() -> None:
+    """Short histories: visible on Portfolio (they limit every result)."""
     for t, row in short.iterrows():
         st.warning(
             f"**{t}** has only {row['observations']:,} trading days of history (from "
             f"{row['first_date']:%d %b %Y}), less than the {lookback}-observation estimation "
             "window plus a month. Strategies that use it start late and its estimates are noisy."
         )
-    setters = list(data.history.index[data.history["sets_start"]])
-    st.caption(
-        f"The common sample starts on {data.prices.index[0]:%d %b %Y}, when the most recent asset "
-        f"({', '.join(setters)}) begins."
-    )
+
+
+def render_data_details() -> None:
+    """Data notes (Details on Portfolio): dates, currencies, conversion and calendars."""
+    with st.expander("Data notes: start dates, currencies and trading calendars"):
+        st.caption(DATA_HELP)
+        render_data_notes(data.history)
+        if data.mixed_calendars:
+            sun_thu = {
+                t: data.history.loc[t, "trading_days"]
+                for t in data.history.index
+                if "Sun" in data.history.loc[t, "trading_days"]
+            }
+            st.info(
+                "**Different trading calendars.** "
+                + "; ".join(f"{t} trades {days}" for t, days in sun_thu.items())
+                + ", while US-listed assets trade Mon–Fri. (Dubai and Abu Dhabi moved from a "
+                "Sunday to a Monday week on 1 Jan 2022, but Yahoo has no Friday prices for them, "
+                "so they still differ from US markets.) The analysis uses only the "
+                f"{data.alignment['kept']:,} price dates ({data.alignment['kept'] - 1:,} returns) "
+                f"on which every selected market traded (about {periods} a year), so some returns "
+                f"span more than one day; figures are annualised with {periods} periods a year "
+                "instead of 252."
+            )
+        setters = list(data.history.index[data.history["sets_start"]])
+        st.caption(
+            f"The common sample starts on {data.prices.index[0]:%d %b %Y}, when the most recent "
+            f"asset ({', '.join(setters)}) begins."
+        )
+
 
 enough_history = len(returns) > lookback + 21
 SHORT_SAMPLE = (
@@ -878,14 +875,18 @@ def _limit_box(
     )
 
 
-def _diagnosis_section(ctx: AnalystContext) -> None:
+def _diagnose(ctx: AnalystContext) -> dict:
+    """The diagnosis (cached per data and benchmark); also handed to the AI memo via ``ctx``."""
     key = (settings_key, bench_name)
     if st.session_state.get("ws_diag_key") != key:
         st.session_state.ws_diag = diagnose_portfolio(ctx, my_weights)
         st.session_state.ws_diag_key = key
-    diag = st.session_state.ws_diag
-    ctx.diagnosis = diag
-    st.markdown("**1. Diagnosis: where your risk comes from**")
+    ctx.diagnosis = st.session_state.ws_diag
+    return ctx.diagnosis
+
+
+def _diagnosis_section(ctx: AnalystContext) -> None:
+    diag = _diagnose(ctx)
     holdings = pd.DataFrame(diag["holdings"]).T.rename(
         columns={
             "weight": "Weight",
@@ -938,7 +939,7 @@ def _diagnosis_section(ctx: AnalystContext) -> None:
 
 def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
     """Goal, target and limits (typed or interpreted by the AI); returns (goal, limits, target)."""
-    st.markdown("**2. Your goal and limits**")
+    st.markdown('<div class="gpl-section">Goal and limits</div>', unsafe_allow_html=True)
     with st.expander("Describe it in plain English (optional)", expanded=False):
         st.text_area(
             "Goals in plain English",
@@ -1178,19 +1179,23 @@ def domicile_section() -> dict | None:
 
 
 def render_domicile(where: str = "domicile") -> None:
-    st.markdown("**Fund domicile check (GCC clients)**")
+    """Fund domicile (GCC clients): collapsed, with its one-line summary as the label."""
     result = domicile_section()
     if result is None:
         st.info("Add holdings on step 2 (Portfolio) to check their domicile.")
         return
-    st.info(result["label"])
-    if portfolio_value() is None:
-        c1, _ = st.columns([1, 2])
-        ws.value_input(c1, f"pf_value_{where}", "Portfolio value (USD) for the estate-tax estimate")
-    if result["rows"]:
-        st.table(pd.DataFrame(result["rows"]).set_index("Ticker"))
-    for line in result["summary"]:
-        st.caption("• " + line)
+    first = result["summary"][0] if result["summary"] else result["label"]
+    with st.expander(f"**Fund domicile (GCC clients)** &nbsp; :gray[{first}]"):
+        st.info(result["label"])
+        if portfolio_value() is None:
+            ws.value_input(
+                st, f"pf_value_{where}", "Portfolio value (USD) for the estate-tax estimate"
+            )
+        if result["rows"]:
+            st.table(pd.DataFrame(result["rows"]).set_index("Ticker"))
+        for line in result["summary"]:
+            st.caption("• " + line)
+    st.caption("Information, not tax advice.")
 
 
 SUITABILITY_ICON = {"pass": "✅", "fail": "❌", "review": "⚠️"}
@@ -1275,10 +1280,15 @@ def generated_record(results: dict) -> tuple[str, str]:
 
 
 def render_suitability_record(results: dict) -> None:
-    """The suitability record: generated from rules and checks, editable by the adviser."""
+    """The suitability rationale: generated from rules and checks, editable by the adviser."""
     profile = client_ui.current_profile()
     name, generated = generated_record(results)
-    st.markdown(f"**Suitability record** ({name})")
+    st.markdown(
+        '<div class="gpl-section">Suitability rationale</div>',
+        unsafe_allow_html=True,
+        help=f"For {name}. Generated from the IPS rules and the checks above (no AI); your "
+        "edits are saved with the client profile and go into the IPS and the client report.",
+    )
     edited = bool(profile.suitability_record) and profile.suitability_record != generated
     key = (
         f"suit_record_{st.session_state.get(client_ui.VERSION, 0)}_"
@@ -1287,61 +1297,129 @@ def render_suitability_record(results: dict) -> None:
     st.text_area(
         "Rationale (edit before it goes in the IPS and the client report)",
         profile.suitability_record or generated,
-        height=220,
+        height=180,
         key=key,
         on_change=_save_record,
         args=(key,),
+        label_visibility="collapsed",
     )
-    c1, c2 = st.columns([1, 3])
-    c1.button("Reset to the generated text", key="suit_record_reset", on_click=_reset_record)
-    c2.caption(
+    c1, c2 = st.columns([2, 1], vertical_alignment="center")
+    c1.caption(
         "Edited by the adviser."
         if edited
-        else "Generated from the IPS rules and the checks "
-        "above (no AI). Your edits are saved with the client profile."
+        else "Goes into the IPS and the client report (generated from the rules, no AI)."
+    )
+    c2.button(
+        "Reset to generated text",
+        key="suit_record_reset",
+        on_click=_reset_record,
+        width="stretch",
+    )
+
+
+def suitability_html(results: dict) -> str:
+    """The rules table: rule and a one-line reason, limit, each portfolio's value, status.
+
+    The last portfolio (the recommendation, when there is one) is tinted and sets the status.
+    """
+    names = list(results)
+    last = names[-1]
+    by_rule = {name: {c.rule: c for c in checks} for name, checks in results.items()}
+    mark = {"pass": "✓", "fail": "✗", "review": "⚠"}
+    tone = {"pass": "pass", "fail": "fail", "review": "warn"}
+    word = {"pass": "Pass", "fail": "Fail", "review": "Review"}
+
+    def short(text: str) -> str:
+        first = text.split(". ")[0].rstrip(".") + "."
+        return first if len(first) <= 110 else first[:107].rstrip() + "…"
+
+    head = "".join(
+        f'<th class="num{" rec" if n == last and len(names) > 1 else ""}">{escape(n)}</th>'
+        for n in names
+    )
+    rows = []
+    for c in results[last]:
+        cells = []
+        for n in names:
+            ck = by_rule[n].get(c.rule)
+            value = escape(ck.measured) if ck else "–"
+            if n == last and len(names) > 1:
+                cells.append(f'<td class="num rec">{value}</td>')
+            else:
+                sym = mark[ck.status] if ck else ""
+                colour = {"pass": "var(--gpl-pass)", "fail": "var(--gpl-fail)"}.get(
+                    ck.status if ck else "", "var(--gpl-warn)"
+                )
+                cells.append(
+                    f'<td class="num">{value} <span style="color:{colour}">{sym}</span></td>'
+                )
+        rows.append(
+            f"<tr><td><b>{escape(c.rule)}</b><small>{escape(short(c.reason))}</small></td>"
+            f'<td class="num" style="text-align:left">{escape(c.limit)}</td>{"".join(cells)}'
+            f'<td class="num">{layout.pill(word[c.status], tone[c.status])}</td></tr>'
+        )
+    return (
+        f'<table class="gpl-table"><thead><tr><th>Rule</th><th>Limit</th>{head}'
+        f'<th class="num">Status</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
     )
 
 
 def render_suitability(portfolios: dict[str, pd.Series], key: str, record: bool = False) -> None:
     """Pass / fail / review per IPS rule for each portfolio, with the written reasons."""
-    st.markdown("**Suitability against the client's IPS**")
     results = suitability_results(portfolios)
     if results is None:
         st.info("Load or create a client on step 1 (Client) to check suitability.")
+        if record:  # the domicile check needs holdings, not a client
+            with st.columns([1.75, 1])[1].container(border=True, key="domicile_card"):
+                render_domicile(key)
         return
     ips = client_ips()
     last = list(results)[-1]
     st.session_state["suit_fails"] = (last, [c.rule for c in results[last] if c.status == "fail"])
+    counts = {k: sum(c.status == k for c in results[last]) for k in ("pass", "fail", "review")}
+    suit_counts.markdown(
+        '<div style="display:flex;gap:6px;justify-content:flex-end">'
+        + layout.pill(f"{counts['pass']} pass", "pass")
+        + layout.pill(f"{counts['fail']} fail", "fail" if counts["fail"] else "")
+        + layout.pill(f"{counts['review']} review", "warn" if counts["review"] else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
     note = client_ui.closest_mix_note(ips)
     if note and record:
         fails = [breach_text(c) for c in results["Current"] if c.status == "fail"]
         st.warning(f"**{CLOSEST_MIX_LABEL}** {note}" + "".join(f"\n- {line}" for line in fails))
-    table = suitability_table(results)
-    for col in table.columns:
-        statuses = {c.rule: c.status for c in results[col]}
-        table[col] = [f"{SUITABILITY_ICON[statuses[r]]} {v}" for r, v in table[col].items()]
-    st.table(table)
-    for name, checks in results.items():
-        with st.expander(f"Reasons: {name}"):
-            for c in checks:
-                st.markdown(f"{SUITABILITY_ICON[c.status]} **{c.rule}.** {c.reason}")
+    with st.container(border=True, key=f"{key}_rules"):
+        st.markdown(suitability_html(results), unsafe_allow_html=True)
     full = period_label(all_returns.index)
     dates = headline_dates()
-    st.caption(
-        f"**Periods.** Policy risk checks (volatility, drawdown) use the full history, {full}: "
-        "longer than the headline cards and including earlier crises. "
-        + (
-            f"The headline cards cover the backtest period, {period_label(dates)}; the reasons "
-            "give both. "
-            if dates is not None
-            else ""
+    with st.expander(
+        "**Reasons for each rule** &nbsp; :gray[The full sentence behind every pass, fail and "
+        "review, and the periods used]"
+    ):
+        for name, checks in results.items():
+            st.markdown(f"**{name}**")
+            for c in checks:
+                st.markdown(f"{SUITABILITY_ICON[c.status]} **{c.rule}.** {c.reason}")
+        st.caption(
+            f"**Periods.** Policy risk checks (volatility, drawdown) use the full history, {full}: "
+            "longer than the headline cards and including earlier crises. "
+            + (
+                f"The headline cards cover the backtest period, {period_label(dates)}; the "
+                "reasons give both. "
+                if dates is not None
+                else ""
+            )
+            + f"Client {ips.client.reference or '(no reference)'}. Today's weights; ⚠️ Review "
+            "means the data can't decide and the adviser must check. Decision support for a "
+            "licensed adviser."
         )
-        + f"Client {ips.client.reference or '(no reference)'}. Today's weights; ⚠️ Review means "
-        "the data can't decide and the adviser must check. Decision support for a licensed "
-        "adviser."
-    )
     if record:
-        render_suitability_record(results)
+        rec_col, dom_col = st.columns([1.75, 1], gap="medium")
+        with rec_col.container(border=True, key="rationale_card"):
+            render_suitability_record(results)
+        with dom_col.container(border=True, key="domicile_card"):
+            render_domicile(key)
 
 
 def client_ips():
@@ -1476,7 +1554,7 @@ def _period_words(backtest_period: str) -> str:
 
 
 def _summary_card(result: dict, latest: pd.DataFrame) -> None:
-    """The plain-English summary and current vs recommended, before any table."""
+    """The four-part summary (did / found / recommend / changes), then current vs recommended."""
     report = result["report"]
     rec = report["recommendation"]
     choice = rec["choice"]
@@ -1486,53 +1564,106 @@ def _summary_card(result: dict, latest: pd.DataFrame) -> None:
         latest.loc["Current"][latest.loc["Current"] > 1e-9].to_dict(),
         None if proposed is None else proposed[proposed > 1e-9].to_dict(),
     )
-    with st.container(border=True, key="result_summary"):
-        st.markdown("#### Summary")
-        st.markdown("**What we did**\n" + "\n".join(f"- {line}" for line in summary.did))
-        st.markdown(f"**What we found:** {summary.found}")
-        st.markdown(f"**What we recommend and why:** {summary.recommend}")
-        st.markdown(f"**What changes:** {summary.changes}")
-        if report.get("move_from_current_turnover") and proposed is not None:
-            st.caption(
-                "After today's move, the quarterly turnover limit applies: expected trading is "
-                "the 'Turnover / yr' figure in the table below."
+    after = (
+        " After today's move, the quarterly turnover limit applies: expected trading is the "
+        "'Turnover / yr' figure under Full results."
+        if report.get("move_from_current_turnover") and proposed is not None
+        else ""
+    )
+    did = " ".join(summary.did)
+    parts = [
+        ("What we did", did, ""),
+        ("What we found", summary.found, ""),
+        ("What we recommend", summary.recommend, "rec"),
+        ("What changes", summary.changes + after, ""),
+    ]
+    with st.container(key="result_summary"):
+        st.markdown(
+            '<div class="gpl-summary">'
+            + "".join(
+                f'<div class="{cls}"><h5>{escape(h)}</h5>{escape(text)}</div>'
+                for h, text, cls in parts
             )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
     shown = choice if proposed is not None else "Current"
-    left, right = st.columns([3, 2])
-    with left:
-        if proposed is not None:
-            pair = latest.loc[["Current", choice]]
-            pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
-            st.markdown(f"**Weights: current vs {choice}**")
-            plot(
-                paired_bars_chart(pair.loc["Current"], pair.loc[choice], ("Current", choice), ""),
-                width="stretch",
-            )
-        else:
-            st.markdown("**No change:** the advice is to keep the current portfolio.")
-    with right:
-        st.markdown(f"**{'Current vs ' + choice if proposed is not None else 'Current'}**")
-        st.caption(f"Walk-forward after costs, {_period_words(report['backtest_period'])}.")
-        cards = kpi_comparison(report, shown)
-        tips = {
-            "Return (CAGR)": "Average yearly growth over the test, after costs.",
-            "Volatility": "How much returns swing in a year; lower is calmer.",
-            "Sharpe ratio": GLOSSARY["Sharpe ratio"],
-            "Max drawdown": "The largest fall from a peak during the test.",
-        }
-        cols = st.columns(2)
-        for i, k in enumerate(cards):
-            cols[i % 2].metric(
+    head, when = st.columns([1, 1], vertical_alignment="bottom")
+    name = (
+        f'Current vs <span style="color:var(--gpl-accent-btn)">{escape(choice)}</span>'
+        if proposed is not None
+        else "Current portfolio (kept)"
+    )
+    head.markdown(f'<div class="gpl-section">{name}</div>', unsafe_allow_html=True)
+    layout.meta(
+        f"Walk-forward after costs, {_period_words(report['backtest_period'])}",
+        help="Each method is re-optimised every period on the data available then and held to "
+        "the next, after trading costs. "
+        + window_note(
+            "build" if report.get("mode") == "build" else "improve",
+            _period_words(report["backtest_period"]),
+        ),
+        container=when,
+    )
+    cards = []
+    for k in kpi_comparison(report, shown):
+        tone = "" if k["better"] is None else ("pass" if k["better"] else "fail")
+        arrow = "" if k["better"] is None else ("↑ " if k["change"].startswith("+") else "↓ ")
+        change = k["change"].lstrip("+-−")
+        if k["label"] == "Max drawdown" and k["better"]:
+            change += " shallower"
+        cards.append(
+            layout.kpi_card(
                 k["label"],
                 k["proposed"],
-                None if proposed is None else k["change"],
-                delta_color="inverse" if k["label"] == "Volatility" else "normal",
-                help=tips[k["label"]],
+                delta="" if proposed is None else arrow + change,
+                tone=tone,
+                before="" if proposed is None else k["current"],
             )
+        )
+    layout.kpi_row(cards)
+
+
+def _candidates_card(report: dict) -> None:
+    """Every candidate as a row: Sharpe · volatility · drawdown and its status pill."""
+    status = report.get("candidate_status", {})
+    rows = report["walk_forward_after_costs"]
+    rec = report["recommendation"]["choice"]
+    head, tip = st.columns([3, 1.4], vertical_alignment="center")
+    head.markdown('<div class="gpl-section">Candidates</div>', unsafe_allow_html=True)
+    with tip.popover("How to read this", width="stretch"):
+        for term, text in GLOSSARY.items():
+            st.markdown(f"**{term}:** {text}")
+
+    def figures(r: dict) -> str:
+        return " · ".join(
+            str(r.get(k, "–")) for k in ("sharpe", "annual_volatility", "max_drawdown")
+        )
+
+    html, refs = [], []
+    for name, r in rows.items():
+        if name not in status:
+            continue
+        label = status[name]["status"]
+        if label.startswith("—"):  # reference rows: current portfolio, benchmark
+            refs.append(f"{escape(name.lower() if name == 'Current' else name)} {figures(r)}")
+            continue
+        tone = "pass" if label.startswith("✓") else "fail" if label.startswith("✗") else ""
+        cls = "gpl-row rec" if name == rec else "gpl-row"
+        html.append(
+            f'<div class="{cls}" title="{escape(status[name]["why"])}"><div><b>{escape(name)}'
+            f"</b><small>{figures(r)}</small></div>{layout.pill(label, tone)}</div>"
+        )
+    st.markdown(
+        '<div class="gpl-rows">' + "".join(html) + "</div>"
+        f'<p class="gpl-meta" style="text-align:left;margin-top:10px">Sharpe · volatility · max '
+        f"drawdown. Reference: {'; '.join(refs)}.</p>",
+        unsafe_allow_html=True,
+    )
 
 
 def _status_table(report: dict) -> None:
-    """Every candidate with a simple status and one reason; the full table is for analysts."""
+    """Every candidate with its status, reason and figures (under Full results)."""
     status = report.get("candidate_status", {})
     if not status:
         return
@@ -1551,23 +1682,14 @@ def _status_table(report: dict) -> None:
             if name in status
         }
     ).T
-    head, tip = st.columns([4, 1])
-    head.markdown(f"**The candidates ({_period_words(report['backtest_period'])})**")
-    with tip.popover("How to read this"):
-        for term, text in GLOSSARY.items():
-            st.markdown(f"**{term}:** {text}")
+    st.markdown(f"**The candidates ({_period_words(report['backtest_period'])})**")
     st.table(table)
 
 
 def _results_section(result: dict, ai_ok: bool) -> None:
     report, run = result["report"], result["run"]
     rec = report["recommendation"]
-    st.markdown("**4. Recommendation**")
     latest = optimise_weights(result)
-    _summary_card(result, latest)
-    if st.session_state.pop("scroll_to_result", False):
-        st.iframe(SCROLL_JS, height=1)  # our own constant script, not user content
-    reasons = "\n".join(f"- {r}" for r in rec["reasons"])
     gate = report.get("suitability_gate")
     if rec["status"] == "closest_fails":
         closest = "your current portfolio" if rec["choice"] == KEEP else rec["choice"]
@@ -1576,19 +1698,44 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             f"**No method meets the client's IPS. The closest is {closest}**, which still "
             "fails:\n\n"
             + "\n".join(f"- {line}" for line in failed)
-            + f"\n\n{reasons}\n\nNot suitable as it stands: change the holdings (e.g. add a "
-            "lower-risk or cash-like holding) or review the IPS with the client."
+            + "\n\n"
+            + "\n".join(f"- {r}" for r in rec["reasons"])
+            + "\n\nNot suitable as it stands: change the holdings (e.g. add a lower-risk or "
+            "cash-like holding) or review the IPS with the client."
         )
-    elif rec["choice"] == KEEP:
-        st.info(f"**Keep your current portfolio.**\n\n{reasons}")
-    elif rec["status"] == "next_best":
-        st.info(
-            f"**Next best option: {rec['choice']}.** No built portfolio beat the benchmark "
-            f"out of sample after costs within the IPS, so this does not beat it.\n\n{reasons}"
+    _summary_card(result, latest)
+    if st.session_state.pop("scroll_to_result", False):
+        st.iframe(SCROLL_JS, height=1)  # our own constant script, not user content
+    build = report.get("mode") == "build"
+    if not build and rec["choice"] in report.get("full_restructure_to_target", {}):
+        st.radio(
+            "Today's move",
+            move_options(report, rec["choice"]),
+            key=IMPROVE_MOVE,
+            on_change=_apply_improve_move,
+            horizontal=True,
+            help=f"For {rec['choice']}, the adviser chooses. Default: keep the turnover limit "
+            f"({report['max_turnover']} of the portfolio). The full restructure goes all the way "
+            "to the method's target today; its turnover and estimated cost (at each market's "
+            "rate) are shown. Your choice feeds the suitability checks, the trade list and the "
+            "client report.",
         )
-    else:
-        label = "Recommended portfolio" if report.get("mode") == "build" else "Recommended method"
-        st.success(f"**{label}: {rec['choice']}**\n\n{reasons}")
+    w_col, c_col = st.columns(2, gap="medium")
+    with w_col.container(border=True, key="weights_card"):
+        choice = rec["choice"]
+        if choice in latest.index and choice != KEEP:
+            pair = latest.loc[["Current", choice]]
+            pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
+            st.markdown('<div class="gpl-section">Weights</div>', unsafe_allow_html=True)
+            plot(
+                paired_bars_chart(pair.loc["Current"], pair.loc[choice], ("Current", choice), ""),
+                width="stretch",
+            )
+        else:
+            st.markdown('<div class="gpl-section">Weights</div>', unsafe_allow_html=True)
+            st.caption("No change: the advice is to keep the current portfolio.")
+    with c_col.container(border=True, key="candidates_card"):
+        _candidates_card(report)
     if (
         gate
         and gate["current_passes_ips"] is False
@@ -1600,12 +1747,34 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             + "; ".join(gate["failed_rules"]["Current"])
             + "."
         )
+    # one line on suitability (the table lives on step 5) and the AI memo
+    line = st.columns([2.2, 1.1, 2.4, 3], vertical_alignment="center")
+    if rec["choice"] != KEEP and rec["choice"] in latest.index:
+        checks = suitability_results({rec["choice"]: latest.loc[rec["choice"]]})
+        if checks:
+            failing = failures(checks[rec["choice"]])
+            n = len(checks[rec["choice"]])
+            line[0].markdown(
+                f'<span style="color:var(--gpl-pass);font-weight:600">✓ Passes all {n} IPS '
+                "rules</span>"
+                if not failing
+                else f'<span style="color:var(--gpl-fail);font-weight:600">✗ Fails '
+                f"{len(failing)} of {n} IPS rules</span>",
+                unsafe_allow_html=True,
+            )
+    line[1].button(
+        "See Suitability",
+        key="opt_see_suitability",
+        type="tertiary",
+        on_click=layout.go_to,
+        args=(layout.STEPS[4],),
+    )
+    memo_clicked = ai_ok and line[2].button(
+        "Explain the recommendation (AI memo)", key="ws_opt_memo", type="tertiary"
+    )
     st.caption(f"The rule for this goal: {rec['rule']}")
-    _status_table(report)
-    build = report.get("mode") == "build"
-    where = "build" if build else "improve"
-    st.caption(window_note(where, _period_words(report["backtest_period"])))
 
+    # details, collapsed
     rows = pd.DataFrame(report["walk_forward_after_costs"]).T
     columns = dict(CANDIDATE_TABLE_COLUMNS)
     if gate:
@@ -1614,97 +1783,101 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
     mark = "≈ " if rec["status"] == "closest_fails" else "★ "  # ≈: closest, still fails
     rows.index = [(mark if n == rec["choice"] else "") + n for n in rows.index]
-    full = st.expander("Full results (for analysts)")
-    full.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
-    full.table(rows)
-    full.caption(
-        (
-            "Each candidate re-chooses its securities and weights every quarter from the data "
-            "available then (risk from all history so far, returns from the last year), within "
-            "the IPS and your limits, then holds them to the next quarter, after trading costs. "
-            if build
-            else "Each method is re-optimised every month on the trailing window only "
-            "(Ledoit-Wolf covariance), within your limits, then held to the next month, after "
-            "trading costs. "
-        )
-        + "'Held up?': it kept at least half of its in-sample Sharpe ratio out of sample. "
-        "'Months limits unmet': months when the limits couldn't be met with the data then "
-        "available, so the previous weights were kept (no limit was broken). Hit rate: the "
-        "share of months it beat the benchmark."
-        + (
-            " The target-volatility method aims at "
-            f"{report['volatility_target_for_target_volatility_candidate']} a year."
-            if "volatility_target_for_target_volatility_candidate" in report
-            else ""
-        )
+    full = st.expander(
+        "**Full results for analysts** &nbsp; :gray[Every walk-forward measure and today's "
+        "weights for each candidate]"
     )
-    for name, why in report.get("infeasible_candidates", {}).items():
-        st.warning(f"**{name}** can't meet your limits, so it wasn't run: " + " ".join(why))
-    for name, why in {
-        **report.get("identical_methods_shown_once", {}),
-        **report.get("same_latest_weights_different_history", {}),
-    }.items():
-        st.caption(f"{name}: {why}.")
+    with full:
+        _status_table(report)
+        st.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
+        st.table(rows)
+        st.caption(
+            (
+                "Each candidate re-chooses its securities and weights every quarter from the data "
+                "available then (risk from all history so far, returns from the last year), "
+                "within the IPS and your limits, then holds them to the next quarter, after "
+                "trading costs. "
+                if build
+                else "Each method is re-optimised every month on the trailing window only "
+                "(Ledoit-Wolf covariance), within your limits, then held to the next month, after "
+                "trading costs. "
+            )
+            + "'Held up?': it kept at least half of its in-sample Sharpe ratio out of sample. "
+            "'Months limits unmet': months when the limits couldn't be met with the data then "
+            "available, so the previous weights were kept (no limit was broken). Hit rate: the "
+            "share of months it beat the benchmark."
+            + (
+                " The target-volatility method aims at "
+                f"{report['volatility_target_for_target_volatility_candidate']} a year."
+                if "volatility_target_for_target_volatility_candidate" in report
+                else ""
+            )
+        )
+        if len(latest) > 1:
+            st.markdown("**Latest weights of each method** (what it would hold now)")
+            st.table(latest.map(pct))
+        for name, why in report.get("infeasible_candidates", {}).items():
+            st.warning(f"**{name}** can't meet your limits, so it wasn't run: " + " ".join(why))
+        for name, why in {
+            **report.get("identical_methods_shown_once", {}),
+            **report.get("same_latest_weights_different_history", {}),
+        }.items():
+            st.caption(f"{name}: {why}.")
+        if report.get("mode") == "improve":
+            st.caption(
+                f"Turnover limit {report['max_turnover']} of the portfolio: each month's move, "
+                "and today's suggested change from your current weights, stay within it. If "
+                "today's portfolio breaks a weight or group limit, the move heads for the "
+                "least-turnover portfolio that meets them and stops at the limit."
+            )
     chosen = report.get("securities_chosen")
     if chosen:
-        st.markdown(f"**Securities chosen and why** ({rec['choice']})")
-        st.table(
-            pd.DataFrame(chosen).T.rename(
-                columns={
-                    "weight": "Weight",
-                    "name": "Name",
-                    "asset_class": "Asset class",
-                    "region": "Region",
-                    "domicile": "Domicile",
-                    "sharia": "Sharia",
-                    "why": "Why",
-                }
+        with st.expander(
+            f"**Securities chosen and why** &nbsp; :gray[{rec['choice']}: name, asset class, "
+            "region and the reason for each]"
+        ):
+            st.table(
+                pd.DataFrame(chosen).T.rename(
+                    columns={
+                        "weight": "Weight",
+                        "name": "Name",
+                        "asset_class": "Asset class",
+                        "region": "Region",
+                        "domicile": "Domicile",
+                        "sharia": "Sharia",
+                        "why": "Why",
+                    }
+                )
             )
-        )
-    for swap in report.get("swaps", []):
-        st.markdown(f"🔁 **Swap ({swap['kind']})**: {swap['why']}")
-    for idea in report.get("domicile_suggestions_information_not_tax_advice", []):
-        st.caption(f"🏛 **Domicile (information, not tax advice):** {idea['why']}")
-    if report.get("mode") == "improve":
-        st.caption(
-            f"Turnover limit {report['max_turnover']} of the portfolio: each month's move, and "
-            "today's suggested change from your current weights, stay within it. If today's "
-            "portfolio breaks a weight or group limit, the move heads for the least-turnover "
-            "portfolio that meets them and stops at the limit."
-        )
-        if rec["choice"] in report.get("full_restructure_to_target", {}):
-            st.radio(
-                f"Today's move for {rec['choice']} (the adviser chooses)",
-                move_options(report, rec["choice"]),
-                key=IMPROVE_MOVE,
-                on_change=_apply_improve_move,
-                help="Default: keep the turnover limit. The full restructure goes all the way "
-                "to the method's target today; its turnover and estimated cost (at each "
-                "market's rate) are shown. Your choice feeds the suitability checks, the trade "
-                "list and the client report.",
-            )
-    if len(latest) > 1:
-        full.markdown("**Latest weights of each method** (what it would hold now)")
-        full.table(latest.map(pct))
-    plot(equity_chart(run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"))
-    if "Benchmark" in run.equity and rec["choice"] in run.equity:
-        daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
-        rel = relative_drawdown(daily[rec["choice"]], daily["Benchmark"]).rename(rec["choice"])
+    with st.expander(
+        "**Walk-forward charts** &nbsp; :gray[Growth of $1 for every candidate, and "
+        f"{rec['choice']}'s drawdown against the benchmark]"
+    ):
         plot(
-            lines_chart(
-                rel.to_frame(),
-                f"{rec['choice']}: drawdown relative to the benchmark",
-                "Relative drawdown",
-            ),
-            width="stretch",
+            equity_chart(
+                run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"
+            )
         )
-    st.info(report["caveats"])
-    candidates = {"Current": latest.loc["Current"]}
-    if rec["choice"] != KEEP:
-        candidates[rec["choice"]] = latest.loc[rec["choice"]]
-    render_suitability(candidates, "opt")
+        if "Benchmark" in run.equity and rec["choice"] in run.equity:
+            daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
+            rel = relative_drawdown(daily[rec["choice"]], daily["Benchmark"]).rename(rec["choice"])
+            plot(
+                lines_chart(
+                    rel.to_frame(),
+                    f"{rec['choice']}: drawdown relative to the benchmark",
+                    "Relative drawdown",
+                ),
+                width="stretch",
+            )
+    swaps = report.get("swaps", [])
+    if swaps:
+        with st.expander(f"**Swap ideas** &nbsp; :gray[{swaps[0]['why'].split('. ')[0]}.]"):
+            for swap in swaps:
+                st.markdown(f"🔁 **Swap ({swap['kind']})**: {swap['why']}")
+    st.session_state["opt_diag_slot"] = True  # the diagnosis expander follows (render_optimise)
+    st.caption(report["caveats"])
 
-    if ai_ok and st.button("Explain the recommendation (AI memo)", key="ws_opt_memo"):
+    if memo_clicked:
         memo_analyst = agent.Analyst(
             shared_context(),
             agent.make_client(),
@@ -1730,18 +1903,15 @@ def _results_section(result: dict, ai_ok: bool) -> None:
 
 def render_build(ctx, ai_ok: bool) -> None:
     """ "Build a portfolio for me": screen the universe, build candidates, recommend by rule."""
-    st.markdown("**Build a portfolio for me**")
-    st.caption(
-        f"From a curated universe of {len(UNIVERSE_TAGS)} liquid securities (ETFs, GCC blue chips "
-        "when the IPS asks for GCC exposure, bonds and sukuk, gold, cash), screened by the "
-        "client's IPS. Candidates of 8-15 holdings aim for the highest information ratio "
-        "against the benchmark, with volatility at most the benchmark's and a tracking-error "
-        "limit; with a low-volatility, momentum or quality tilt; a diversified IPS portfolio; "
-        "and a benchmark tracker. Judged walk-forward after costs."
-    )
     if bench is None or bench.is_cash:
         st.warning("Choose a market benchmark (not cash) in the header: Build aims to beat it.")
         return
+    result = st.session_state.get("ws_opt")
+    has = bool(result) and result["key"][0] == "build"
+    bar = st.container()
+    box = st.expander("Edit & re-run" if has else "Run settings", expanded=not has)
+    box.__enter__()
+    _cap_slider()
     if POLICY and bench_name != POLICY_NAME:
         st.info(
             f"**Suggested benchmark for Build: {POLICY_NAME}.** {POLICY['represents']} The "
@@ -1777,7 +1947,7 @@ def render_build(ctx, ai_ok: bool) -> None:
         "the first build. 25% a quarter is at most 1.0x the portfolio traded a year.",
     )
     c3.caption(
-        f"At most {pct(max_weight)} in one holding (slider above); the client's IPS limits "
+        f"At most {pct(max_weight)} in one holding (above); the client's IPS limits "
         "apply on top. Tilts: low volatility and momentum are scored from prices; quality "
         "uses quality-factor ETFs."
     )
@@ -1817,6 +1987,7 @@ def render_build(ctx, ai_ok: bool) -> None:
             report, run = run_with_progress("Building the candidate portfolios.", work)
         except ToolError as e:
             st.error(str(e))
+            box.__exit__(None, None, None)
             return
         ctx.optimisation = report
         choice = run.recommendation.choice
@@ -1831,21 +2002,26 @@ def render_build(ctx, ai_ok: bool) -> None:
         st.session_state.ws_opt = {
             "report": report, "run": run, "memo": None, "key": run_key, "universe": uni,
         }  # fmt: skip
+        st.rerun()  # draw the header, settings and result once, from the new result
+    box.__exit__(None, None, None)
     result = st.session_state.get("ws_opt")
     if result and result["key"] == run_key:
+        _run_with(bar, [
+            ("Benchmark", bench_name), ("Tracking error", f"≤ {te:g}%"),
+            ("Turnover", f"≤ {turn:g}% a quarter"), ("Cap", f"{pct(max_weight)} per holding"),
+        ])  # fmt: skip
+        _results_section(result, ai_ok)
         with st.expander(
             f"Universe after the IPS screen: {result['report']['universe']['eligible']} eligible"
         ):
             out = result["report"]["universe"]["excluded"]
             if out:
                 st.table(pd.DataFrame({"Left out because": out}))
-        _results_section(result, ai_ok)
     elif result and result["key"][0] == "build":
         st.caption("The limits, client or benchmark changed: build the candidates again.")
 
 
-def render_optimise() -> None:
-    """Diagnose -> goal and limits -> candidate methods walk-forward -> recommendation -> memo."""
+def _cap_slider() -> None:
     # Default set through session state only: the AI's interpretation may also set it.
     st.session_state.setdefault("max_weight", float(D["max_weight"]))
     st.slider(
@@ -1858,37 +2034,121 @@ def render_optimise() -> None:
         "('Clear all limits' sets it). It also applies to the strategies on the Frontier, "
         "Backtest and Monte Carlo tabs.",
     )
+
+
+def _run_with(bar, chips: list[tuple[str, str]]) -> None:
+    """The settings of the run shown above the result (edit them in "Edit & re-run")."""
+    with bar.container(border=True, key="run_with"):
+        st.markdown(
+            '<div class="gpl-runwith"><span style="color:var(--gpl-muted)">Run with</span>'
+            + "".join(
+                f'<span class="gpl-pill">{escape(k)}: <b style="color:var(--gpl-text)">'
+                f"{escape(v)}</b></span>"
+                for k, v in chips
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _diagnosis_details(ctx: AnalystContext) -> None:
+    with st.expander(
+        "**Diagnosis: where the risk comes from** &nbsp; :gray[Holdings that move together and "
+        f"the current portfolio against {bench_name}]"
+    ):
+        _diagnosis_section(ctx)
+
+
+def _optimise_guidance() -> str:
+    """The one guidance line, from the latest result (or what to do before the first run)."""
+    mode = st.session_state.get("opt_mode", IMPROVE)
+    result = st.session_state.get("ws_opt")
+    if not result or (result["key"][0] == "build") != (mode == BUILD):
+        if mode == BUILD:
+            return f"Build portfolios from a curated universe that aim to beat {bench_name}."
+        return "Choose a goal and limits, then run the candidate methods."
+    rec = result["report"]["recommendation"]
+    first = ((client_ui.current_profile() or ClientProfile()).name or "").split(" ")[0]
+    whose = f"{first}'s" if first else "your"
+    if rec["status"] == "closest_fails":
+        return "No portfolio meets every IPS rule: the closest is shown with its breaches."
+    if rec["choice"] == KEEP:
+        return f"Keep {whose} current portfolio: no method did enough better under the rule."
+    if rec["status"] == "next_best":
+        return f"No build beat {bench_name} reliably; {rec['choice']} is the next best option."
+    if mode == BUILD:
+        return f"{rec['choice']} beat {bench_name} reliably after costs and fits the IPS."
+    fits = " and fits the IPS" if client_ips() is not None else ""
+    return f"{rec['choice']} beats {whose} current portfolio{fits}."
+
+
+def _show_frontier() -> None:
+    st.session_state["optimise_tab"] = "Frontier"
+
+
+def _optimise_header() -> None:
+    with optimise_head:
+        right = layout.page_header(
+            "Optimise",
+            _optimise_guidance(),
+            help="Improve: start from your holdings, re-weight within a turnover limit, then try "
+            "a few explained swaps. Build: choose 8-15 securities from a curated universe that "
+            f"aim to beat the benchmark on a risk-adjusted basis (from {len(UNIVERSE_TAGS)} "
+            "liquid securities screened by the client's IPS). Every result is judged walk-"
+            "forward after costs.",
+            right_width=0.58,
+        )
+        m, link = right.columns([1.55, 1], vertical_alignment="center")
+        m.radio(
+            "What should Optimise do?",
+            [IMPROVE, BUILD],
+            key="opt_mode",
+            horizontal=True,
+            label_visibility="collapsed",
+            format_func={IMPROVE: "Improve my portfolio", BUILD: "Build one for me"}.get,
+        )
+        link.button(
+            "Frontier & strategy backtests", key="opt_frontier_link", type="tertiary",
+            on_click=_show_frontier,
+        )  # fmt: skip
+
+
+def render_optimise() -> None:
+    """Goal and limits -> candidate methods walk-forward -> recommendation -> memo."""
+    _optimise_header()
+    mode = st.session_state.get("opt_mode", IMPROVE)
     if not portfolio_ok or len(my_weights) < 2:
+        _cap_slider()
         st.info("Add at least two holdings with price history on the Holdings tab.")
         return
     if not enough_history:
+        _cap_slider()
         st.warning(SHORT_SAMPLE)
         return
     ctx = shared_context()
     ctx.benchmark = bench
     holding_groups = {t: g for t, g in ws.groups_of_holdings().items() if t in my_weights}
     ai_ok = agent.has_credentials()
-    mode = st.radio(
-        "What should Optimise do?",
-        [IMPROVE, BUILD],
-        key="opt_mode",
-        horizontal=True,
-        help="Improve: start from your holdings, re-weight within a turnover limit, then try a "
-        "few explained swaps. Build: choose 8-15 securities from a curated universe that aim to "
-        "beat the benchmark on a risk-adjusted basis.",
-    )
     if mode == BUILD:
         render_build(ctx, ai_ok)
         return
-    _diagnosis_section(ctx)
-    chosen = _goal_section(holding_groups, ai_ok)
+    _diagnose(ctx)
+    result = st.session_state.get("ws_opt")
+    has = bool(result) and result["key"][0] != "build"
+    bar = st.container()
+    box = st.expander("Edit & re-run" if has else "Run settings", expanded=not has)
+    with box:
+        _cap_slider()
+        chosen = _goal_section(holding_groups, ai_ok)
     if chosen is None:
+        _diagnosis_details(ctx)
         return
     goal, limits, target = chosen
     if goal == "beat_benchmark_less_risk" and bench is None:
-        st.warning("Choose a benchmark with data at the top of the Portfolio tab.")
+        st.warning("Choose a benchmark with data in the header.")
         return
-    st.markdown("**3. Candidate methods**")
+    box.__enter__()
+    st.markdown('<div class="gpl-section">Candidate methods</div>', unsafe_allow_html=True)
     st.caption(
         "Max Sharpe, min variance, risk parity, max diversification and target volatility, each "
         "within your limits, judged on how they did out of sample after costs."
@@ -1956,11 +2216,27 @@ def render_optimise() -> None:
         st.session_state.ws_opt = {
             "report": report, "run": run, "memo": None, "key": run_key, "universe": uni,
         }  # fmt: skip
+        st.rerun()  # draw the header, settings and result once, from the new result
+    box.__exit__(None, None, None)
     result = st.session_state.get("ws_opt")
     if result and result["key"] == run_key:
+        ips = client_ips()
+        chips = [("Goal", GOALS[goal])]
+        if ips is not None and st.session_state.get("ws_use_ips"):
+            lim = ips.limits
+            ips_bits = [f"≤ {pct(lim['max_weight'])} per holding"] if lim["max_weight"] else []
+            if lim["max_volatility"]:
+                ips_bits.append(f"vol ≤ {pct(lim['max_volatility'])}")
+            if lim["home_bias_gcc"]:
+                ips_bits.append(f"GCC ≥ {pct(lim['home_bias_gcc'])}")
+            chips.append(("IPS limits", " · ".join(ips_bits) or "on"))
+        chips.append(("Max turnover", f"{max_turnover:g}%"))
+        chips.append(("Swaps", f"up to {int(max_swaps)}" if use_swaps else "off"))
+        _run_with(bar, chips)
         _results_section(result, ai_ok)
-    elif result:
+    elif result and result["key"][0] != "build":
         st.caption("Your goal, limits or benchmark changed: run the candidate methods again.")
+    _diagnosis_details(ctx)
 
 
 def time_key() -> int:
@@ -2004,15 +2280,17 @@ bench_choices = {
 }
 if st.session_state.get("ws_benchmark") not in bench_choices:
     st.session_state.pop("ws_benchmark", None)  # e.g. the policy benchmark of another client
+_bench_now = st.session_state.get("ws_benchmark") or next(iter(bench_choices))
 bench_name = head_bench.selectbox(
     "Benchmark",
     list(bench_choices),
     label_visibility="collapsed",
     key="ws_benchmark",
-    help="What your portfolio is compared with across the dashboard. Total-return ETF "
-    "proxies, so dividends count as they do in your portfolio.",
+    format_func=lambda n: f"Benchmark · {n}",
+    help=f"{_bench_now}: {bench_choices[_bench_now]['represents']} What your portfolio is "
+    "compared with across the dashboard: total-return ETF proxies, so dividends count as they "
+    "do in your portfolio.",
 )
-st.caption(f"Benchmark **{bench_name}**: {bench_choices[bench_name]['represents']}")
 try:
     bench = get_benchmark(
         bench_name, bench_choices[bench_name], all_returns.index, loaded, start, end, day
@@ -2027,23 +2305,41 @@ tab_client, step_portfolio, step_analyse, step_optimise, step_suitability, step_
     on_change="rerun",
 )
 with step_analyse:
-    st.subheader("Analyse the current portfolio")
+    analyse_head = st.container()  # page header, filled once the backtest period is known
     kpi_slot = st.container()  # filled once the KPI helpers are defined below
-    sec_analyse, sec_bench, tab_assets, tab_mc, tab_regime = st.tabs(
-        ["Performance & backtest", "Benchmark", "Assets", "Monte Carlo", "Regime"],
-        key="analyse_tab",
-        on_change="rerun",
+    sec_analyse, sec_bench, tab_mc, tab_assets, tab_regime = st.tabs(
+        ANALYSE_TABS, key="analyse_tab", on_change="rerun"
     )
 with step_optimise:
-    st.subheader("Optimise")
+    optimise_head = st.container()  # page header with the mode switch (render_optimise)
     sec_opt, tab_frontier, tab_backtest = st.tabs(
-        ["Optimise", "Frontier", "Strategy backtests"], key="optimise_tab", on_change="rerun"
+        OPTIMISE_TABS, key="optimise_tab", on_change="rerun"
     )
 with step_report:
-    st.subheader("Report & trades")
-    sec_rebal, sec_reports, tab_agent = st.tabs(
-        layout.REPORT_TABS, key=layout.REPORT_KEY, on_change="rerun"
-    )
+    report_head = st.container()
+    with report_head:
+        _proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
+        _who6 = ((client_ui.current_profile() or ClientProfile()).name or "").split(" ")[0]
+        if st.session_state.get(layout.REPORT_KEY) == layout.REPORT_TABS[1]:
+            layout.page_header(
+                "AI analyst",
+                f"Ask about {_who6 + chr(39) + 's' if _who6 else 'your'} portfolio. Every "
+                "number comes from the app's own tools.",
+                help="The analyst calls this dashboard's own functions as tools and writes a memo "
+                "with charts. It never calculates: every number must come from a tool and cite "
+                "it (others are flagged), and every chart is drawn by code from the finance "
+                "engine. Not investment advice.",
+            )
+        else:
+            layout.page_header(
+                "Report & trades",
+                "Check the trades to reach "
+                + (_proposed["name"] if _proposed else "the targets")
+                + ", then download the client report.",
+                help="Decision support for a licensed adviser: check taxes and liquidity before "
+                "trading.",
+            )
+    sec_rebal, tab_agent = st.tabs(layout.REPORT_TABS, key=layout.REPORT_KEY, on_change="rerun")
 
 with tab_client:
     client_ui.render_client_tab(
@@ -2054,10 +2350,12 @@ with tab_client:
         cash_like_now() if portfolio_ok else [],
         holding_regions() if portfolio_ok else {},
         holding_products(tuple(my_weights)),
+        data_as_of=DATA_AS_OF,
+        data_help=DATA_HELP,
     )
 
 with tab_assets:
-    st.subheader("Risk and return by asset")
+    st.markdown('<div class="gpl-section">Risk and return by asset</div>', unsafe_allow_html=True)
     if universe_issue:
         st.info(universe_issue)
     else:
@@ -2072,8 +2370,33 @@ with tab_assets:
             "shortfall: one observation (usually 1 day), "
             f"{D['var_level']:.0%} confidence, shown as positive losses."
         )
+
+
+def _optimise_nav(here: str) -> None:
+    """Back to Optimise, and a switch between Frontier and Strategy backtests."""
+    back, f, b, _ = st.columns([1.4, 0.9, 1.4, 3], vertical_alignment="center")
+    back.button(
+        "← Back to Optimise",
+        key=f"opt_back_{here}",
+        type="tertiary",
+        on_click=lambda: st.session_state.update(optimise_tab="Optimise"),
+    )
+    for col, name in ((f, "Frontier"), (b, "Strategy backtests")):
+        col.button(
+            name,
+            key=f"opt_nav_{here}_{name}",
+            type="primary" if name == here else "secondary",
+            width="stretch",
+            on_click=lambda n=name: st.session_state.update(optimise_tab=n),
+        )
+
+
 with tab_frontier:
-    st.subheader("Efficient frontier (full sample, in hindsight)")
+    _optimise_nav("Frontier")
+    st.markdown(
+        '<div class="gpl-section">Efficient frontier (full sample, in hindsight)</div>',
+        unsafe_allow_html=True,
+    )
     if universe_issue:
         st.info(universe_issue)
     else:
@@ -2102,6 +2425,7 @@ with tab_frontier:
         plot(frontier_chart(efficient_frontier(mu, cov, 40, max_weight), points), width="stretch")
         st.dataframe(style_percent(pd.DataFrame(portfolios).T), width="stretch")
 with tab_backtest:
+    _optimise_nav("Strategy backtests")
     if universe_issue:
         st.info(universe_issue)
     else:
@@ -2187,36 +2511,54 @@ def headline_dates() -> pd.Index | None:
 def render_portfolio_kpis() -> None:
     kpi = portfolio_kpis()
     ws.render_kpis(kpi, ws.portfolio_value_text(), bench_name, bench is not None and bench.is_cash)
-    if kpi is not None:
-        st.caption(
-            f"**Backtest period {kpi.attrs['period']}.** Return, volatility, Sharpe and max "
-            "drawdown: your current weights rebalanced monthly after costs; deltas against "
-            f"{bench_name}. " + window_note("analyse", kpi.attrs["period"])
+
+
+with analyse_head:
+    _kpi = portfolio_kpis()
+    _meta = layout.page_header(
+        "Analyse the current portfolio",
+        f"How today's weights did after costs, compared with {bench_name}.",
+        help="Return, volatility, Sharpe and max drawdown: your current weights rebalanced "
+        f"monthly after costs; the coloured differences are against {bench_name}.",
+    )
+    if _kpi is not None:
+        layout.meta(
+            f"Backtest {_kpi.attrs['period']}",
+            help=window_note("analyse", _kpi.attrs["period"]),
+            container=_meta,
         )
-
-
 with kpi_slot:
     render_portfolio_kpis()
 
 with step_portfolio:
-    st.subheader("Current portfolio")
+    _who = client_ui.current_profile()
+    _first = ((_who.name if _who else "") or "the client").split(" ")[0]
+    port_meta = layout.page_header(
+        "Current portfolio",
+        f"Add what {_first} holds today. Weights update as you type.",
+        help="Prices are the latest quotes from Yahoo Finance (refreshed every 15 minutes), in "
+        "each security's currency and in USD. The analysis uses daily history in USD.",
+    ).empty()
     sec_hold, sec_screen = st.tabs(["Holdings", "Screen"], key="portfolio_tab", on_change="rerun")
     holding_names = {t: getattr(get_quote(t), "name", None) or NAMES.get(t, "") for t in my_weights}
 
     with sec_hold:
-        ws.render_holdings(
-            find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS, price_data_ok
-        )
-        render_sample_limiters()
-        rates = bt.cost_rates(list(my_weights), cost_bps, COST_BY_SUFFIX)
-        local = rates[rates != cost_bps]
-        if len(local):
-            st.caption(
-                "Trading costs used in backtests and trades: "
-                + ", ".join(f"{t} {r:g} bps" for t, r in local.items())
-                + f"; US listings {cost_bps:g} bps (⚙ Settings). Local-market rates are "
-                "judgement estimates (config trading_costs)."
+        render_data_warnings()
+        hold_col, alloc_col = st.columns([1.8, 1], gap="medium")
+        with hold_col.container(border=True, key="holdings_card"):
+            prices_as_of = ws.render_holdings(
+                find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS, price_data_ok
             )
+        if prices_as_of:
+            first_time = prices_as_of.split(" (")[0]
+            layout.meta(f"Prices as of {first_time}", help=f"Prices as of: {prices_as_of}",
+                        container=port_meta)  # fmt: skip
+        with alloc_col.container(border=True, key="allocation_card"):
+            if my_weights:
+                ws.render_allocation(pd.Series(my_weights), ws.groups_of_holdings())
+            else:
+                st.caption("Add holdings to see the allocation.")
+        render_sample_limiters()
         for problem in holding_problems:
             st.warning(problem)
         if holding_note:
@@ -2226,12 +2568,17 @@ with step_portfolio:
                 "No price history for " + ", ".join(missing_holdings) + ". Remove these "
                 "holdings or check the symbols (see the warning at the top of the page)."
             )
-        if my_weights:
-            ws.render_allocation(pd.Series(my_weights), ws.groups_of_holdings())
-        st.caption(
-            "Prices are the latest quotes from Yahoo Finance (refreshed every 15 minutes), in "
-            "each security's currency and in USD. The analysis uses daily history in USD."
-        )
+        render_data_details()
+        rates = bt.cost_rates(list(my_weights), cost_bps, COST_BY_SUFFIX)
+        local = rates[rates != cost_bps]
+        if len(local):
+            with st.expander("Trading costs by market"):
+                st.caption(
+                    "Trading costs used in backtests and trades: "
+                    + ", ".join(f"{t} {r:g} bps" for t, r in local.items())
+                    + f"; US listings {cost_bps:g} bps (⚙ Settings). Local-market rates are "
+                    "judgement estimates (config trading_costs)."
+                )
 
     with sec_screen:
         if not portfolio_ok:
@@ -2265,27 +2612,41 @@ with step_portfolio:
             w = pd.Series(my_weights)
             cov = all_returns[w.index].cov() * periods
             rc = risk_contributions(w, cov)
-            st.markdown("**Share of money vs share of risk**")
-            st.table(
-                pd.DataFrame(
-                    {
-                        "Name": [holding_names.get(t, "") for t in w.index],
-                        "Weight": w.map(pct),
-                        "Share of risk": rc.map(pct),
-                        "Converted to USD with": [
-                            data.history.loc[t, "conversion"] for t in w.index
-                        ],
-                    },
-                    index=w.index,
-                )
-            )
-            plot(risk_contribution_chart(w, rc), width="stretch")
-            st.caption(
-                "Share of risk is each holding's contribution to the portfolio's volatility (full "
-                "sample). A holding whose share of risk is much larger than its weight dominates "
-                "how the portfolio moves."
-            )
             mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
+            risk_col, growth_col = st.columns(2, gap="medium")
+            with risk_col.container(border=True, key="risk_share_card"):
+                st.markdown(
+                    '<div class="gpl-section">Share of money vs share of risk</div>',
+                    unsafe_allow_html=True,
+                    help="Share of risk is each holding's contribution to the portfolio's "
+                    "volatility (full sample). A holding whose share of risk is much larger than "
+                    "its weight dominates how the portfolio moves.",
+                )
+                st.markdown(
+                    f"{layout.pill('KEY FINDING', 'accent')} {ws.key_finding(w, rc)}",
+                    unsafe_allow_html=True,
+                )
+                plot(risk_contribution_chart(w, rc, title=""), width="stretch")
+            with growth_col.container(border=True, key="growth_card"):
+                st.markdown('<div class="gpl-section">Growth of $1</div>', unsafe_allow_html=True)
+                if bench is not None:
+                    port_r = mine.returns.iloc[1:]
+                    both = port_r.index.intersection(bench.returns.index)
+                    first = (client_ui.current_profile() or ClientProfile()).name.split(" ")[0]
+                    mine_label = f"{first}'s portfolio" if first else "Your portfolio"
+                    growth = pd.DataFrame(
+                        {
+                            mine_label: (1 + port_r.loc[both]).cumprod(),
+                            bench_name: (1 + bench.returns.loc[both]).cumprod(),
+                        }
+                    )
+                    plot(
+                        equity_chart(growth, title="", reference=bench_name),
+                        width="stretch",
+                        key="perf_growth_chart",
+                    )
+                else:
+                    st.caption("Choose a benchmark with data in the header.")
             others = run_backtests(
                 tickers,
                 loaded,
@@ -2304,17 +2665,45 @@ with step_portfolio:
             table["annual_turnover"] = pd.Series(
                 {n: r.turnover.iloc[1:].mean() * 12 for n, r in results_mine.items()}
             )
-            st.markdown("**Backtest after costs, compared with the strategies and 60/40**")
-            show_metrics_table(table, D["var_level"])
-            st.caption(
-                f"Your weights are rebalanced monthly back to target with {cost_bps:g} bps costs, "
-                f"on the same dates as the strategies ({mine.equity.index[0]:%d %b %Y} – "
-                f"{mine.equity.index[-1]:%d %b %Y}). The strategies choose among your holdings, "
-                f"at most {pct(max_weight)} each."
-            )
-            equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
-            plot(equity_chart(equity, reference=BENCHMARK_NAMES), width="stretch")
-            plot(drawdown_chart(drawdown_series(rets), reference=BENCHMARK_NAMES), width="stretch")
+            with st.expander(
+                "**Backtest after costs, compared with the strategies and 60/40** &nbsp; "
+                ":gray[Return, volatility, Sharpe, Sortino, drawdown, turnover, VaR and expected "
+                "shortfall]"
+            ):
+                show_metrics_table(table, D["var_level"])
+                st.caption(
+                    f"Your weights are rebalanced monthly back to target with {cost_bps:g} bps "
+                    f"costs, on the same dates as the strategies ({mine.equity.index[0]:%d %b %Y} "
+                    f"– {mine.equity.index[-1]:%d %b %Y}). The strategies choose among your "
+                    f"holdings, at most {pct(max_weight)} each."
+                )
+                equity = pd.DataFrame({n: r.equity for n, r in results_mine.items()})
+                plot(equity_chart(equity, reference=BENCHMARK_NAMES), width="stretch")
+            with st.expander(
+                "**Drawdown from peak** &nbsp; :gray[Falls from the running peak, against the "
+                "strategies and the benchmark]"
+            ):
+                plot(
+                    drawdown_chart(drawdown_series(rets), reference=BENCHMARK_NAMES),
+                    width="stretch",
+                )
+            with st.expander(
+                "**Share of money vs share of risk: table** &nbsp; :gray[Weight, share of risk "
+                "and USD conversion for each holding]"
+            ):
+                st.table(
+                    pd.DataFrame(
+                        {
+                            "Name": [holding_names.get(t, "") for t in w.index],
+                            "Weight": w.map(pct),
+                            "Share of risk": rc.map(pct),
+                            "Converted to USD with": [
+                                data.history.loc[t, "conversion"] for t in w.index
+                            ],
+                        },
+                        index=w.index,
+                    )
+                )
             st.caption(
                 "Monte Carlo for your portfolio: choose 'My portfolio' on the Monte Carlo tab."
             )
@@ -2329,49 +2718,66 @@ with step_portfolio:
         else:
             mine = run_my_portfolio(my_key, loaded, start, end, day, cost_bps, lookback)
             port = mine.returns.iloc[1:]  # from the first full day held
-            st.markdown(
-                f"**Your portfolio vs {bench_name}** · backtest period "
-                f"{period_label(port.index.intersection(bench.returns.index))}"
-            )
-            st.table(ws.benchmark_comparison(port, bench.returns, rf, periods, bench.is_cash))
             dates = port.index.intersection(bench.returns.index)
-            st.caption(
-                f"{dates[0]:%d %b %Y} – {dates[-1]:%d %b %Y}. Your portfolio is held at today's "
-                f"weights, rebalanced monthly with {cost_bps:g} bps costs (as on Analyse & "
-                "backtest); the benchmark is an index, so it pays no costs. Alpha: annual return "
-                "not explained by the benchmark exposure (beta). Tracking error: how far your "
-                "returns stray from the benchmark's. Information ratio: extra return per unit of "
-                "tracking error. Up/down capture: your average return on the benchmark's up "
-                "(down) days as a share of its own; below 100% on down days means you fell less."
-            )
             for note in bench.notes:
                 st.info(note)
             p, b = port.loc[dates], bench.returns.loc[dates]
-            growth = pd.DataFrame(
-                {"Your portfolio": (1 + p).cumprod(), bench_name: (1 + b).cumprod()}
-            )
-            plot(equity_chart(growth, reference=bench_name))
-            plot(
-                drawdown_chart(
-                    pd.DataFrame(
-                        {"Your portfolio relative to the benchmark": relative_drawdown(p, b)}
+            g_col, d_col = st.columns(2, gap="medium")
+            with g_col.container(border=True, key="bench_growth_card"):
+                st.markdown(
+                    f'<div class="gpl-section">Your portfolio vs {bench_name}</div>',
+                    unsafe_allow_html=True,
+                    help=f"Backtest period {period_label(dates)}.",
+                )
+                growth = pd.DataFrame(
+                    {"Your portfolio": (1 + p).cumprod(), bench_name: (1 + b).cumprod()}
+                )
+                plot(equity_chart(growth, title="", reference=bench_name), key="bench_growth_chart")
+            with d_col.container(border=True, key="bench_reldd_card"):
+                st.markdown(
+                    '<div class="gpl-section">Relative drawdown</div>',
+                    unsafe_allow_html=True,
+                    help="How far you fell behind the benchmark: your wealth divided by the "
+                    "benchmark's, 0% at your best point relative to it, -10% when you have fallen "
+                    "10% behind that point.",
+                )
+                plot(
+                    drawdown_chart(
+                        pd.DataFrame(
+                            {"Your portfolio relative to the benchmark": relative_drawdown(p, b)}
+                        ),
+                        title="",
                     ),
-                    title="Relative drawdown: how far you fell behind the benchmark",
-                ),
-                width="stretch",
-            )
-            st.caption(
-                "Relative drawdown tracks your wealth divided by the benchmark's: 0% at your best "
-                "point relative to it, -10% when you have fallen 10% behind that point."
-            )
+                    width="stretch",
+                )
+            with st.expander(
+                f"**Your portfolio vs {bench_name}: table** &nbsp; :gray[Return, risk, beta, "
+                "alpha, tracking error, information ratio and capture]",
+                expanded=True,
+            ):
+                st.table(ws.benchmark_comparison(port, bench.returns, rf, periods, bench.is_cash))
+                st.caption(
+                    f"{dates[0]:%d %b %Y} – {dates[-1]:%d %b %Y}. Your portfolio is held at "
+                    f"today's weights, rebalanced monthly with {cost_bps:g} bps costs; the "
+                    "benchmark is an index, so it pays no costs. Alpha: annual return not "
+                    "explained by the benchmark exposure (beta). Tracking error: how far your "
+                    "returns stray from the benchmark's. Information ratio: extra return per unit "
+                    "of tracking error. Up/down capture: your average return on the benchmark's "
+                    "up (down) days as a share of its own; below 100% on down days means you fell "
+                    "less."
+                )
 
     with sec_opt:
         render_optimise()
 
     with sec_rebal:
+        trade_kpis = st.container()
+        trade_col, report_col = st.columns([1.75, 1], gap="medium")
+        report_col = report_col.container(border=True, key="report_card")
         if not portfolio_ok:
-            st.info("Add holdings with price history on the Holdings tab.")
+            trade_col.info("Add holdings with price history on the Holdings tab.")
         else:
+            trade_col.__enter__()
             proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
             usd = st.session_state.get(ws.MODE) == ws.USD
             default_target = pd.Series(proposed["weights"]) if proposed else pd.Series(my_weights)
@@ -2413,12 +2819,17 @@ with step_portfolio:
                 cost_bps,
                 cash_need_for_trades(),
                 COST_BY_SUFFIX,
+                kpis=trade_kpis,
             )
+            trade_col.__exit__(None, None, None)
             if "ctx" in st.session_state:
                 st.session_state.ctx.rebalance = rebalance
 
 with tab_mc:
-    st.subheader("Monte Carlo: where could today's weights go?")
+    st.markdown(
+        '<div class="gpl-section">Monte Carlo: where could today\'s weights go?</div>',
+        unsafe_allow_html=True,
+    )
     if universe_issue:
         st.info(universe_issue)
     else:
@@ -2444,7 +2855,10 @@ with tab_mc:
             mc_strategy = c1.selectbox("Use the latest weights of", mc_options, key="mc_strategy")
             years = c2.slider("Horizon (years)", 1, 30, 10)
             target = c3.number_input("Goal: end with at least × start", 0.5, 10.0, 1.5, 0.1)
-            c4, c5, c6 = st.columns(3)
+            sim_box = st.expander(
+                "**Simulation settings** &nbsp; :gray[Method, number of paths, seed and real terms]"
+            )
+            c4, c5, c6 = sim_box.columns(3)
             method = c4.radio(
                 "Method",
                 list(MC_METHODS),
@@ -2455,7 +2869,7 @@ with tab_mc:
             )
             n_paths = c5.select_slider("Paths", [1_000, 2_000, 5_000, 10_000], value=2_000)
             seed = int(c6.number_input("Seed", 0, 10_000, 42))
-            real = st.toggle(
+            real = sim_box.toggle(
                 f"Show in real terms (after {pct(MC['inflation'])} inflation a year)",
                 key="mc_real",
                 help="Divides wealth by cumulative inflation, so 1.00× means the same purchasing "
@@ -2514,7 +2928,9 @@ with tab_mc:
             )
 
 with tab_regime:
-    st.subheader("Will next month be stressed?")
+    st.markdown(
+        '<div class="gpl-section">Will next month be stressed?</div>', unsafe_allow_html=True
+    )
     regime = load_regime(end, day)
     p = regime["p_stressed"].dropna()
     folds, overall = regime["report"]["folds"], regime["report"]["overall"]
@@ -2579,7 +2995,11 @@ with tab_regime:
         f"{pct(base_rate)} actual."
     )
 
-    st.markdown("**By fold, with two baselines**")
+    folds_box = st.expander(
+        "**By fold, with two baselines** &nbsp; :gray[Each test period's model scores against a "
+        "volatility rule and always-calm]"
+    )
+    folds_box.markdown("**By fold, with two baselines**")
     fold_rows = folds.assign(
         when=folds["test_start"].dt.strftime("%b %Y")
         + " – "
@@ -2632,8 +3052,8 @@ with tab_regime:
         )
         .set_index("Test period")
     )
-    st.table(style_columns(fold_table, {"Model ROC AUC": "{:.2f}"}))
-    st.caption(
+    folds_box.table(style_columns(fold_table, {"Model ROC AUC": "{:.2f}"}))
+    folds_box.caption(
         "Vol rule = 'stressed if SPY's last-21-day volatility is already above its 80th "
         "percentile' (no model). Always-calm = never flag stress."
     )
@@ -2652,30 +3072,6 @@ def _use_example() -> None:
     choice = st.session_state.get("profile_example")
     if choice in EXAMPLE_PROFILES:
         st.session_state.about_me = EXAMPLE_PROFILES[choice]
-
-
-def render_portfolio_overview() -> None:
-    """KPI cards, holdings (weight, share of risk, volatility) and the allocation chart."""
-    render_portfolio_kpis()
-    if not portfolio_ok:
-        st.info("Add holdings with price history on step 2 (Portfolio).")
-        return
-    w = pd.Series(my_weights)
-    rets = all_returns[list(w.index)]
-    table = summary_table(rets, rf=rf, periods_per_year=periods)
-    holdings = pd.DataFrame(
-        {
-            "Name": [holding_names.get(t, "") for t in w.index],
-            "Weight": w.map(pct),
-            "Share of risk": risk_contributions(w, rets.cov()).map(pct),
-            "Volatility (ann.)": table["ann_vol"].map(pct),
-        },
-        index=w.index,
-    )
-    left, right = st.columns([3, 2])
-    left.table(holdings)
-    with right:
-        plot(allocation_chart(w, "Allocation by holding"), key="analyst_allocation")
 
 
 def current_ports() -> dict[str, pd.Series]:
@@ -2827,8 +3223,13 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
 
 def render_report_button() -> None:
     """Build the client report on request (charts take a moment), then offer the PDF."""
-    st.markdown("**Client report**")
-    a1, a2 = st.columns(2)
+    rec_name = (report_recommendation()[0] or {}).get("choice") or "the current portfolio"
+    st.markdown('<div class="gpl-section">Client report</div>', unsafe_allow_html=True)
+    st.caption(
+        f"PDF: IPS summary, analysis, the {rec_name} recommendation, suitability and trades, "
+        "with an adviser sign-off."
+    )
+    a1 = a2 = st
     on_file = client_ui.current_profile()
     a1.text_input(
         "Adviser name",
@@ -2841,7 +3242,14 @@ def render_report_button() -> None:
         key="rep_licence",
         placeholder=(on_file and on_file.adviser_licence) or "",
     )
-    if st.button("Prepare client report (PDF)", key="prepare_report"):
+    ready = bool(st.session_state.get("client_report"))
+    prep_box = st.container(key="prepare_box" if ready else "cta_prepare")
+    if prep_box.button(
+        "Prepare the client report again" if ready else "Prepare client report (PDF)",
+        key="prepare_report",
+        type="secondary" if ready else "primary",
+        width="stretch",
+    ):
         with st.spinner("Building the report…"):
             ctx = shared_context()
             charts = []
@@ -2897,17 +3305,21 @@ def render_report_button() -> None:
             )
     if st.session_state.get("client_report"):
         pdf, name = st.session_state.client_report
-        st.download_button(
-            "Download client report",
-            pdf,
-            file_name=name,
-            mime="application/pdf",
-            key="download_report",
-            type="primary",
-        )
+        with st.container(key="cta_download_report"):
+            st.download_button(
+                "Download client report",
+                pdf,
+                file_name=name,
+                mime="application/pdf",
+                key="download_report",
+                type="primary",
+                icon=":material/download:",
+                width="stretch",
+            )
         st.caption(
             "Uses the Optimise recommendation (never a chat what-if) and the Optimise memo if "
-            "one was written, else the latest analyst memo. Prepare it again after changes."
+            "one was written, else the latest analyst memo. The IPS PDF is on step 1. Prepare "
+            "it again after changes."
         )
         flags = st.session_state.get("client_report_flags")
         if flags:
@@ -2918,23 +3330,17 @@ def render_report_button() -> None:
 
 
 with tab_agent:
-    st.subheader("AI analyst")
-    render_portfolio_overview()
-    st.caption(
-        f"The analyst ({A['model']}) calls this dashboard's own functions as tools on your "
-        "holdings, the ⚙ Settings and the benchmark, and writes a memo with charts. It never "
-        "calculates: every number must come from a tool and cite it (others are flagged), and "
-        "every chart is drawn by code from the finance engine; the AI only chooses which charts "
-        "to show and where. Not investment advice."
-    )
+    chat_col, side_col = st.columns([1.75, 1], gap="medium")
+    chat_card = chat_col.container(border=True, key="chat_card")
+    key_ok = agent.has_credentials()
     if universe_issue:
-        st.info(universe_issue)
-    elif not agent.has_credentials():
-        st.info(
+        chat_card.info(universe_issue)
+    elif not key_ok:
+        chat_card.info(
             "No API key found. Locally, put `ANTHROPIC_API_KEY=...` in `.env` at the project "
             "root. On Streamlit Community Cloud, add it under *App settings → Secrets*."
         )
-    else:
+    if key_ok and not universe_issue:
         if st.session_state.get("analyst_key") != settings_key:
             st.session_state.analyst = agent.Analyst(
                 shared_context(),
@@ -2947,38 +3353,70 @@ with tab_agent:
             st.session_state.analyst_key = settings_key
             st.session_state.chat = []
         shared_context()  # keep the benchmark and groups current for the tools
-
-        with st.expander("About me (optional): age, horizon, risk tolerance, goal"):
-            st.selectbox(
-                "Fill from an example",
-                ["—", *EXAMPLE_PROFILES],
-                key="profile_example",
-                on_change=_use_example,
-            )
-            st.text_area("About me", key="about_me", height=90)
-        about = st.session_state.get("about_me", "").strip()
-        holdings_text = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
-        b1, b2, b3, b4 = st.columns([2, 2, 2, 1])
+    ready = key_ok and not universe_issue
+    with side_col.container(border=True, key="memo_card"):
+        st.markdown('<div class="gpl-section">Start a memo</div>', unsafe_allow_html=True)
         actions = {
-            "review": b1.button(
+            "review": st.button(
                 "Review my portfolio",
-                type="primary",
                 key="write_portfolio_memo",
-                disabled=not portfolio_ok,
+                disabled=not (ready and portfolio_ok),
+                width="stretch",
             ),
-            "optimise": b2.button(
+            "optimise": st.button(
                 "Explain the Optimise recommendation",
                 key="explain_optimise",
-                disabled=not shared_context().optimisation,
+                disabled=not (ready and shared_context().optimisation),
                 help=None
                 if shared_context().optimisation
                 else "Run the candidate methods on step 4 (Optimise) first.",
+                width="stretch",
             ),
-            "stress": b3.button(
-                "Stress test my portfolio", key="stress_memo", disabled=not portfolio_ok
+            "stress": st.button(
+                "Stress test my portfolio",
+                key="stress_memo",
+                disabled=not (ready and portfolio_ok),
+                width="stretch",
             ),
         }
-        if b4.button("New conversation", key="new_conversation"):
+        new_chat = st.button(
+            "New conversation", key="new_conversation", type="tertiary", disabled=not ready
+        )
+    with side_col.container(border=True, key="context_card"):
+        st.markdown('<div class="gpl-section">Context the analyst sees</div>',
+                    unsafe_allow_html=True)  # fmt: skip
+        proposed_now = (shared_context().proposed or {}).get("name") if ready else None
+        value_now = portfolio_value()
+        st.markdown(
+            '<div class="gpl-kv" style="grid-template-columns:45% 55%">'
+            f"<div>Holdings</div><div style='text-align:right'>{len(my_weights)}"
+            + (f" · USD {value_now:,.0f}" if value_now else "")
+            + f"</div><div>Benchmark</div><div style='text-align:right'>{escape(bench_name)}</div>"
+            f"<div>Recommendation</div><div style='text-align:right'>"
+            f"{escape(proposed_now or 'not run yet')}</div></div>",
+            unsafe_allow_html=True,
+        )
+        st.button(
+            "See the figures on Analyse",
+            key="analyst_to_analyse",
+            type="tertiary",
+            on_click=layout.go_to,
+            args=(layout.STEPS[2],),
+        )
+    with side_col.expander(
+        "**About me (optional)** &nbsp; :gray[Age, horizon, risk tolerance, goal]"
+    ):
+        st.selectbox(
+            "Fill from an example",
+            ["—", *EXAMPLE_PROFILES],
+            key="profile_example",
+            on_change=_use_example,
+        )
+        st.text_area("About me", key="about_me", height=90)
+    if ready:
+        about = st.session_state.get("about_me", "").strip()
+        holdings_text = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
+        if new_chat:
             st.session_state.analyst_key = None
             if (shared_context().proposed or {}).get("name") == "What-if":
                 shared_context().proposed = None
@@ -3003,40 +3441,46 @@ with tab_agent:
                 ask(questions[name])
                 st.rerun()
 
-        for n, turn in enumerate(st.session_state.chat):
-            if turn["role"] == "user":
-                st.chat_message("user").markdown(turn["text"])
-            elif turn["role"] == "error":
-                st.error(turn["text"])
-            else:
-                with st.chat_message("assistant"):
-                    render_reply(turn["reply"], key=f"chat_{n}")
-
-        follow_up = st.chat_input(
-            "Ask a follow-up, e.g. 'What if I cut SPY to 30%?' or 'How did I do in 2022?'",
-            key="follow_up",
-        )
+        with chat_card:
+            if not st.session_state.chat:
+                st.caption(
+                    f"The analyst ({A['model']}) calls this dashboard's own functions as tools on "
+                    "your holdings, the ⚙ Settings and the benchmark, and writes a memo with "
+                    "charts. Start a memo on the right, or ask a question below."
+                )
+            for n, turn in enumerate(st.session_state.chat):
+                if turn["role"] == "user":
+                    st.chat_message("user").markdown(turn["text"])
+                elif turn["role"] == "error":
+                    st.error(turn["text"])
+                else:
+                    with st.chat_message("assistant"):
+                        render_reply(turn["reply"], key=f"chat_{n}")
+            follow_up = st.chat_input(
+                "Ask a follow-up, e.g. 'What if I cut SPY to 30%?' or 'How did I do in 2022?'",
+                key="follow_up",
+            )
+            st.caption("What-ifs here never change the recommendation or the client report.")
         if follow_up:
             ask(follow_up)
             st.rerun()
 
 with step_suitability:
-    st.subheader("Suitability")
+    suit_counts = layout.page_header(
+        "Suitability",
+        "Every IPS rule, checked for today's portfolio and the recommendation.",
+        help="Pass, fail or review for each rule of the client's IPS. A recommendation can only "
+        "pass when every rule passes; review means the data can't decide and the adviser must "
+        "check.",
+    ).empty()
     if not portfolio_ok:
         st.info("Add holdings with price history on step 2 (Portfolio) to check suitability.")
     else:
         render_suitability(current_ports(), "suitability", record=True)
-        st.divider()
-        render_domicile("suitability")
 
-with sec_reports:
-    st.subheader("IPS and client report")
-    profile = client_ui.current_profile()
-    if profile is None:
-        st.info("Load or create a client on step 1 (Client) to issue the IPS.")
-    else:
-        client_ui.render_ips_downloads(profile, client_ips(), "rep")
-        st.divider()
+with report_col:
+    if client_ui.current_profile() is None:
+        st.info("Load or create a client on step 1 (Client) to issue the IPS and the report.")
     if portfolio_ok:
         render_report_button()
 
@@ -3096,7 +3540,7 @@ def step_statuses() -> list[layout.StepStatus]:
     report = layout.StepStatus(
         prepared,
         "report prepared" if prepared else "report not prepared",
-        [] if prepared else ["prepare the client report (Reports tab)"],
+        [] if prepared else ["prepare and download the client report"],
     )
     return [client, portfolio, analyse, optimise, suitability, report]
 
@@ -3109,10 +3553,14 @@ for container, step, status in zip(
     strict=True,
 ):
     with container:
-        layout.step_footer(step, status)
+        on_ai = step == layout.STEPS[-1] and (
+            st.session_state.get(layout.REPORT_KEY) == layout.REPORT_TABS[1]
+        )
+        layout.step_footer(
+            step,
+            status,
+            ("← Back to trades & report", step, layout.REPORT_TABS[0]) if on_ai else None,
+        )
 st.session_state["step_statuses"] = statuses  # the next run draws the cards with these first
 layout.update_stepper(step_slots, statuses, st.session_state.get(layout.STEP_KEY))
 layout.render_header(chips_slot, header_info())
-
-st.divider()
-st.caption(DISCLAIMER)
