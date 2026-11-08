@@ -397,7 +397,30 @@ with head_demo:
         "everywhere; the seed in the header reproduces it (⚙ Settings › Demo seed).",
     )
 head_title.markdown("### Gulf Portfolio Lab")
-stepper = st.container()  # drawn at the end of the run, when every status is known
+
+
+def header_info() -> layout.HeaderInfo:
+    """Client, risk score, value and IPS status for the header chips, from session state."""
+    profile = client_ui.current_profile()
+    ips = None if profile is None else build_ips(profile, CFG)
+    value = ws.portfolio_value()
+    return layout.HeaderInfo(
+        client=(profile.name or profile.reference or "unnamed") if profile else None,
+        risk_score=ips.risk.score if ips else None,
+        value=f"USD {value:,.0f}" if value else "not set",
+        ips_status="–" if profile is None else "Draft" if ips_missing(profile) else "Ready",
+        demo=bool(profile and profile.demo),
+        seed=st.session_state.get("demo_seed") if profile and profile.demo else None,
+    )
+
+
+# Drawn first, from state the buttons' callbacks have already set, so a click updates the
+# chips, the highlighted step and the page in the same render; refreshed at the end of the run.
+chips_slot = head_chips.empty()
+layout.render_header(chips_slot, header_info())
+step_slots = layout.render_stepper(
+    st.session_state.get("step_statuses"), st.session_state.get(layout.STEP_KEY)
+)
 head_actions.button(
     "💬 Ask the analyst",
     key="ask_analyst",
@@ -3038,6 +3061,10 @@ def step_statuses() -> list[layout.StepStatus]:
         "analysis ready" if portfolio_ok and not universe_issue else "needs two or more holdings",
         [universe_issue] if universe_issue else [],
     )
+    if profile is None and not ws.portfolio_started():  # first visit: nothing loaded yet
+        start = ["load a client (▶ Try a demo client) or a portfolio"]
+        idle = layout.StepStatus(False, "not started", start)
+        return [client, idle, idle, idle, idle, idle]
     ran = bool(st.session_state.get("ws_opt"))
     optimise = layout.StepStatus(
         ran,
@@ -3076,21 +3103,9 @@ for container, step, status in zip(
 ):
     with container:
         layout.step_footer(step, status)
-with stepper:
-    layout.render_stepper(statuses, st.session_state.get(layout.STEP_KEY))
-profile_now = client_ui.current_profile()
-ips_now = client_ips()
-layout.render_header(
-    head_chips,
-    layout.HeaderInfo(
-        client=(profile_now.name or profile_now.reference or "unnamed") if profile_now else None,
-        risk_score=ips_now.risk.score if ips_now else None,
-        value=f"USD {portfolio_value():,.0f}" if portfolio_value() else "not set",
-        ips_status="–" if profile_now is None else "Draft" if ips_missing(profile_now) else "Ready",
-        demo=bool(profile_now and profile_now.demo),
-        seed=st.session_state.get("demo_seed") if profile_now and profile_now.demo else None,
-    ),
-)
+st.session_state["step_statuses"] = statuses  # the next run draws the cards with these first
+layout.update_stepper(step_slots, statuses, st.session_state.get(layout.STEP_KEY))
+layout.render_header(chips_slot, header_info())
 
 st.divider()
 st.caption(DISCLAIMER)

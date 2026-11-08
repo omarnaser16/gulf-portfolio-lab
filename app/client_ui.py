@@ -736,12 +736,10 @@ def render_client_tab(
     if empty:
         with st.container(key="client_empty"):
             st.markdown("#### No client yet")
-            demo_button(
-                "client_try_demo",
-                help="A random, realistic GCC client and portfolio of real tickers (no AI), "
-                "marked DEMO DATA.",
+            st.caption(
+                f"Use **{DEMO_BUTTON}** at the top, or load an example or a saved profile, or "
+                "start a new blank client:"
             )
-            st.caption("Or load an example or a saved profile, or start a new blank client:")
     c1, c2, c3 = st.columns([3, 3, 2])
     with c1:
         st.selectbox(

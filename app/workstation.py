@@ -37,6 +37,7 @@ ROWS, MODE, VERSION, META = "ws_rows", "ws_mode", "ws_version", "ws_meta"
 SEARCH = "ws_search"
 CASH_LIKE = "ws_cash_like"  # configured cash-like funds (grouped as "Cash & short-term")
 USD, PCT = "USD amount", "Weight (%)"
+STARTER = "ws_starter_rows"  # the first-visit example holdings
 PF_VALUE, PF_VERSION = "pf_value", "pf_v"  # the one portfolio value (USD), entered once
 EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
 READ_ONLY = {"background-color": "#F1F0EB", "color": "#6B6B6B"}  # muted = can't edit
@@ -56,6 +57,16 @@ def init_state(config_groups: Mapping[str, Sequence[str]], cash_like: Sequence[s
     st.session_state[MODE] = PCT
     st.session_state["ws_mode_prev"] = PCT
     st.session_state[VERSION] = 0
+    st.session_state[STARTER] = [dict(r) for r in st.session_state[ROWS]]
+
+
+def portfolio_started() -> bool:
+    """True once the holdings differ from the starter example shown on a first visit."""
+    rows = st.session_state.get(ROWS, [])
+    starter = st.session_state.get(STARTER)
+    return starter is None or [(r["ticker"], r["value"]) for r in rows] != [
+        (r["ticker"], r["value"]) for r in starter
+    ]
 
 
 def current_weights() -> tuple[dict[str, float], list[str], str]:

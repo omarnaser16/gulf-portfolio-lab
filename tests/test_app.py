@@ -1016,9 +1016,9 @@ def test_memo_sections_pairing_and_disclaimer_last() -> None:
 
 
 def test_client_tab_starts_empty_and_loads_an_example(app: AppTest) -> None:
-    # empty state: the demo button first, then the other options
-    assert app.button(key="client_try_demo").label == "▶ Try a demo client"
-    assert any("load an example or a saved profile" in c.value for c in app.caption)
+    # empty state points at the demo button at the top (not a third copy of it)
+    assert not any(b.key == "client_try_demo" for b in app.button)
+    assert any("at the top, or load an example or a saved profile" in c.value for c in app.caption)
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
     assert not app.exception, app.exception
@@ -1418,11 +1418,16 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
 
 
 def test_first_visit_shows_the_welcome_banner_and_primary_demo_buttons(app: AppTest) -> None:
-    for key in ("fill_demo", "welcome_demo", "client_try_demo"):
-        button = app.button(key=key)
-        assert button.label == "▶ Try a demo client" and button.proto.type == "primary"
+    demo = [b for b in app.button if b.label == "▶ Try a demo client"]
+    assert sorted(b.key for b in demo) == ["fill_demo", "welcome_demo"]  # header and banner only
+    assert all(b.proto.type == "primary" for b in demo)
     welcome = " ".join(m.value for m in app.markdown)
     assert "turns a GCC client's facts into an Investment Policy Statement" in welcome
+    # nothing loaded yet: steps 2-6 are neutral, not "4 holdings" or "analysis ready"
+    for title in ("Portfolio", "Analyse", "Optimise", "Suitability", "Report &amp; trades"):
+        assert f"<b>{title}</b><small>not started</small>" in welcome, title
+    assert "analysis ready" not in welcome and "4 holdings" not in welcome
+    assert welcome.count('class="gpl-step done') == 0
     app.button(key="welcome_blank").click().run()  # "or start a blank client"
     assert not app.exception, app.exception
     assert app.session_state["main_tab"] == "1 Client"
@@ -1438,6 +1443,9 @@ def test_demo_button_loads_a_client_with_a_toast(app: AppTest) -> None:
         "Demo client loaded. Walk through steps 1–6, or open Optimise to see a recommendation."
     ]
     assert not any(b.key == "welcome_demo" for b in app.button)
+    html = " ".join(m.value for m in app.markdown)  # chips and cards updated in this same run
+    assert "DEMO DATA · seed" in html and "<b>Analyse</b><small>analysis ready</small>" in html
+    assert re.search(r'class="gpl-step done active">.{0,80}<b>Analyse</b>', html)
     app.run()
     assert not app.toast  # shown once
 

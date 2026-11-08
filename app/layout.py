@@ -71,29 +71,48 @@ def render_header(container, info: HeaderInfo) -> None:
     container.markdown(f'<div class="gpl-chips">{html}</div>', unsafe_allow_html=True)
 
 
-def render_stepper(statuses: Sequence[StepStatus], active: str | None) -> None:
-    """The six steps with done / to-do marks; click a card to open its step."""
+def _card_html(step: str, status: StepStatus | None, active: str | None) -> str:
+    number, title = step.split(" ", 1)
+    done = bool(status and status.done)
+    cls = ("done" if done else "todo") + (" active" if step == active else "")
+    note = status.note if status else ""
+    return (
+        f'<div class="gpl-step {cls}"><span class="gpl-dot">{"✓" if done else number}</span>'
+        f'<span class="gpl-step-text"><b>{escape(title)}</b>'
+        f"<small>{escape(note) or '&nbsp;'}</small></span></div>"
+    )
+
+
+def render_stepper(statuses: Sequence[StepStatus] | None, active: str | None) -> list:
+    """The six step cards, drawn at the top of the run; click a card to open its step.
+
+    The step is set in the button's callback, before the rerun, so the highlight here and the
+    page below change in the same render. ``statuses`` are the previous run's (None on the
+    first run); ``update_stepper`` refreshes the text in place once this run knows them.
+    Returns the placeholders for ``update_stepper``.
+    """
+    slots = []
     columns = st.columns(len(STEPS), gap="small")
-    for i, (column, step, status) in enumerate(zip(columns, STEPS, statuses, strict=True)):
-        number, title = step.split(" ", 1)
-        cls = "done" if status.done else "todo"
-        if step == active:
-            cls += " active"
-        mark = "✓" if status.done else number
+    for i, (column, step) in enumerate(zip(columns, STEPS, strict=True)):
+        status = statuses[i] if statuses else None
         with column.container(key=f"step_card_{i}"):
-            st.markdown(
-                f'<div class="gpl-step {cls}"><span class="gpl-dot">{mark}</span>'
-                f'<span class="gpl-step-text"><b>{escape(title)}</b>'
-                f"<small>{escape(status.note)}</small></span></div>",
-                unsafe_allow_html=True,
-            )
+            slot = st.empty()
+            slot.markdown(_card_html(step, status, active), unsafe_allow_html=True)
+            slots.append(slot)
             st.button(
                 f"Open step {step}",
                 key=f"step_nav_{i}",
                 on_click=go_to,
                 args=(step,),
-                help=f"Open {title}: {status.note}",
+                help=f"Open {step.split(' ', 1)[1]}",
             )
+    return slots
+
+
+def update_stepper(slots: list, statuses: Sequence[StepStatus], active: str | None) -> None:
+    """Refresh the cards' marks and notes with this run's statuses."""
+    for slot, step, status in zip(slots, STEPS, statuses, strict=True):
+        slot.markdown(_card_html(step, status, active), unsafe_allow_html=True)
 
 
 def step_footer(step: str, status: StepStatus) -> None:
@@ -134,10 +153,10 @@ LAYOUT_CSS = """
   background: var(--gpl-bg); border-bottom: 1px solid var(--gpl-border);
 }
 /* the demo button: the primary call to action, slightly larger than the others */
-.st-key-fill_demo button, .st-key-welcome_demo button, .st-key-client_try_demo button {
+.st-key-fill_demo button, .st-key-welcome_demo button {
   font-weight: 650; font-size: 1.02rem; min-height: 2.75rem;
 }
-.st-key-welcome_demo button, .st-key-client_try_demo button {
+.st-key-welcome_demo button {
   font-size: 1.1rem; min-height: 3.1rem; padding: 0 1.6rem;
 }
 .st-key-welcome { background: var(--gpl-card); }
