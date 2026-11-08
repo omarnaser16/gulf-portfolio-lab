@@ -2,10 +2,10 @@
 
 Strict tools (``"strict": True``) make the API guarantee that the model's tool input matches
 the schema, by compiling the schema into a grammar. A large schema can exceed the grammar's
-size limit ("The compiled grammar is too large"), which happened to the client-form tool in
-November 2026. Every tool's input is also checked in code (``profile.clean_draft``,
-``spec.spec_from_draft``, ``tools.execute_tool``), so if the limit is hit the request is
-retried once without strict mode instead of failing.
+size limit ("The compiled grammar is too large"; it happened to a since-removed client-form
+tool in November 2026). Every tool's input is also checked in code (``spec.spec_from_draft``,
+``tools.execute_tool``), so if the limit is hit the request is retried once without strict
+mode instead of failing.
 """
 
 import logging
@@ -43,7 +43,7 @@ def create_message(client: Any, *, tools: list[dict], **kwargs) -> tuple[Any, li
 def friendly_error(error: Exception, task: str = "the AI request") -> str:
     """A message an adviser can act on, instead of a raw API error (details go to the log)."""
     logger.warning("%s failed: %r", task, error)
-    if isinstance(error, ValueError):  # our own readable messages (e.g. no form was filled)
+    if isinstance(error, ValueError):  # our own readable messages
         return str(error)
     if isinstance(error, anthropic.AuthenticationError | anthropic.PermissionDeniedError):
         return (

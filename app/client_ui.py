@@ -1,13 +1,13 @@
 """Step 1 (Client): fact-find form, risk questionnaire, IPS preview and downloads.
 
 The profile lives in ``st.session_state["client"]`` (a dict, ``ClientProfile.to_dict()``).
-Widgets are keyed with a version number so loading a profile (example, JSON or AI notes)
+Widgets are keyed with a version number so loading a profile (demo, example or JSON)
 redraws the form. Every number shown comes from ``gpl.client`` (tested rules).
 """
 
 import json
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date
 
@@ -15,8 +15,6 @@ import pandas as pd
 import streamlit as st
 import workstation as ws
 
-from gpl.agent.api import friendly_error
-from gpl.agent.profile import apply_proposal, propose_profile
 from gpl.client import (
     CLOSEST_MIX_EXAMPLES,
     CLOSEST_MIX_LABEL,
@@ -60,6 +58,13 @@ from gpl.factfind import (
 from gpl.report import ips_pdf
 
 CLIENT, VERSION = "client", "client_v"
+DEMO_BUTTON = "▶ Try a demo client"
+DEMO_TOAST = "Demo client loaded. Walk through steps 1–6, or open Optimise to see a recommendation."
+WELCOME = (
+    "**Gulf Portfolio Lab** turns a GCC client's facts into an Investment Policy Statement, "
+    "checks their portfolio against it and finds a suitable improvement, with every figure "
+    "from tested code."
+)
 EXAMPLE = "client_example_loaded"  # the example whose own portfolio was loaded
 SECTOR_CHOICES = [
     "Tobacco",
@@ -89,7 +94,6 @@ def _set_profile(profile: ClientProfile) -> None:
     st.session_state[CLIENT] = profile.to_dict()
     st.session_state[VERSION] = st.session_state.get(VERSION, 0) + 1
     st.session_state.pop("ws_draft", None)  # the Optimise form re-reads the IPS
-    st.session_state.pop("client_proposal", None)
 
 
 def _load_example() -> None:
@@ -133,11 +137,23 @@ def fill_demo(seed: int | None = None) -> None:
     for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails", "ctx_key"):
         st.session_state.pop(key, None)
     st.session_state["main_tab"] = "3 Analyse"
+    st.session_state["demo_toast"] = True  # shown once, on the next run
 
 
 def _new_client() -> None:
     _set_profile(ClientProfile())
     st.session_state.pop(EXAMPLE, None)
+
+
+def start_blank() -> None:
+    """Callback: a new blank client, then open the Client step to fill it in."""
+    _new_client()
+    st.session_state["main_tab"] = "1 Client"
+
+
+def demo_button(key: str, **kwargs) -> None:
+    """The primary "Try a demo client" button (same action everywhere)."""
+    st.button(DEMO_BUTTON, key=key, on_click=fill_demo, type="primary", **kwargs)
 
 
 def closest_mix_note(ips) -> str | None:
@@ -159,22 +175,6 @@ def closest_mix_note(ips) -> str | None:
 
 def _example_label(name: str) -> str:
     return f"{name} · closest mix" if name in CLOSEST_MIX_EXAMPLES else name
-
-
-def _interpret(make_client: Callable, model: str) -> None:
-    notes = st.session_state.get("client_notes", "")
-    st.session_state.pop("client_error", None)
-    if not notes.strip():
-        st.session_state.client_error = "Write some notes about the client first."
-        return
-    try:
-        proposal = propose_profile(make_client(), model, notes)
-    except Exception as e:  # API or model errors are shown in plain English, not raised
-        st.session_state.client_error = friendly_error(e, "filling the form")
-        return
-    base = current_profile() or ClientProfile()
-    _set_profile(apply_proposal(base, proposal.draft))
-    st.session_state.client_proposal = proposal
 
 
 def _default_regulator(k: str) -> None:
@@ -722,9 +722,6 @@ def render_client_tab(
     holdings: list[str],
     groups: Mapping[str, str],
     attributes: Mapping,
-    ai_ok: bool,
-    make_client: Callable,
-    model: str,
     cash_like: list[str] | None = None,
     regions: Mapping[str, str] | None = None,
     product_types: Mapping[str, str] | None = None,
@@ -735,6 +732,16 @@ def render_client_tab(
         "questionnaire answers; the risk score, IPS limits and checks come from tested rules. "
         f"**{PUBLIC_NOTICE}**"
     )
+    empty = st.session_state.get(CLIENT) is None
+    if empty:
+        with st.container(key="client_empty"):
+            st.markdown("#### No client yet")
+            demo_button(
+                "client_try_demo",
+                help="A random, realistic GCC client and portfolio of real tickers (no AI), "
+                "marked DEMO DATA.",
+            )
+            st.caption("Or load an example or a saved profile, or start a new blank client:")
     c1, c2, c3 = st.columns([3, 3, 2])
     with c1:
         st.selectbox(
@@ -748,43 +755,11 @@ def render_client_tab(
         "Load a saved profile (JSON)", type=["json"], key="client_upload", on_change=_load_json
     )
     c3.button("New blank client", key="client_new", on_click=_new_client)
-    with st.expander("Describe the client in plain English (AI fills the form)"):
-        st.text_area(
-            "Adviser's notes",
-            key="client_notes",
-            placeholder="e.g. Ahmed, 52, booked in Abu Dhabi, $2m. Needs $400k in Oct 2028 for "
-            "a property. Sharia-compliant only, at least 10% in Saudi. UAE tax resident.",
-        )
-        st.button(
-            "Fill the form with AI",
-            key="client_interpret",
-            on_click=_interpret,
-            args=(make_client, model),
-            disabled=not ai_ok,
-            help=None if ai_ok else "Needs an API key (see Report & trades › AI analyst).",
-        )
-        proposal = st.session_state.get("client_proposal")
-        if proposal:
-            if proposal.summary:
-                st.info(f"**The AI recorded:** {proposal.summary}")
-            for item in proposal.unmapped:
-                st.warning(f"Not recorded (no field for it): “{item}”")
-            for problem in proposal.problems:
-                st.warning(problem)
-            if proposal.numbers_not_in_notes:
-                st.warning(
-                    "These numbers are not in your notes, please check them: "
-                    + ", ".join(proposal.numbers_not_in_notes)
-                )
-            st.caption(
-                "The AI never answers the risk questionnaire: those are the client's own answers."
-            )
     if st.session_state.get("client_error"):
         st.error(st.session_state.client_error)
 
     profile = current_profile()
     if profile is None:
-        st.info("Load an example, a saved profile, or start a new blank client.")
         return
     note = closest_mix_note(build_ips(profile, cfg))
     if note:

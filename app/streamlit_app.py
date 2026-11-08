@@ -388,15 +388,14 @@ header = st.container(key="gpl_header")
 head_title, head_chips, head_bench, head_demo, head_actions, head_settings = header.columns(
     [2.0, 4.2, 2.0, 1.7, 1.6, 0.7], vertical_alignment="center"
 )
-head_demo.button(
-    "🎲 Fill demo client",
-    key="fill_demo",
-    on_click=client_ui.fill_demo,
-    width="stretch",
-    help="Fills every field with a random, realistic GCC client and a 5-8 holding portfolio "
-    "of real tickers (no AI), then opens the analysis. Marked DEMO DATA everywhere; the seed "
-    "in the header reproduces it (⚙ Settings › Demo seed).",
-)
+with head_demo:
+    client_ui.demo_button(
+        "fill_demo",
+        width="stretch",
+        help="Fills every field with a random, realistic GCC client and a 5-10 holding "
+        "portfolio of real tickers (no AI), then opens the analysis. Marked DEMO DATA "
+        "everywhere; the seed in the header reproduces it (⚙ Settings › Demo seed).",
+    )
 head_title.markdown("### Gulf Portfolio Lab")
 stepper = st.container()  # drawn at the end of the run, when every status is known
 head_actions.button(
@@ -442,7 +441,7 @@ with head_settings.popover("⚙", width="stretch", help="Settings"):
         help="The same seed always fills the same demo client and portfolio.",
     )
     demo_box.button(
-        "Fill demo client with this seed", key="fill_demo_seed", on_click=client_ui.fill_demo
+        "Load the demo client with this seed", key="fill_demo_seed", on_click=client_ui.fill_demo
     )
     advanced = st.expander("Advanced settings")
     lookback = advanced.select_slider(
@@ -462,6 +461,21 @@ with head_settings.popover("⚙", width="stretch", help="Settings"):
     threshold = advanced.slider(
         "De-risk when P(stressed) ≥", 0.2, 0.9, float(R["threshold"]), 0.05, disabled=not use_regime
     )
+
+if st.session_state.pop("demo_toast", False):
+    st.toast(client_ui.DEMO_TOAST, icon="✅")
+if st.session_state.get(client_ui.CLIENT) is None:  # first visit: point at the demo
+    with st.container(border=True, key="welcome"):
+        st.markdown(client_ui.WELCOME)
+        w_demo, w_blank, _ = st.columns([2.2, 2.2, 5.6], vertical_alignment="center")
+        with w_demo:
+            client_ui.demo_button("welcome_demo", width="stretch")
+        w_blank.button(
+            "or start a blank client",
+            key="welcome_blank",
+            type="tertiary",
+            on_click=client_ui.start_blank,
+        )
 
 end = None if period == LATEST else date.fromisoformat(D["end"])
 # Set on step 4 (Optimise); read here so every tab uses the current value.
@@ -549,7 +563,7 @@ def render_data_notes(history: pd.DataFrame) -> None:
 short = data.history[data.history["too_short"] & data.history.index.isin(universe)]
 with st.expander(
     "Data notes: start dates, currencies and trading calendars",
-    # open when there is something to read, but not straight after Fill demo client
+    # open when there is something to read, but not straight after loading the demo
     expanded=bool(data.mixed_calendars or len(short))
     and sorted(universe) != st.session_state.get("demo_tickers"),
 ):
@@ -2005,9 +2019,6 @@ with tab_client:
         list(my_weights),
         ws.groups_of_holdings(),
         get_attributes(tuple(my_weights)),
-        agent.has_credentials(),
-        agent.make_client,
-        A["model"],
         cash_like_now() if portfolio_ok else [],
         holding_regions() if portfolio_ok else {},
         holding_products(tuple(my_weights)),

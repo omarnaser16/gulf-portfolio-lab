@@ -57,11 +57,11 @@ def test_other_errors_are_not_retried() -> None:
         (_error(anthropic.AuthenticationError, 401, "invalid x-api-key"), "rejected the API key"),
         (_error(anthropic.RateLimitError, 429, "rate limit"), "busy right now"),
         (_error(anthropic.InternalServerError, 500, "boom"), "temporarily unavailable"),
-        (_error(anthropic.BadRequestError, 400, TOO_LARGE), "couldn't process filling the form"),
+        (_error(anthropic.BadRequestError, 400, TOO_LARGE), "couldn't process reading your goals"),
         (ValueError("The model did not fill the form."), "The model did not fill the form."),
     ],
 )
 def test_friendly_errors_hide_the_raw_api_message(error, expected) -> None:
-    message = friendly_error(error, "filling the form")
+    message = friendly_error(error, "reading your goals")
     assert expected in message
     assert "invalid_request_error" not in message and "Error code" not in message

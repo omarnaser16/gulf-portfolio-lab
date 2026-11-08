@@ -10,15 +10,31 @@ within the horizon; cash needs are in the future; the portfolio is at most the i
 assets, which are at most the net worth; expenses are below income; the questionnaire answers
 follow the client's age, horizon and objective; and every required fact-find field is filled.
 The names are invented combinations, not real people.
+
+The portfolio follows the client's IPS by construction (tested over many seeds): 5-10 real
+tickers from the verified investable universe; the mix of equity and defensive holdings is set
+by the client's own computed risk score; no holding is above the score's per-holding cap;
+GCC holdings meet any home-market minimum, and a region minimum is set only when a holding
+in that market covers it; cash needs due within 36 months are held in cash-like funds; and a
+Sharia-only client holds only screened compliant funds. The curated universe has one sukuk
+fund and no Sharia cash fund, so a cautious Sharia portfolio can't meet the per-holding cap
+(see the Riyadh example client): Sharia demo clients are therefore growth investors (score 4+).
 """
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 import numpy as np
 
-from gpl.client import ClientProfile, age_on, month_after
+from gpl.client import (
+    ClientProfile,
+    age_on,
+    month_after,
+    months_until,
+    risk_profile,
+    with_derived_answers,
+)
 from gpl.factfind import next_review
 
 FIRST = ["Omar", "Layla", "Khalid", "Noura", "Faisal", "Mariam", "Yousef", "Huda", "Tariq",
@@ -58,36 +74,52 @@ WEALTH = {
 }
 ADVISERS = ["S. Haddad", "R. Menon", "L. Fischer", "A. Qureshi", "M. Darwish"]
 
-# real, liquid tickers by role; Sharia-compliant alternatives are used for Sharia clients
+# real, liquid tickers by role, all in the verified investable universe
+# (config/investable_universe.yaml); Sharia clients use screened compliant funds only
 POOL = {
-    "equity": ["SPY", "EFA", "EEM", "URTH"],
+    "equity": ["SPY", "EFA", "EEM", "URTH", "ACWI"],
     "gcc": ["KSA", "UAE", "QAT", "2222.SR", "1120.SR", "EMAAR.AE", "QNBK.QA", "NBK.KW"],
-    "bonds": ["AGG", "TLT"],
+    "bonds": ["AGG", "IEF", "BNDX", "TLT"],
     "gold": ["GLD"],
-    "cash": ["BIL", "SGOV"],
+    "cash": ["BIL", "SHV", "SHY"],
 }
 SHARIA_POOL = {
-    "equity": ["SPUS", "HLAL"],  # UMMA left out: it starts in 2022 and would cut the sample
+    "equity": ["SPUS", "HLAL", "ISWD.L", "ISDE.L"],  # UMMA left out: it starts in 2022
     "gcc": ["2222.SR", "1120.SR"],
-    "bonds": ["SPSK"],
-    "gold": ["GLD"],
-    "cash": ["SPSK"],
+    "sukuk": ["SPSK"],  # sukuk, and the cash-like holding for cash needs
 }
+LONG_BONDS = {"TLT"}  # 20+ year Treasuries (fell ~45% in 2022): growth clients only (4+)
+GCC_MARKET = {  # the market each GCC holding gives exposure to
+    "KSA": "Saudi Arabia", "2222.SR": "Saudi Arabia", "1120.SR": "Saudi Arabia",
+    "UAE": "UAE", "EMAAR.AE": "UAE", "QAT": "Qatar", "QNBK.QA": "Qatar", "NBK.KW": "Kuwait",
+}  # fmt: skip
+NON_PEGGED = {"NBK.KW"}  # KWD follows a basket, not the dollar: kept small (IPS max 20%)
+NON_PEGGED_CAP = 0.15
 GROUP = {
     "equity": "Global equity",
     "gcc": "GCC",
     "bonds": "Bonds",
+    "sukuk": "Bonds",
     "gold": "Gold",
     "cash": "Cash & short-term",
 }
 # target weights by role for each risk score (rows sum to 1)
 MIX = {
-    1: {"equity": 0.15, "gcc": 0.10, "bonds": 0.45, "gold": 0.10, "cash": 0.20},
-    2: {"equity": 0.25, "gcc": 0.15, "bonds": 0.35, "gold": 0.10, "cash": 0.15},
-    3: {"equity": 0.35, "gcc": 0.20, "bonds": 0.25, "gold": 0.10, "cash": 0.10},
+    1: {"equity": 0.12, "gcc": 0.08, "bonds": 0.30, "gold": 0.10, "cash": 0.40},
+    2: {"equity": 0.20, "gcc": 0.12, "bonds": 0.33, "gold": 0.10, "cash": 0.25},
+    3: {"equity": 0.30, "gcc": 0.17, "bonds": 0.30, "gold": 0.10, "cash": 0.13},
     4: {"equity": 0.45, "gcc": 0.25, "bonds": 0.15, "gold": 0.08, "cash": 0.07},
     5: {"equity": 0.55, "gcc": 0.28, "bonds": 0.07, "gold": 0.05, "cash": 0.05},
 }
+# equity share (global + GCC) that fits each risk score: the test range for the mix
+EQUITY_RANGE = {1: (0.10, 0.30), 2: (0.25, 0.45), 3: (0.40, 0.60), 4: (0.60, 0.80),
+                5: (0.70, 0.95)}  # fmt: skip
+# per-holding cap and largest acceptable fall by risk score (config risk_bands; tested equal)
+CAP = {1: 0.20, 2: 0.25, 3: 0.30, 4: 0.35, 5: 0.40}
+LOSS = {1: 10, 2: 15, 3: 20, 4: 30, 5: 40}
+SHARIA_MIN_SCORE = 4
+CASH_WINDOW_MONTHS = 36  # config cash_need_window_months
+MARGIN = 0.005  # headroom under each cap for rounding amounts to USD 100
 
 
 @dataclass
@@ -187,7 +219,6 @@ def demo_client(seed: int, today: date | None = None) -> DemoClient:
         "tradeoff": answer(),
         "experience": int(np.clip(1 + years_investing // 5, 1, 5)),
     }
-    loss = {1: 10, 2: 15, 3: 20, 4: 30, 5: 40}[int(np.clip(base, 1, 5))]
     products = ["Equities", "Funds"]
     if years_investing >= 3:
         products.append("ETFs")
@@ -228,16 +259,14 @@ def demo_client(seed: int, today: date | None = None) -> DemoClient:
                 "description": pick(
                     ["Property deposit", "Wedding", "Car", "Home renovation", "Business investment"]
                 ),  # fmt: skip
-                "amount_usd": _round(value * rng.uniform(0.02, 0.12)),
+                "amount_usd": _round(value * rng.uniform(0.02, 0.06)),
                 "date": month_after(today, months),
             }
         )
     needs.sort(key=lambda n: n["date"])
 
-    sharia = rng.random() < (0.6 if residency == "Saudi Arabia" else 0.3)
-    region_minimums = {}
-    if rng.random() < 0.3:
-        region_minimums = {residency if residency != "UAE" else "UAE": 5.0}
+    wants_sharia = rng.random() < (0.6 if residency == "Saudi Arabia" else 0.3)
+    wants_region_minimum = rng.random() < 0.3
     net_assets = sum(assets.values()) - sum(liabilities.values())
     professional = net_assets >= 1_000_000 and years_investing >= 5 and rng.random() < 0.5
     review = pick(["Quarterly", "Semi-annual", "Annual"])
@@ -295,14 +324,11 @@ def demo_client(seed: int, today: date | None = None) -> DemoClient:
         if objective == "Income"
         else 0.0,  # fmt: skip
         answers=answers,
-        max_acceptable_drawdown_pct=float(loss),
         years_investing=years_investing,
         products_used=products,
         trading_frequency=pick(["Yearly", "Quarterly", "Monthly"]),
         background=pick(["", "Finance degree", "Former banker", "CFA Level I"]),
-        sharia_only=sharia,
-        home_bias_gcc_pct=float(pick([0, 10, 20])) or None,
-        region_minimums=region_minimums,
+        home_bias_gcc_pct=float(pick([0, 10, 20])) or None,  # fitted to the holdings below
         excluded_sectors=["Tobacco"] if rng.random() < 0.3 else [],
         home_currency_preference=home_ccy if rng.random() < 0.4 else "",
         will_status=pick(wills),
@@ -316,7 +342,62 @@ def demo_client(seed: int, today: date | None = None) -> DemoClient:
         adviser_licence=f"DEMO-{int(rng.integers(10_000, 99_999))}",
         demo=True,
     )
-    return DemoClient(profile, demo_holdings(rng, value, int(np.clip(base, 1, 5)), sharia), seed)
+    # the portfolio follows the client's own risk score and IPS
+    score = risk_profile(with_derived_answers(profile, today)).score
+    sharia = wants_sharia and score >= SHARIA_MIN_SCORE
+    soon = sum(
+        n["amount_usd"] for n in needs if months_until(n["date"], today) <= CASH_WINDOW_MONTHS
+    )
+    holdings = demo_holdings(rng, value, score, sharia, residency, soon / value)
+    weights = {h["ticker"]: h["value"] / value for h in holdings}
+    gcc = sum(w for t, w in weights.items() if t in GCC_MARKET)
+    home_bias = profile.home_bias_gcc_pct
+    if home_bias and home_bias / 100 > gcc - MARGIN:
+        home_bias = 10.0 if gcc - MARGIN >= 0.10 else None
+    home = sum(w for t, w in weights.items() if GCC_MARKET.get(t) == residency)
+    profile = replace(
+        profile,
+        max_acceptable_drawdown_pct=float(LOSS[score]),
+        sharia_only=sharia,
+        home_bias_gcc_pct=home_bias,
+        region_minimums={residency: 5.0} if wants_region_minimum and home >= 0.06 else {},
+    )
+    return DemoClient(profile, holdings, seed)
+
+
+def _capped_split(share: float, caps: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Split ``share`` over holdings at random, none above its cap (needs caps.sum() >= share)."""
+    w = rng.dirichlet(np.ones(len(caps)) * 3) * share
+    for _ in range(len(caps)):
+        over = w > caps
+        if not over.any():
+            break
+        excess = float((w[over] - caps[over]).sum())
+        w[over] = caps[over]
+        room = w < caps
+        w[room] += excess * w[room] / w[room].sum()
+    return w
+
+
+def role_mix(score: int, sharia: bool, cash_need: float) -> dict[str, float]:
+    """Target weight per role: ``MIX`` for the score, with cash needs due soon held in cash.
+
+    The extra cash comes from bonds, then gold, so the equity share still fits the score.
+    Sharia: bonds, gold and cash become sukuk (no gold or cash fund is screened compliant).
+    """
+    mix = dict(MIX[score])
+    need = cash_need + MARGIN if cash_need > 0 else 0.0
+    if sharia:
+        sukuk = max(mix.pop("bonds") + mix.pop("gold") + mix.pop("cash"), need)
+        mix["equity"] -= sukuk - (1 - mix["equity"] - mix["gcc"])
+        return {**mix, "sukuk": sukuk}
+    extra = max(need - mix["cash"], 0.0)
+    for role in ("bonds", "gold"):
+        take = min(extra, mix[role])
+        mix[role] -= take
+        mix["cash"] += take
+        extra -= take
+    return mix
 
 
 def demo_holdings(
@@ -324,46 +405,47 @@ def demo_holdings(
     value: float,
     score: int,
     sharia: bool,
-    pools: Mapping[str, Sequence[str]] | None = None,
+    residency: str | None = None,
+    cash_need: float = 0.0,
 ) -> list[dict]:
-    """5-8 real tickers with USD amounts adding up to ``value``, tilted by the risk score.
+    """5-10 real tickers with USD amounts adding up to ``value``, following the IPS.
 
-    Each role (global equity, GCC, bonds/sukuk, gold, cash) gets its target share for the
-    score (``MIX``), split over one to three tickers with random tilts; Sharia clients use
-    Sharia-compliant funds.
+    Each role (global equity, GCC, bonds or sukuk, gold, cash) gets its share for the score
+    (``role_mix``), split over enough tickers that none is above the score's cap (``CAP``,
+    less a small margin); a GCC client's own market comes first among the GCC holdings.
     """
-    pools = pools or (SHARIA_POOL if sharia else POOL)
-    count = int(rng.integers(5, 9))
-    roles = list(MIX[score])
-    picks: dict[str, list[str]] = {r: [] for r in roles}
-    used: set[str] = set()
-    for role in roles:  # one ticker per role first
-        options = [t for t in pools[role] if t not in used]
-        if options:
-            t = options[int(rng.integers(len(options)))]
-            picks[role].append(t)
-            used.add(t)
-    while sum(len(v) for v in picks.values()) < count:
-        role = roles[int(rng.choice(len(roles), p=[MIX[score][r] for r in roles]))]
-        options = [t for t in pools[role] if t not in used]
-        if not options:
-            if all(not [t for t in pools[r] if t not in used] for r in roles):
-                break
-            continue
-        t = options[int(rng.integers(len(options)))]
-        picks[role].append(t)
-        used.add(t)
+    pools = SHARIA_POOL if sharia else POOL
+    mix = {r: w for r, w in role_mix(score, sharia, cash_need).items() if w > 1e-9}
+    cap = CAP[score] - MARGIN
+
+    def ticker_cap(t: str) -> float:
+        return min(cap, NON_PEGGED_CAP) if t in NON_PEGGED else cap
+
+    options = {}
+    for role in mix:
+        pool = [t for t in pools[role] if not (score <= 3 and t in LONG_BONDS)]
+        order = [pool[i] for i in rng.permutation(len(pool))]
+        if role == "gcc":  # home market first
+            order.sort(key=lambda t: GCC_MARKET.get(t) != residency)
+        options[role] = order
+    picks: dict[str, list[str]] = {r: [] for r in mix}
+    for role, share in mix.items():  # enough tickers for the cap
+        while not picks[role] or sum(map(ticker_cap, picks[role])) < share:
+            picks[role].append(options[role].pop(0))
+    count = int(rng.integers(5, 11))
+    while sum(map(len, picks.values())) < count:
+        open_roles = [r for r in mix if options[r]]
+        if not open_roles:
+            break
+        p = np.array([mix[r] for r in open_roles])
+        role = open_roles[int(rng.choice(len(open_roles), p=p / p.sum()))]
+        picks[role].append(options[role].pop(0))
     weights: dict[str, tuple[str, float]] = {}
     for role, tickers in picks.items():
-        if not tickers:
-            continue
-        split = rng.dirichlet(np.ones(len(tickers)) * 3) * MIX[score][role]
-        for t, w in zip(tickers, split, strict=True):
+        caps = np.array([ticker_cap(t) for t in tickers])
+        for t, w in zip(tickers, _capped_split(mix[role], caps, rng), strict=True):
             weights[t] = (GROUP[role], float(w))
-    total = sum(w for _, w in weights.values())
-    rows = [
-        {"ticker": t, "group": g, "value": _round(value * w / total, 100)}
-        for t, (g, w) in weights.items()
-    ]
+    rows = [{"ticker": t, "group": g, "value": _round(value * w, 100)} for t, (g, w) in
+            weights.items()]  # fmt: skip
     rows[0]["value"] += value - sum(r["value"] for r in rows)  # amounts add up exactly
     return rows

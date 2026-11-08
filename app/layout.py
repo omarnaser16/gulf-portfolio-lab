@@ -124,6 +124,14 @@ LAYOUT_CSS = """
   position: sticky; top: 0; z-index: 990; padding: 0.35rem 0 0.25rem 0;
   background: var(--gpl-bg); border-bottom: 1px solid var(--gpl-border);
 }
+/* the demo button: the primary call to action, slightly larger than the others */
+.st-key-fill_demo button, .st-key-welcome_demo button, .st-key-client_try_demo button {
+  font-weight: 650; font-size: 1.02rem; min-height: 2.75rem;
+}
+.st-key-welcome_demo button, .st-key-client_try_demo button {
+  font-size: 1.1rem; min-height: 3.1rem; padding: 0 1.6rem;
+}
+.st-key-welcome { background: var(--gpl-card); }
 .st-key-gpl_header h3 { margin: 0; padding: 0; white-space: nowrap; color: var(--gpl-navy); }
 .gpl-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .gpl-chip {

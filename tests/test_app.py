@@ -1016,7 +1016,9 @@ def test_memo_sections_pairing_and_disclaimer_last() -> None:
 
 
 def test_client_tab_starts_empty_and_loads_an_example(app: AppTest) -> None:
-    assert any("Load an example" in i.value for i in app.info)
+    # empty state: the demo button first, then the other options
+    assert app.button(key="client_try_demo").label == "▶ Try a demo client"
+    assert any("load an example or a saved profile" in c.value for c in app.caption)
     app.selectbox(key="client_example").set_value("Riyadh, conservative, 5 years, Sharia")
     app.button(key="client_load_example").click().run()
     assert not app.exception, app.exception
@@ -1408,6 +1410,31 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     assert any(e.label == "Advanced settings" for e in app.expander)
 
 
+def test_first_visit_shows_the_welcome_banner_and_primary_demo_buttons(app: AppTest) -> None:
+    for key in ("fill_demo", "welcome_demo", "client_try_demo"):
+        button = app.button(key=key)
+        assert button.label == "▶ Try a demo client" and button.proto.type == "primary"
+    welcome = " ".join(m.value for m in app.markdown)
+    assert "turns a GCC client's facts into an Investment Policy Statement" in welcome
+    app.button(key="welcome_blank").click().run()  # "or start a blank client"
+    assert not app.exception, app.exception
+    assert app.session_state["main_tab"] == "1 Client"
+    assert app.session_state["client"]["demo"] is False
+    assert not any(b.key == "welcome_demo" for b in app.button)  # banner gone once a client exists
+
+
+def test_demo_button_loads_a_client_with_a_toast(app: AppTest) -> None:
+    app.button(key="welcome_demo").click().run()
+    assert not app.exception, app.exception
+    assert app.session_state["client"]["demo"] is True
+    assert [t.value for t in app.toast] == [
+        "Demo client loaded. Walk through steps 1–6, or open Optimise to see a recommendation."
+    ]
+    assert not any(b.key == "welcome_demo" for b in app.button)
+    app.run()
+    assert not app.toast  # shown once
+
+
 def test_fill_demo_client_fills_everything_and_opens_the_analysis(app: AppTest) -> None:
     from gpl.demo import demo_client
 
@@ -1425,7 +1452,7 @@ def test_fill_demo_client_fills_everything_and_opens_the_analysis(app: AppTest) 
     assert "DEMO DATA · seed 7" in html and "<b>IPS</b> Ready" in html
     assert any("DEMO DATA" in i.value for i in app.info)  # the Client step says so too
     notes = next(e for e in app.expander if e.label.startswith("Data notes"))
-    assert notes.proto.expanded is False  # kept collapsed after Fill demo client
+    assert notes.proto.expanded is False  # kept collapsed after loading the demo
     final = next(d for d in app.get("download_button") if d.proto.label == "Download IPS (PDF)")
     assert not final.proto.disabled  # every required field is filled
     # the random button gives a new seed each time, shown in the header
@@ -1446,20 +1473,31 @@ def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
     assert app.session_state["report_tab"] == "Trades"
 
 
-def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) -> None:
-    from test_agent_profile import QA_DRAFT, QA_NOTES
+def test_client_facts_fill_the_client_tab_and_constrain_optimise(optimise_app) -> None:
+    from gpl.client import ClientProfile
 
-    at, client = optimise_app([response([tool_use("p1", "propose_profile", QA_DRAFT)], "tool_use")])
-    at.button(key="client_new").click().run()
-    at.text_area(key="client_notes").set_value(QA_NOTES)
-    at.button(key="client_interpret").click().run()
+    at, client = optimise_app([])
+    profile = ClientProfile(
+        name="Khalid Al Mansoori",
+        age=58,
+        booking_location="ADGM (Abu Dhabi)",
+        tax_notes="UAE tax resident, no US ties; holds a UK property.",
+        annual_income_need_usd=96_000,
+        liquidity_needs=[
+            {"description": "Daughter's wedding", "amount_usd": 600_000, "date": "2028-10"}
+        ],
+        region_minimums={"Saudi Arabia": 10.0},
+    )
+    at.session_state["client"] = profile.to_dict()
+    at.session_state["client_v"] = 1
+    at.session_state[ws.PF_VALUE] = 3_000_000.0
+    at.run()
     assert not at.exception, at.exception
     assert not at.error, [e.value for e in at.error]
-    v = at.session_state["client_v"]
-    assert at.text_input(key=f"cl_name_{v}").value == "Khalid Al Mansoori"
-    assert at.number_input(key=f"cl_age_{v}").value == 58
-    assert at.selectbox(key=f"cl_reg_{v}").value == "FSRA (ADGM)"
-    assert at.text_area(key=f"cl_tax_{v}").value.startswith("UAE tax resident")
+    assert at.text_input(key="cl_name_1").value == "Khalid Al Mansoori"
+    assert at.number_input(key="cl_age_1").value == 58
+    assert at.selectbox(key="cl_reg_1").value == "FSRA (ADGM)"
+    assert at.text_area(key="cl_tax_1").value.startswith("UAE tax resident")
     ips = next(m.value for m in at.markdown if m.value.startswith("**Return.**"))
     assert "USD 600,000 by Oct 2028" in ips and "At least 10% in Saudi Arabia." in ips
     # the client's value (USD 3m) is the portfolio value; the IPS limits reach Optimise
@@ -1467,27 +1505,6 @@ def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) ->
     limits = _limits(at)
     assert limits["Region Saudi Arabia (KSA)"][0] == "at least 10.00%"
     assert limits["Cash need (no holding)"][0] == "at least 20.00%"
-
-
-def test_ai_intake_failure_shows_a_friendly_message(optimise_app) -> None:
-    import anthropic
-    import httpx2
-
-    at, client = optimise_app([])
-    req = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-    raw = "Error code: 400 - invalid_request_error: The compiled grammar is too large"
-
-    def fail(**kwargs):
-        raise anthropic.BadRequestError(raw, response=httpx2.Response(400, request=req), body=None)
-
-    client.create = fail  # the live bug: every call to fill the form failed
-    at.button(key="client_new").click().run()
-    at.text_area(key="client_notes").set_value("Risky investor aiming for high returns in Europe")
-    at.button(key="client_interpret").click().run()
-    assert not at.exception, at.exception
-    shown = " ".join(e.value for e in at.error)
-    assert "couldn't process filling the form" in shown and "nothing was changed" in shown
-    assert "invalid_request_error" not in shown and "grammar" not in shown
 
 
 def test_report_uses_the_optimiser_recommendation_not_a_chat_what_if(
