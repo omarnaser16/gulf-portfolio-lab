@@ -141,7 +141,7 @@ def test_app_renders_every_tab(app: AppTest) -> None:
     # dataframes: the
     # editable holdings table, the screen (wide, scrollable), the optimiser's group and asset
     # limits editors, the rebalance targets and the frontier weights
-    assert len(app.table) == 11 and len(app.dataframe) == 6
+    assert len(app.table) == 11 and len(app.dataframe) == 5  # no trade editor before Optimise
     assert any("P(stressed)" in m.label for m in app.metric)
 
 
@@ -418,6 +418,7 @@ def test_explain_this_recommendation_writes_an_audited_memo(optimise_app) -> Non
     at.button(key="ws_run_opt").click().run()
     assert client.requests == []  # the recommendation never needs the AI
     assert at.button(key="ws_opt_memo").label == "Explain this recommendation (AI)"
+    assert at.button(key="ws_run_opt").label == "Optimise portfolio"
     at.button(key="ws_opt_memo").click().run()
     assert not at.exception, at.exception
     assert any("Moderate investor" in m.value for m in at.markdown)
@@ -725,7 +726,7 @@ def test_diagnosis_is_shown_before_any_goal(optimise_app) -> None:
 
 def test_manual_goal_runs_candidates_and_recommends_by_rule(optimise_app) -> None:
     at, client = optimise_app([])
-    at.radio(key="ws_goal_0").set_value("reduce_risk").run()
+    at.selectbox(key="ws_goal_0").set_value("reduce_risk").run()
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
     table = _candidates(at)
@@ -758,7 +759,7 @@ def test_manual_goal_runs_candidates_and_recommends_by_rule(optimise_app) -> Non
 
 def test_target_goal_needs_its_number(optimise_app) -> None:
     at, _ = optimise_app([])
-    at.radio(key="ws_goal_0").set_value("target_return").run()
+    at.selectbox(key="ws_goal_0").set_value("target_return").run()
     assert any("Enter the target return" in w.value for w in at.warning)
     v = at.session_state["ws_draft_v"]  # a new goal redraws the form
     at.number_input(key=f"ws_target_ret_{v}").set_value(6.0).run()
@@ -806,9 +807,9 @@ def test_changing_the_goal_hides_stale_results(optimise_app) -> None:
     at, _ = optimise_app([])
     at.button(key="ws_run_opt").click().run()
     assert _candidates(at) is not None
-    at.radio(key="ws_goal_0").set_value("reduce_risk").run()
+    at.selectbox(key="ws_goal_0").set_value("reduce_risk").run()
     assert _candidates(at) is None
-    assert any("run the candidate methods again" in c.value for c in at.caption)
+    assert any("press Optimise portfolio again" in c.value for c in at.caption)
 
 
 def test_rank_screen_puts_missing_values_last() -> None:
@@ -1094,14 +1095,23 @@ def test_client_report_button_builds_a_pdf(app: AppTest) -> None:
 # ------------------------------------------------------------------------------- Rebalance
 
 
-def test_rebalance_no_drift_by_default(app: AppTest) -> None:
-    # no portfolio value yet (no $10,000 default): Rebalance asks for it
-    assert any("Enter the portfolio value" in i.value for i in app.info)
-    app.number_input(key="pf_value_holdings_0").set_value(250_000.0).run()
-    assert not app.exception, app.exception
-    rb = app.session_state["ctx"].rebalance
-    assert {row["Outside band"] for row in rb["drift"].values()} == {"no"}
-    assert any("no rebalance needed" in m.value for m in app.markdown)  # the drift KPI card
+def test_trades_wait_for_optimise_then_follow_its_answer(optimise_app) -> None:
+    at, _ = optimise_app([])
+    # before Optimise: no table of zero trades, a pointer to Optimise instead
+    assert any("No recommendation yet." in m.value for m in at.markdown)
+    assert at.button(key="go_to_optimise").label == "Go to Optimise"
+    assert not any(d.label == "Trade list (CSV)" for d in at.get("download_button"))
+    at.button(key="go_to_optimise").click().run()
+    assert at.session_state["main_tab"] == "4 Optimise"
+    at.number_input(key="pf_value_holdings_0").set_value(250_000.0).run()  # trades need a value
+    at.button(key="ws_run_opt").click().run()
+    assert not at.exception, at.exception
+    rec = at.session_state["ws_opt"]["report"]["recommendation"]
+    text = " ".join(m.value for m in at.markdown)
+    if rec["choice"] == "Keep your current portfolio":
+        assert "No trades needed: your current portfolio is kept." in text
+    else:
+        assert any(d.label == "Trade list (CSV)" for d in at.get("download_button"))
 
 
 def test_rebalance_trade_list_against_proposed_target(app: AppTest) -> None:
@@ -1491,7 +1501,7 @@ def test_changing_the_goal_resets_the_limits(app: AppTest) -> None:
     app.run()
     goal_text = next(m.value for m in app.markdown if m.value.startswith("**Goal:**"))
     assert "8.00%" in goal_text and _limits(app)["Group GCC"] == ("at most 30.00%", "Form")
-    app.radio(key="ws_goal_7").set_value("max_risk_adjusted").run()
+    app.selectbox(key="ws_goal_7").set_value("max_risk_adjusted").run()
     assert not app.exception, app.exception
     limits = _limits(app)
     # the old target doesn't become an 8% volatility cap, and the old group cap is gone
@@ -1647,3 +1657,34 @@ def test_build_suggests_a_policy_benchmark_that_fits_the_ips(optimise_app) -> No
     assert not at.exception, at.exception
     assert at.session_state["ws_benchmark"] == POLICY_NAME
     assert not any("Suggested benchmark for Build" in i.value for i in at.info)  # now in use
+
+
+def test_optimise_explains_itself_defaults_the_goal_and_works_without_ai(app: AppTest) -> None:
+    from gpl.client import EXAMPLE_CLIENTS, ClientProfile, build_ips
+    from gpl.data import load_universe
+
+    # the explanation above the pink button, and the advanced settings tucked away
+    text = " ".join(m.value for m in app.markdown)
+    assert "We test five ways to re-weight your holdings" in text
+    assert "otherwise we tell you to keep it. Takes about a minute." in text
+    assert any(e.label == "Advanced settings" for e in app.expander)
+    assert app.number_input(key="opt_turnover").value == 30.0  # inside Advanced settings
+    # the goal starts from the client's risk score
+    for name in EXAMPLE_CLIENTS:
+        app.selectbox(key="client_example").set_value(name)
+        app.button(key="client_load_example").click().run()
+        score = build_ips(ClientProfile.from_dict(EXAMPLE_CLIENTS[name]), load_universe()).risk
+        goal = app.selectbox(key=f"ws_goal_{app.session_state['ws_draft_v']}").value
+        expected = (
+            "reduce_risk" if score.score <= 2 else
+            "max_risk_adjusted" if score.score == 3 else "beat_benchmark_less_risk"
+        )  # fmt: skip
+        if ClientProfile.from_dict(EXAMPLE_CLIENTS[name]).return_target_pct is None:
+            assert goal == expected, (name, score.score, goal)
+    # no API key: the result still comes, with a friendly note instead of the AI button
+    app.button(key="ws_run_opt").click().run()
+    assert not app.exception, app.exception
+    assert not any(b.key == "ws_opt_memo" for b in app.button)
+    assert any("An AI explanation is available when an API key is set" in c.value
+               for c in app.caption)  # fmt: skip
+    assert any('class="gpl-answer">' in m.value for m in app.markdown)  # the one-line answer

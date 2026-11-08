@@ -21,7 +21,7 @@ import workstation as ws
 from inputs import asset_groups, combine_tickers
 from layout import APP_CSS
 
-from formatting import pct, plot, show_metrics_table, style_columns, style_percent
+from formatting import money, pct, plot, show_metrics_table, style_columns, style_percent
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
@@ -113,10 +113,10 @@ from gpl.plots import (
     equity_chart,
     fan_chart,
     frontier_chart,
-    lines_chart,
     paired_bars_chart,
     regime_chart,
     risk_contribution_chart,
+    risk_return_chart,
     weights_chart,
 )
 from gpl.recommend import GOALS, KEEP
@@ -133,7 +133,7 @@ from gpl.suitability import (
     failures,
     rationale,
 )
-from gpl.summary import GLOSSARY, kpi_comparison, result_summary, window_note
+from gpl.summary import GLOSSARY, kpi_comparison, main_reason, result_summary, window_note
 
 CFG = load_universe()
 COST_BY_SUFFIX = CFG.get("trading_costs", {}).get("by_suffix", {})  # market rates, bps
@@ -411,7 +411,7 @@ def header_info() -> layout.HeaderInfo:
     return layout.HeaderInfo(
         client=(profile.name or profile.reference or "unnamed") if profile else None,
         risk_score=ips.risk.score if ips else None,
-        value=f"USD {value:,.0f}" if value else "not set",
+        value=f"{money(value)}" if value else "not set",
         ips_status="–" if profile is None else "Draft" if ips_missing(profile) else "Ready",
         demo=bool(profile and profile.demo),
         seed=st.session_state.get("demo_seed") if profile and profile.demo else None,
@@ -902,15 +902,17 @@ def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
     def as_float(value):  # the model writes integers (25); number inputs need floats
         return None if value is None else float(value)
 
-    goal = st.radio(
+    goal = st.selectbox(
         "Goal",
-        list(GOALS),
-        format_func=GOALS.get,
-        index=list(GOALS).index(draft.get("goal") or "max_risk_adjusted"),
+        list(GOAL_CHOICES),
+        format_func=lambda g: f"{GOAL_CHOICES[g][0]}: {GOAL_CHOICES[g][1]}",
+        index=list(GOAL_CHOICES).index(draft.get("goal") or "max_risk_adjusted"),
         key=f"ws_goal_{v}",
         on_change=_goal_changed,
         args=(v,),
-        help="Changing the goal clears the limits below (not the client's IPS limits).",
+        help="It starts on the goal that fits the client's risk score (1-2 lower risk, 3 best "
+        "risk-adjusted return, 4-5 beat the benchmark). Changing it clears the limits below "
+        "(not the client's IPS limits).",
     )
     edited = {**draft, "goal": goal, "max_weight_pct": max_weight * 100}
     if goal == "target_return":
@@ -1073,8 +1075,7 @@ def cash_need_for_trades() -> dict | None:
     if ips is None or ips.limits["liquidity_reserve_usd"] <= 0:
         return None
     due = "; ".join(
-        f"USD {n['amount_usd']:,.0f} by {month_text(n['date'])}"
-        for n in ips.limits["cash_needs_due"]
+        f"{money(n['amount_usd'])} by {month_text(n['date'])}" for n in ips.limits["cash_needs_due"]
     )
     if ips.client.reserve_pct:
         due = (due + ", plus " if due else "") + f"a {ips.client.reserve_pct:g}% reserve"
@@ -1213,6 +1214,7 @@ def render_suitability_record(results: dict) -> None:
         unsafe_allow_html=True,
         help=f"For {name}. Generated from the IPS rules and the checks above (no AI); your "
         "edits are saved with the client profile and go into the IPS and the client report.",
+        width="content",
     )
     edited = bool(profile.suitability_record) and profile.suitability_record != generated
     key = (
@@ -1353,16 +1355,50 @@ def client_ips():
     return None if profile is None else build_ips(profile, CFG)
 
 
+GOAL_CHOICES = {  # goal -> (label, one-line explanation), in the dropdown's order
+    "reduce_risk": ("Lower risk", "fall less in bad markets; the return may drop"),
+    "reduce_risk_keep_return": (
+        "Lower risk, keep today's return",
+        "less volatility, giving up at most a quarter point of return a year",
+    ),
+    "max_risk_adjusted": ("Best risk-adjusted return", "the most return for each unit of risk"),
+    "beat_benchmark_less_risk": (
+        "Beat the benchmark",
+        "beat the benchmark's return with less risk than it takes",
+    ),
+    "target_return": ("Reach a target return", "the least risk that still reached your target"),
+    "target_volatility": ("Hit a target volatility", "the most return at the risk you set"),
+}
+
+
+def default_goal(risk_score: int | None) -> str:
+    """The goal to start from: 1-2 lower risk, 3 best risk-adjusted, 4-5 beat the benchmark."""
+    if risk_score is None:
+        return "max_risk_adjusted"
+    return "reduce_risk" if risk_score <= 2 else (
+        "max_risk_adjusted" if risk_score == 3 else "beat_benchmark_less_risk"
+    )  # fmt: skip
+
+
 def initial_draft() -> dict:
-    """Blank Optimise form; with a client return target, start on 'Reach a target return'."""
+    """Blank Optimise form, starting on the goal that fits the client's risk score; with a
+    client return target, on 'Reach a target return'."""
     draft = dict(BLANK_DRAFT)
     profile = client_ui.current_profile()
+    ips = client_ips()
+    draft["goal"] = default_goal(ips.risk.score if ips is not None else None)
     if profile is not None and profile.return_target_pct is not None:
         draft.update(goal="target_return", min_return_pct=profile.return_target_pct)
     return draft
 
 
 IMPROVE_MOVE = "improve_move"
+OPTIMISE_EXPLAINED = (
+    "We test five ways to re-weight your holdings, plus a few swaps from our fund list, month "
+    "by month on past data after trading costs. We recommend a change only if it beats your "
+    "current portfolio on your goal and fits the IPS; otherwise we tell you to keep it. Takes "
+    "about a minute."
+)
 MEMO_QUESTION = (  # the only request the app sends to the AI: fixed text, no user input
     "Write a short plain-English memo (under 250 words) for the client explaining the Optimise "
     "recommendation: what the rule chose and why it fits the goal, the main trade-offs, and how "
@@ -1507,7 +1543,7 @@ def _summary_card(result: dict, latest: pd.DataFrame) -> None:
         ("What we recommend", summary.recommend, "rec"),
         ("What changes", summary.changes + after, ""),
     ]
-    with st.container(key="result_summary"):
+    with st.container(key="result_summary_details"):
         st.markdown(
             '<div class="gpl-summary">'
             + "".join(
@@ -1580,9 +1616,10 @@ def _candidates_card(report: dict) -> None:
             continue
         tone = "pass" if label.startswith("✓") else "fail" if label.startswith("✗") else ""
         cls = "gpl-row rec" if name == rec else "gpl-row"
+        why = status[name]["why"]
         html.append(
-            f'<div class="{cls}" title="{escape(status[name]["why"])}"><div><b>{escape(name)}'
-            f"</b><small>{figures(r)}</small></div>{layout.pill(label, tone)}</div>"
+            f'<div class="{cls}"><div><b>{escape(name)}</b><small>{figures(r)}</small>'
+            f'<small class="gpl-why">{escape(why)}</small></div>{layout.pill(label, tone)}</div>'
         )
     st.markdown(
         '<div class="gpl-rows">' + "".join(html) + "</div>"
@@ -1616,6 +1653,42 @@ def _status_table(report: dict) -> None:
     st.table(table)
 
 
+GROWTH_CAPTION = (
+    "Lower-risk methods usually end lower in a strong bull market like 2017-2026: they're built "
+    "to fall less in crashes, not to grow faster. Judge them on the risk-vs-return chart."
+)
+
+
+def _risk_return_points(report: dict) -> pd.DataFrame:
+    """Volatility and CAGR (fractions) for every row of the walk-forward table."""
+
+    def frac(text) -> float:
+        return float(str(text).rstrip("%")) / 100
+
+    rows = report["walk_forward_after_costs"]
+    return pd.DataFrame(
+        {
+            name: {"volatility": frac(r["annual_volatility"]), "cagr": frac(r["cagr"])}
+            for name, r in rows.items()
+            if r.get("annual_volatility") not in (None, "–") and r.get("cagr") not in (None, "–")
+        }
+    ).T
+
+
+def _answer_card(report: dict) -> None:
+    """The result in one sentence, with the rule's main reason; "keep" is a normal answer."""
+    rec = report["recommendation"]
+    with st.container(border=True, key="result_summary"):
+        st.markdown(
+            f'<div class="gpl-answer">{escape(ws.answer_sentence(report))}</div>',
+            unsafe_allow_html=True,
+        )
+        reasons = rec["reasons"] or [""]
+        reason = main_reason(reasons) if rec["choice"] == KEEP else reasons[0]
+        if reason:
+            st.caption(reason)
+
+
 def _results_section(result: dict, ai_ok: bool) -> None:
     report, run = result["report"], result["run"]
     rec = report["recommendation"]
@@ -1633,27 +1706,58 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             + "\n\nNot suitable as it stands: change the holdings (e.g. add a lower-risk or "
             "cash-like holding) or review the IPS with the client."
         )
-    _summary_card(result, latest)
+    _answer_card(report)
     if st.session_state.pop("scroll_to_result", False):
         st.iframe(SCROLL_JS, height=1)  # our own constant script, not user content
     build = report.get("mode") == "build"
-    if not build and rec["choice"] in report.get("full_restructure_to_target", {}):
+    choice = rec["choice"]
+    shown = choice if choice in run.equity else None
+    rr_col, g_col = st.columns(2, gap="medium")
+    with rr_col.container(border=True, key="risk_return_card"):
+        st.markdown(
+            '<div class="gpl-section">Risk vs return</div>',
+            unsafe_allow_html=True,
+            width="content",
+            help="Each dot is one portfolio, tested month by month after costs: further left is "
+            "calmer, higher up grew faster. The recommendation is pink.",
+        )
+        plot(risk_return_chart(_risk_return_points(report), highlight=shown), key="opt_rr")
+    with g_col.container(border=True, key="opt_growth_card"):
+        st.markdown('<div class="gpl-section">Growth of $1</div>', unsafe_allow_html=True)
+        order = [n for n in ("Current", shown) if n and n in run.equity]
+        order += [n for n in run.equity.columns if n not in order]
+        equity = run.equity[order]
+        plot(
+            equity_chart(
+                equity, "", reference="Benchmark",
+                visible=[n for n in ("Current", shown, "Benchmark") if n],
+            ),
+            key="opt_growth",
+        )  # fmt: skip
+        st.caption(GROWTH_CAPTION)
+    d_col, c_col = st.columns(2, gap="medium")
+    with d_col.container(border=True, key="opt_drawdown_card"):
+        st.markdown('<div class="gpl-section">Drawdown from peak</div>', unsafe_allow_html=True)
+        cols = [n for n in ("Current", shown, "Benchmark") if n and n in run.equity]
+        daily = run.equity[cols].pct_change().dropna()
+        plot(drawdown_chart(drawdown_series(daily), "", reference="Benchmark"), key="opt_dd")
+    with c_col.container(border=True, key="candidates_card"):
+        _candidates_card(report)
+    if not build and choice in report.get("full_restructure_to_target", {}):
         st.radio(
             "Today's move",
-            move_options(report, rec["choice"]),
+            move_options(report, choice),
             key=IMPROVE_MOVE,
             on_change=_apply_improve_move,
             horizontal=True,
-            help=f"For {rec['choice']}, the adviser chooses. Default: keep the turnover limit "
+            help=f"For {choice}, the adviser chooses. Default: keep the turnover limit "
             f"({report['max_turnover']} of the portfolio). The full restructure goes all the way "
             "to the method's target today; its turnover and estimated cost (at each market's "
             "rate) are shown. Your choice feeds the suitability checks, the trade list and the "
             "client report.",
         )
-    w_col, c_col = st.columns(2, gap="medium")
-    with w_col.container(border=True, key="weights_card"):
-        choice = rec["choice"]
-        if choice in latest.index and choice != KEEP:
+    if choice in latest.index and choice != KEEP:
+        with st.container(border=True, key="weights_card"):
             pair = latest.loc[["Current", choice]]
             pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
             st.markdown('<div class="gpl-section">Weights</div>', unsafe_allow_html=True)
@@ -1661,11 +1765,6 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                 paired_bars_chart(pair.loc["Current"], pair.loc[choice], ("Current", choice), ""),
                 width="stretch",
             )
-        else:
-            st.markdown('<div class="gpl-section">Weights</div>', unsafe_allow_html=True)
-            st.caption("No change: the advice is to keep the current portfolio.")
-    with c_col.container(border=True, key="candidates_card"):
-        _candidates_card(report)
     if (
         gate
         and gate["current_passes_ips"] is False
@@ -1724,6 +1823,11 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
     mark = "≈ " if rec["status"] == "closest_fails" else "★ "  # ≈: closest, still fails
     rows.index = [(mark if n == rec["choice"] else "") + n for n in rows.index]
+    with st.expander(
+        "**Summary: what we did, found, recommend and what changes** &nbsp; :gray[The full "
+        "story of this run, current against recommended]"
+    ):
+        _summary_card(result, latest)
     full = st.expander(
         "**Full results for analysts** &nbsp; :gray[Every walk-forward measure and today's "
         "weights for each candidate]"
@@ -1790,26 +1894,6 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                     }
                 )
             )
-    with st.expander(
-        "**Walk-forward charts** &nbsp; :gray[Growth of $1 for every candidate, and "
-        f"{rec['choice']}'s drawdown against the benchmark]"
-    ):
-        plot(
-            equity_chart(
-                run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"
-            )
-        )
-        if "Benchmark" in run.equity and rec["choice"] in run.equity:
-            daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
-            rel = relative_drawdown(daily[rec["choice"]], daily["Benchmark"]).rename(rec["choice"])
-            plot(
-                lines_chart(
-                    rel.to_frame(),
-                    f"{rec['choice']}: drawdown relative to the benchmark",
-                    "Relative drawdown",
-                ),
-                width="stretch",
-            )
     swaps = report.get("swaps", [])
     if swaps:
         with st.expander(f"**Swap ideas** &nbsp; :gray[{swaps[0]['why'].split('. ')[0]}.]"):
@@ -1840,6 +1924,7 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                     unsafe_allow_html=True,
                     help="Written by the AI from the app's own tool results (every figure cites "
                     "its tool; figures no tool returned are flagged). Added to the client report.",
+                    width="content",
                 )
                 render_reply(memo["reply"])
 
@@ -2009,7 +2094,7 @@ def _optimise_guidance() -> str:
     if not result or (result["key"][0] == "build") != (mode == BUILD):
         if mode == BUILD:
             return f"Build portfolios from a curated universe that aim to beat {bench_name}."
-        return "Choose a goal and limits, then run the candidate methods."
+        return "Choose a goal, then press Optimise portfolio."
     rec = result["report"]["recommendation"]
     first = ((client_ui.current_profile() or ClientProfile()).name or "").split(" ")[0]
     whose = f"{first}'s" if first else "your"
@@ -2091,12 +2176,8 @@ def render_optimise() -> None:
         st.warning("Choose a benchmark with data in the header.")
         return
     box.__enter__()
-    st.markdown('<div class="gpl-section">Candidate methods</div>', unsafe_allow_html=True)
-    st.caption(
-        "Max Sharpe, min variance, risk parity, max diversification and target volatility, each "
-        "within your limits, judged on how they did out of sample after costs."
-    )
-    c1, c2, c3 = st.columns(3)
+    adv = st.expander("Advanced settings")
+    c1, c2, c3 = adv.columns(3)
     max_turnover = c1.number_input(
         "Max turnover (% of the portfolio)",
         5.0,
@@ -2108,7 +2189,7 @@ def render_optimise() -> None:
         "holding and buying 15% of another. Applied to each month's move and to today's change.",
     )
     use_swaps = c2.toggle(
-        "Also try swaps from the curated universe",
+        "Also try swaps from our fund list",
         value=True,
         key="opt_swaps",
         help="Sell a near-duplicate holding, or add a missing bond / sukuk diversifier: rules "
@@ -2117,13 +2198,16 @@ def render_optimise() -> None:
     max_swaps = c3.number_input(
         "Max swaps", 1, 5, int(LAB.get("max_swaps", 3)), 1, key="opt_max_swaps"
     )
+    st.markdown(f'<p class="gpl-explain">{escape(OPTIMISE_EXPLAINED)}</p>', unsafe_allow_html=True)
     profile = client_ui.current_profile()
     client_key = None if profile is None else json.dumps(profile.to_dict(), sort_keys=True)
     run_key = (
         settings_key, bench_name, goal, target, repr(limits), client_key, portfolio_value(),
         max_turnover, use_swaps, max_swaps,
     )  # fmt: skip
-    if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
+    if st.container(key="cta_optimise").button(
+        "Optimise portfolio", key="ws_run_opt", type="primary"
+    ):
         st.session_state.pop(IMPROVE_MOVE, None)  # a new run starts on the default move
         uni = None
 
@@ -2178,7 +2262,7 @@ def render_optimise() -> None:
         _run_with(bar, chips)
         _results_section(result, ai_ok)
     elif result and result["key"][0] != "build":
-        st.caption("Your goal, limits or benchmark changed: run the candidate methods again.")
+        st.caption("Your goal, limits or benchmark changed: press Optimise portfolio again.")
     _diagnosis_details(ctx)
 
 
@@ -2262,9 +2346,11 @@ with step_report:
     _proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
     layout.page_header(
         "Report & trades",
-        "Check the trades to reach "
-        + (_proposed["name"] if _proposed else "the recommendation")
-        + ", then download the client report.",
+        (
+            f"Check the trades to reach {_proposed['name']}, then download the client report."
+            if _proposed and st.session_state.get("ws_opt")
+            else "Run Optimise first to get trades; the client report is available now."
+        ),
         help="Decision support for a licensed adviser: check taxes and liquidity before trading.",
     )
     sec_rebal = st.container()
@@ -2549,6 +2635,7 @@ with step_portfolio:
                     help="Share of risk is each holding's contribution to the portfolio's "
                     "volatility (full sample). A holding whose share of risk is much larger than "
                     "its weight dominates how the portfolio moves.",
+                    width="content",
                 )
                 st.markdown(
                     f"{layout.pill('KEY FINDING', 'accent')} {ws.key_finding(w, rc)}",
@@ -2656,6 +2743,7 @@ with step_portfolio:
                     f'<div class="gpl-section">Your portfolio vs {bench_name}</div>',
                     unsafe_allow_html=True,
                     help=f"Backtest period {period_label(dates)}.",
+                    width="content",
                 )
                 growth = pd.DataFrame(
                     {"Your portfolio": (1 + p).cumprod(), bench_name: (1 + b).cumprod()}
@@ -2668,6 +2756,7 @@ with step_portfolio:
                     help="How far you fell behind the benchmark: your wealth divided by the "
                     "benchmark's, 0% at your best point relative to it, -10% when you have fallen "
                     "10% behind that point.",
+                    width="content",
                 )
                 plot(
                     drawdown_chart(
@@ -2702,8 +2791,36 @@ with step_portfolio:
         trade_kpis = st.container()
         trade_col, report_col = st.columns([1.75, 1], gap="medium")
         report_col = report_col.container(border=True, key="report_card")
+        opt_now = st.session_state.get("ws_opt")
+        opt_rec = opt_now["report"]["recommendation"] if opt_now else None
+        has_target = bool(st.session_state.get("ctx") and st.session_state.ctx.proposed)
         if not portfolio_ok:
             trade_col.info("Add holdings with price history on the Holdings tab.")
+        elif opt_rec is None and not has_target:
+            with trade_col.container(border=True, key="no_trades_yet"):
+                st.markdown(
+                    '<div class="gpl-answer">No recommendation yet.</div>', unsafe_allow_html=True
+                )
+                st.markdown("Run Optimise to get target weights and trades.")
+                st.button(
+                    "Go to Optimise",
+                    key="go_to_optimise",
+                    type="primary",
+                    on_click=layout.go_to,
+                    args=(layout.STEPS[3],),
+                )
+        elif (
+            opt_rec is not None
+            and opt_rec["choice"] == KEEP
+            and opt_rec["status"] != ("closest_fails")
+        ):
+            with trade_col.container(border=True, key="no_trades_keep"):
+                st.markdown(
+                    '<div class="gpl-answer">No trades needed: your current portfolio is kept.'
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(main_reason(opt_rec["reasons"]))
         else:
             trade_col.__enter__()
             proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
@@ -3132,11 +3249,12 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
 
 def render_report_button() -> None:
     """Build the client report on request (charts take a moment), then offer the PDF."""
-    rec_name = (report_recommendation()[0] or {}).get("choice") or "the current portfolio"
+    rec_name = (report_recommendation()[0] or {}).get("choice")
     st.markdown('<div class="gpl-section">Client report</div>', unsafe_allow_html=True)
     st.caption(
-        f"PDF: IPS summary, analysis, the {rec_name} recommendation, suitability and trades, "
-        "with an adviser sign-off."
+        "PDF: IPS summary, analysis, "
+        + (f"the {rec_name} recommendation" if rec_name else "the current portfolio")
+        + ", suitability and trades, with an adviser sign-off."
     )
     a1 = a2 = st
     on_file = client_ui.current_profile()
@@ -3277,7 +3395,7 @@ def step_statuses() -> list[layout.StepStatus]:
         todo.append("the portfolio value")
     portfolio = layout.StepStatus(
         not todo,
-        f"{len(my_weights)} holdings" + (f" · USD {value:,.0f}" if value else ""),
+        f"{len(my_weights)} holdings" + (f" · {money(value)}" if value else ""),
         todo,
     )
     analyse = layout.StepStatus(
@@ -3293,7 +3411,7 @@ def step_statuses() -> list[layout.StepStatus]:
     optimise = layout.StepStatus(
         ran,
         "recommendation ready" if ran else "not run yet",
-        [] if ran else ["choose a goal and run the candidate methods"],
+        [] if ran else ["choose a goal and press Optimise portfolio"],
     )
     suit_todo = (["a client"] if profile is None else []) + (
         ["holdings"] if not portfolio_ok else []

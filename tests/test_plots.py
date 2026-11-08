@@ -172,8 +172,33 @@ def test_several_benchmarks_are_grey_with_different_dashes_and_take_no_slot() ->
 
 
 def test_allocation_donut_centre_text_and_hidden_labels() -> None:
-    fig = allocation_chart(pd.Series({"A": 0.6, "B": 0.4}), "", center="Total<br>$360K",
+    fig = allocation_chart(pd.Series({"A": 0.6, "B": 0.4}), "", center="Total<br>$360K<br>2",
                            labels=False)  # fmt: skip
-    assert fig.layout.annotations[0].text == "Total<br>$360K"
+    texts = [a.text for a in fig.layout.annotations]
+    ys = [a.y for a in fig.layout.annotations]
+    assert texts == ["Total", "$360K", "2"] and ys[0] > ys[1] > ys[2]  # separate lines
+    assert ys[0] - ys[1] >= 0.1  # far enough apart not to overlap
     assert fig.data[0].texttemplate == "" and fig.data[0].textposition == "none"
     assert list(fig.data[0].marker.colors) == ["#1F3A5F", "#0593C6"]  # the composition palette
+
+
+def test_risk_return_chart_highlights_the_recommendation() -> None:
+    from gpl.plots import risk_return_chart
+
+    pts = pd.DataFrame(
+        {"volatility": [0.12, 0.11, 0.09, 0.05], "cagr": [0.08, 0.09, 0.085, 0.05]},
+        index=["Current", "Benchmark", "Max Sharpe", "Min variance"],
+    )
+    fig = risk_return_chart(pts, highlight="Max Sharpe")
+    by = {t.name: t for t in fig.data}
+    assert by["Max Sharpe"].marker.color == "#D83995" and by["Max Sharpe"].marker.size == 16
+    assert by["Current"].marker.color == "#0593C6"
+    assert by["Benchmark"].marker.symbol == "diamond"
+    assert list(by["Min variance"].x) == [0.05] and list(by["Min variance"].y) == [0.05]
+    assert fig.layout.xaxis.title.text.startswith("Volatility")
+
+
+def test_equity_chart_can_hide_series_in_the_legend() -> None:
+    eq = pd.DataFrame({"Current": [1, 1.1], "Max Sharpe": [1, 1.2], "Min variance": [1, 1.05]})
+    fig = equity_chart(eq, visible=["Current", "Max Sharpe"])
+    assert [t.visible for t in fig.data] == [True, True, "legendonly"]

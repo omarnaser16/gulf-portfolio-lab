@@ -77,6 +77,14 @@ def plot(fig, **kwargs) -> None:
     st.plotly_chart(fig, theme=None, **kwargs)
 
 
+def money(x: float | None, decimals: int = 0, prefix: str = "USD ") -> str:
+    """One money format everywhere: 'USD 1,269,900' (thousands separators); never a negative
+    zero ('USD -0' reads 'USD 0'); '–' when unknown."""
+    if x is None or pd.isna(x):
+        return "–"
+    return f"{prefix}{no_negative_zero(float(x), decimals):,.{decimals}f}"
+
+
 def compact_usd(x: float | None) -> str:
     """'$3.00m', '$250.0k', '$1.25bn', '$950' (fits a KPI card); '–' when unknown."""
     if x is None:

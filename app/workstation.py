@@ -20,7 +20,7 @@ from inputs import (
 )
 from streamlit_searchbox import st_searchbox
 
-from formatting import compact_usd, pct, plot
+from formatting import compact_usd, money, pct, plot
 from gpl.metrics import (
     benchmark_metrics,
     beta,
@@ -42,7 +42,7 @@ STARTER = "ws_starter_rows"  # the first-visit example holdings
 PF_VALUE, PF_VERSION = "pf_value", "pf_v"  # the one portfolio value (USD), entered once
 EDIT_LABEL = {USD: "✏️ USD", PCT: "✏️ Input %"}
 READ_ONLY = {"background-color": "#F1F0EB", "color": "#6B6B6B"}  # muted = can't edit
-READ_ONLY_COLUMNS = ["Name", "Weight", "Price"]
+READ_ONLY_COLUMNS = ["Name", "Weight", "Price (local)", "Ccy", "Price (USD)"]
 
 
 def init_state(config_groups: Mapping[str, Sequence[str]], cash_like: Sequence[str] = ()) -> None:
@@ -282,17 +282,18 @@ def render_holdings(
     if st.session_state.get("ws_add_error"):
         st.error(st.session_state.pop("ws_add_error"))
     rows = st.session_state[ROWS]
-    m1, b1, b2, b3 = st.columns([2.9, 1.35, 1.75, 2.0], vertical_alignment="bottom")
-    m1.radio("Enter as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
+    st.radio("Enter as", [USD, PCT], key=MODE, horizontal=True, on_change=_convert_mode)
     if st.session_state.get(MODE) != USD:
         value_input(st.columns([1, 2])[0], "pf_value_holdings")
     mode_col = st.session_state[MODE]
+    bar = st.container(horizontal=True, wrap=True, gap="small", key="holdings_toolbar")
+    b1 = b2 = b3 = bar
     b1.button(
         "Equal weight",
         key="ws_equal",
         on_click=_set_equal,
         help="Give every holding the same weight.",
-        width="stretch",
+        width="content",
         disabled=not rows,
     )
     b2.button(
@@ -303,9 +304,9 @@ def render_holdings(
         help="Rescale the inputs so they add up to exactly 100%."
         if mode_col == PCT
         else "Amounts are always normalised; switch to Weight (%) to rescale inputs.",
-        width="stretch",
+        width="content",
     )
-    with b3.popover("Import a list or preset", width="stretch"):
+    with b3.popover("Import a list or preset", width="content"):
         if presets:
             st.selectbox("Preset list (equal weights)", list(presets), key="ws_preset")
             st.button(
@@ -336,12 +337,6 @@ def render_holdings(
         weights, _, _ = current_weights()
         quotes = {r["ticker"]: quote(r["ticker"]) for r in rows}
 
-        def price_text(q) -> str:
-            if not q:
-                return "–"
-            local = f"{q.price:,.2f} {q.currency}"
-            return local if q.currency == "USD" else f"{local} · {q.price_usd:,.2f} USD"
-
         table = pd.DataFrame(
             {
                 "Name": [
@@ -353,10 +348,17 @@ def render_holdings(
                     float("nan") if r["value"] is None else r["value"] for r in rows
                 ],
                 "Weight": [
-                    pct(weights[r["ticker"]]) if r["ticker"] in weights else "–" for r in rows
+                    weights[r["ticker"]] * 100 if r["ticker"] in weights else float("nan")
+                    for r in rows
                 ],
                 "Remove": [False] * len(rows),
-                "Price": [price_text(quotes[r["ticker"]]) for r in rows],
+                "Price (local)": [
+                    getattr(quotes[r["ticker"]], "price", float("nan")) for r in rows
+                ],
+                "Ccy": [getattr(quotes[r["ticker"]], "currency", "") for r in rows],
+                "Price (USD)": [
+                    getattr(quotes[r["ticker"]], "price_usd", float("nan")) for r in rows
+                ],
             },
             index=pd.Index([r["ticker"] for r in rows], name="Ticker"),
         )
@@ -375,21 +377,23 @@ def render_holdings(
             on_change=_apply_edits,
             args=(key, [r["ticker"] for r in rows], mode_col),
             column_config={
-                "_index": st.column_config.TextColumn("Ticker", width=70),
+                "_index": st.column_config.TextColumn("Ticker", width=82),
                 "Name": st.column_config.TextColumn(width=150),
-                "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=100),
+                "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=104),
                 mode_col: st.column_config.NumberColumn(
                     EDIT_LABEL[mode_col],
                     min_value=0.0,
-                    format="%.2f",
-                    width=100,
+                    format="localized" if mode_col == USD else "%.2f",
+                    width=96,
                     help=edit_help,
                 ),
-                "Weight": st.column_config.TextColumn(width=68),
+                "Weight": st.column_config.NumberColumn(format="%.2f%%", width=66),
                 "Remove": st.column_config.CheckboxColumn(
-                    "✕", width=40, help="Tick to remove this holding."
+                    "✕", width=34, help="Tick to remove this holding."
                 ),
-                "Price": st.column_config.TextColumn(width=120),
+                "Price (local)": st.column_config.NumberColumn(format="%.2f", width=78),
+                "Ccy": st.column_config.TextColumn(width=46),
+                "Price (USD)": st.column_config.NumberColumn(format="%.2f", width=78),
             },
             disabled=READ_ONLY_COLUMNS,
         )
@@ -488,6 +492,31 @@ def set_holdings(rows: list[dict]) -> None:
     _bump()
 
 
+def answer_sentence(report: Mapping) -> str:
+    """The Optimise result in one sentence, from the report's own walk-forward figures.
+
+    E.g. "Switch to Max Sharpe: return 5.04% to 6.67%, volatility 8.59% to 8.33%." or "Keep
+    your current portfolio: no method beat it after costs."
+    """
+    rec = report["recommendation"]
+    rows = report["walk_forward_after_costs"]
+    choice, status = rec["choice"], rec["status"]
+    if status == "closest_fails":
+        return (
+            "No portfolio meets every IPS rule: "
+            + ("your current portfolio" if choice not in rows else choice)
+            + " is the closest, shown for discussion, not as suitable."
+        )
+    if choice not in rows:  # keep
+        return "Keep your current portfolio: no method beat it after costs."
+    now, new = rows["Current"], rows[choice]
+    lead = "Next best: switch to" if status == "next_best" else "Switch to"
+    return (
+        f"{lead} {choice}: return {now['cagr']} to {new['cagr']}, volatility "
+        f"{now['annual_volatility']} to {new['annual_volatility']}."
+    )
+
+
 def key_finding(weights: pd.Series, risk_share: pd.Series) -> str:
     """The holding whose share of risk most exceeds its share of money, in one sentence.
 
@@ -522,8 +551,7 @@ def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
         names = {g: str(g) for g in shown.index}
     value = portfolio_value()
     center = (
-        f"Total<br><span style='font-size:24px'><b>{compact_usd(value)}</b></span>"
-        f"<br>{len(weights)} holdings"
+        f"Total<br><b>{compact_usd(value)}</b><br>{len(weights)} holdings"
         if value
         else f"{len(weights)} holdings"
     )
@@ -680,7 +708,7 @@ def render_kpis(
     cols[0].metric(
         "Portfolio value",
         value_text,
-        help=f"USD {exact:,.2f}"
+        help=f"{money(exact, 2)}"
         if exact is not None
         else "Enter the portfolio value on Holdings (or holdings as USD amounts).",
     )
@@ -812,6 +840,7 @@ def render_rebalance(
             help=f"Targets start from the {target_source}; edit any target. Drift = current minus "
             "target weight. A rebalance brings every holding back to its target, with costs "
             "paid from the sales.",
+            width="content",
         )
         band = (
             band_col.number_input(
@@ -843,26 +872,29 @@ def render_rebalance(
             else None
         )
 
-        def col(series, fmt):
-            return [fmt(series[t]) if series is not None and t in series.index else "–"
-                    for t in tickers]  # fmt: skip
+        def num(series):
+            return [
+                float(series[t]) if series is not None and t in series.index else float("nan")
+                for t in tickers
+            ]
 
         frame = pd.DataFrame(
             {
-                "Action": col(None if trades is None else trades["action"], str),
-                "Current": [pct(current.get(t, 0.0)) for t in tickers],
+                "Action": [
+                    str(trades["action"][t]) if trades is not None and t in trades.index else "–"
+                    for t in tickers
+                ],
+                "Current": [current.get(t, 0.0) * 100 for t in tickers],
                 TARGET_COL: base * 100,
-                "Drift": col(
-                    None if d is None else d["drift"],
-                    lambda x: f"{no_negative_zero(x * 100, 2):+.2f} pp",
-                ),
-                "Amount (USD)": col(
-                    None if trades is None else trades["trade_usd"].abs(), "{:,.2f}".format
-                ),
-                "Est. cost": col(None if trades is None else trades["cost_usd"], "{:,.2f}".format),
-                "After (USD)": col(
-                    None if trades is None else trades["target_usd"], "{:,.2f}".format
-                ),
+                "Drift": [
+                    f"{no_negative_zero(d['drift'][t] * 100, 2):+.2f} pp"
+                    if d is not None and t in d.index
+                    else "–"
+                    for t in tickers
+                ],
+                "Amount (USD)": num(None if trades is None else trades["trade_usd"].abs().round(0)),
+                "Est. cost": num(None if trades is None else trades["cost_usd"]),
+                "After (USD)": num(None if trades is None else trades["target_usd"].round(0)),
             },
             index=pd.Index(tickers, name="Ticker"),
         )
@@ -880,9 +912,11 @@ def render_rebalance(
             width="stretch",
             disabled=[c for c in frame.columns if c != TARGET_COL],
             column_config={
-                "_index": st.column_config.TextColumn("Ticker", width=65),
+                "_index": st.column_config.TextColumn("Ticker", width=82),
                 "Action": st.column_config.TextColumn(width=55),
-                "Current": st.column_config.TextColumn(width=65),
+                "Current": st.column_config.NumberColumn("Current %", format="%.2f", width=72),
+                "Amount (USD)": st.column_config.NumberColumn(format="localized", width=100),
+                "After (USD)": st.column_config.NumberColumn(format="localized", width=100),
                 TARGET_COL: st.column_config.NumberColumn(
                     "Target %",
                     format="%.2f",
@@ -892,7 +926,7 @@ def render_rebalance(
                     help="Edit any target.",
                 ),
                 "Drift": st.column_config.TextColumn(width=78),
-                "Est. cost": st.column_config.TextColumn(width=62),
+                "Est. cost": st.column_config.NumberColumn(format="%.2f", width=70),
             },
         )
         st.caption(
@@ -928,13 +962,13 @@ def render_rebalance(
             if check["ok"]:
                 st.success(
                     f"✅ After these trades, cash-like holdings ({held_in}) are USD "
-                    f"{check['held']:,.0f}, covering the USD {check['need']:,.0f} needed "
+                    f"{check['held']:,.0f}, covering the {money(check['need'])} needed "
                     f"({cash_need['due']})."
                 )
             else:
                 st.warning(
                     f"⚠️ After these trades, cash-like holdings ({held_in}) are USD "
-                    f"{check['held']:,.0f}, USD {check['shortfall']:,.0f} short of the USD "
+                    f"{check['held']:,.0f}, {money(check['shortfall'])} short of the USD "
                     f"{check['need']:,.0f} the client needs ({cash_need['due']}). Raise the "
                     "target for cash, short-term bonds or sukuk."
                 )
@@ -959,9 +993,9 @@ def render_rebalance(
     rebalance = needs_rebalance(d)
     with kpis:
         layout_cards = [
-            ("Sells", f"USD {sells:,.0f}", ""),
-            ("Buys", f"USD {buys:,.0f}", ""),
-            ("Estimated costs", f"USD {costs:,.2f}", ""),
+            ("Sells", f"{money(sells)}", ""),
+            ("Buys", f"{money(buys)}", ""),
+            ("Estimated costs", f"{money(costs, 2)}", ""),
         ]
         from html import escape as _esc
 

@@ -17,6 +17,7 @@ import pandas as pd
 import streamlit as st
 import workstation as ws
 
+from formatting import money
 from gpl.client import (
     CLOSEST_MIX_EXAMPLES,
     CLOSEST_MIX_LABEL,
@@ -100,6 +101,9 @@ def _set_profile(profile: ClientProfile) -> None:
     st.session_state[CLIENT] = profile.to_dict()
     st.session_state[VERSION] = st.session_state.get(VERSION, 0) + 1
     st.session_state.pop("ws_draft", None)  # the Optimise form re-reads the IPS
+    # a new form version, so the goal starts from this client's risk score (old widget values
+    # would otherwise win)
+    st.session_state["ws_draft_v"] = st.session_state.get("ws_draft_v", 0) + 1
 
 
 def _load_example() -> None:
@@ -183,8 +187,8 @@ def _usd(x: float) -> str:
     if abs(x) >= 1e6:
         return f"USD {x / 1e6:.2f}m"
     if abs(x) >= 1e3:
-        return f"USD {x / 1e3:,.0f}k"
-    return f"USD {x:,.0f}"
+        return f"{money(x / 1e3)}k"
+    return f"{money(x)}"
 
 
 def _join(parts) -> str:
@@ -206,8 +210,8 @@ def section_summary(key: str, p: ClientProfile) -> str:
     if key == "financial":
         f = finances(p)
         return _join([
-            f"Net worth USD {f.net_worth:,.0f}",
-            f"investable USD {f.investable:,.0f}",
+            f"Net worth {money(f.net_worth)}",
+            f"investable {money(f.investable)}",
             f"savings rate {f.savings_rate:.1%}" if f.savings_rate is not None else "",
             f"emergency fund {f.emergency_months:.1f} months" if f.emergency_months else "",
         ])  # fmt: skip
@@ -284,8 +288,7 @@ def ips_rows(ips) -> list[tuple[str, str]]:
     due = lim["cash_needs_due"]
     liquidity = (
         "; ".join(
-            f"{n['description']}, USD {n['amount_usd']:,.0f} by {month_text(n['date'])}"
-            for n in due
+            f"{n['description']}, {money(n['amount_usd'])} by {month_text(n['date'])}" for n in due
         )  # fmt: skip
         if due
         else f"No cash need within {lim['cash_need_window_months']} months"
@@ -937,7 +940,7 @@ def _risk_card(ips) -> None:
     over = "" if calculated else f" · adviser override (calculated {r.calculated})"
     with st.container(border=True, key="risk_card"):
         st.markdown('<div class="gpl-section">Risk score</div>', unsafe_allow_html=True,
-                    help=r.explanation)  # fmt: skip
+                    help=r.explanation, width="content")  # fmt: skip
         st.markdown(
             f'<div style="display:flex;align-items:baseline;gap:10px;margin:4px 0 10px">'
             f'<span style="font-size:2.4rem;font-weight:700">{r.score or "–"}</span>'

@@ -135,8 +135,13 @@ def equity_chart(
     equity: pd.DataFrame,
     title: str = "Growth of $1",
     reference: str | Sequence[str] | None = None,
+    visible: Sequence[str] | None = None,
 ) -> go.Figure:
-    """Line chart of wealth curves, one column per strategy (``reference`` grey dashed)."""
+    """Line chart of wealth curves, one column per strategy (``reference`` grey dashed).
+
+    ``visible``: if given, only these series are drawn at first; the others stay in the legend
+    (click to show them).
+    """
     _check_series_count(_n_series(equity.columns, reference))
     fig = go.Figure()
     styles = series_styles(list(equity.columns), reference)
@@ -149,9 +154,75 @@ def equity_chart(
                 mode="lines",
                 line=styles[name],
                 hovertemplate="%{y:.2f}",
+                visible=True if visible is None or name in visible else "legendonly",
             )
         )
     return _base_layout(fig, title, "Wealth (nominal USD)", ".2f")
+
+
+def risk_return_chart(
+    points: pd.DataFrame,
+    highlight: str | None = None,
+    reference: Sequence[str] = ("Current", "Benchmark"),
+    title: str = "",
+) -> go.Figure:
+    """Risk vs return: one dot per portfolio (x annual volatility, y annual return).
+
+    ``points``: index = portfolio names, columns ``volatility`` and ``cagr`` (fractions).
+    ``highlight`` (the recommendation) is drawn larger in accent pink; ``reference`` dots
+    (today's portfolio, the benchmark) in brand blue and grey; the others in slate.
+    """
+    fig = go.Figure()
+    for name, row in points.iterrows():
+        name = str(name)
+        if name == highlight:
+            colour, size, symbol = theme.ACCENT, 16, "circle"
+        elif name == reference[0]:
+            colour, size, symbol = theme.BRAND, 14, "circle"
+        elif name in reference:
+            colour, size, symbol = theme.REFERENCE, 13, "diamond"
+        else:
+            colour, size, symbol = "#5E7186", 10, "circle"
+        fig.add_trace(
+            go.Scatter(
+                x=[float(row["volatility"])],
+                y=[float(row["cagr"])],
+                mode="markers+text",
+                name=name,
+                text=[name],
+                textposition="top center",
+                textfont={
+                    "size": 11,
+                    "color": TEXT_PRIMARY if name == highlight else TEXT_SECONDARY,
+                },
+                marker={"color": colour, "size": size, "symbol": symbol,
+                        "line": {"color": SURFACE, "width": 1.5}},
+                hovertemplate=f"{name}<br>volatility %{{x:.2%}}<br>return %{{y:.2%}}"
+                "<extra></extra>",
+                showlegend=False,
+            )
+        )  # fmt: skip
+    fig.update_layout(
+        template="gpl_light",
+        title={"text": title, "font": {"color": TEXT_PRIMARY, "size": 16}},
+        paper_bgcolor=SURFACE,
+        plot_bgcolor=SURFACE,
+        margin={"l": 60, "r": 20, "t": 40 if title else 20, "b": 50},
+        height=380,
+    )
+    # room around the dots so their labels are never clipped at the edges
+    xs, ys = points["volatility"].astype(float), points["cagr"].astype(float)
+    xpad = max((xs.max() - xs.min()) * 0.15, 0.01)
+    ypad = max((ys.max() - ys.min()) * 0.15, 0.005)
+    fig.update_xaxes(
+        title="Volatility (a year, lower is calmer)", tickformat=PCT, gridcolor=GRID,
+        range=[xs.min() - xpad, xs.max() + xpad],
+    )  # fmt: skip
+    fig.update_yaxes(
+        title="Return (CAGR, a year)", tickformat=PCT, gridcolor=GRID,
+        range=[ys.min() - ypad, ys.max() + 2 * ypad],
+    )  # fmt: skip
+    return fig
 
 
 def drawdown_chart(
@@ -472,9 +543,15 @@ def allocation_chart(
         height=360 if labels else 280,
     )
     if center:
-        fig.add_annotation(
-            text=center, showarrow=False, x=0.5, y=0.5, font={"size": 13, "color": TEXT_PRIMARY}
-        )
+        # one annotation per line, spaced apart, so a large middle line never overlaps the others
+        lines = center.split("<br>")
+        mid = (len(lines) - 1) / 2
+        for i, line in enumerate(lines):
+            big = len(lines) == 3 and i == 1
+            fig.add_annotation(
+                text=line, showarrow=False, x=0.5, y=0.5 + (mid - i) * 0.11,
+                font={"size": 24 if big else 12, "color": TEXT_PRIMARY if big else TEXT_SECONDARY},
+            )  # fmt: skip
     return fig
 
 

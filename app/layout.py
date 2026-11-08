@@ -185,7 +185,7 @@ def page_header(title: str, guidance: str, help: str | None = None, right_width:
     with left:
         st.markdown(f'<h2 class="gpl-title">{escape(title)}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="gpl-guidance">{escape(guidance)}</p>', unsafe_allow_html=True,
-                    help=help)  # fmt: skip
+                    help=help, width="content")  # fmt: skip
     return right
 
 
@@ -346,6 +346,9 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
 [data-testid="stTable"] table {{ background: var(--gpl-card); }}
 [data-testid="stTable"] th {{ background: var(--gpl-subtle); color: var(--gpl-muted);
   font-weight: 600; }}
+/* (?) icons sit right after their label, not at the far end of the row */
+[data-testid="stWidgetLabel"] {{ justify-content: flex-start !important; gap: 6px; }}
+[data-testid="stWidgetLabel"] > div {{ flex: 0 1 auto !important; width: auto !important; }}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{
   color: var(--gpl-muted); }}
 
@@ -411,6 +414,8 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
 .gpl-row.rec {{ border: 2px solid var(--gpl-accent); background: var(--gpl-accent-tint); }}
 .gpl-row b {{ font-weight: 600; }}
 .gpl-row small {{ display: block; color: var(--gpl-muted); font-size: .76rem; }}
+.gpl-row small.gpl-why {{ color: var(--gpl-text); margin-top: 2px; }}
+.gpl-row .gpl-pill {{ white-space: normal; text-align: right; max-width: 45%; }}
 .gpl-kv {{ display: grid; grid-template-columns: 34% 66%; font-size: .84rem; }}
 .gpl-kv div {{ padding: 8px 0; border-bottom: 1px solid var(--gpl-border); }}
 .gpl-kv div:nth-child(odd) {{ color: var(--gpl-muted); }}
@@ -429,6 +434,9 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
 .gpl-summary h5 {{ font-size: .72rem !important; letter-spacing: .1em; text-transform: uppercase;
   color: var(--gpl-muted) !important; margin: 0 0 8px 0 !important; padding: 0 !important; }}
 .gpl-summary > div.rec h5 {{ color: var(--gpl-accent-btn) !important; }}
+.gpl-answer {{ font-size: 1.25rem; font-weight: 650; line-height: 1.4; }}
+.gpl-explain {{ color: var(--gpl-text); background: var(--gpl-subtle); border-radius: 10px;
+  padding: 12px 14px; font-size: .9rem; margin: 8px 0; }}
 .gpl-runwith {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .82rem; }}
 
 /* ---- the result card: scrolled into view below the sticky header, briefly highlighted */
@@ -453,8 +461,10 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
 /* ---- sticky Back/Next bar */
 [class*="st-key-footer_"] {{ position: fixed; bottom: 0; left: 0; right: 0; z-index: 980;
   background: #fff; border-top: 1px solid var(--gpl-border);
-  padding: 10px max(24px, calc((100vw - {t.MAX_WIDTH_PX}px) / 2)); }}
-.gpl-foot {{ font-size: .82rem; line-height: 1.3; }}
+  padding: 10px max(180px, calc((100vw - {t.MAX_WIDTH_PX}px) / 2)) 10px
+    max(24px, calc((100vw - {t.MAX_WIDTH_PX}px) / 2)); }}
+/* the right padding keeps the buttons clear of Streamlit Cloud's "Manage app" badge */
+.gpl-foot {{ font-size: .82rem; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }}
 .gpl-foot small {{ display: block; color: var(--gpl-muted); font-size: .72rem; }}
 </style>
 """

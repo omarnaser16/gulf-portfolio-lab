@@ -76,3 +76,34 @@ def test_stylesheet_uses_the_design_tokens() -> None:
         assert token in layout.APP_CSS
     assert f"max-width: {theme.MAX_WIDTH_PX + 48}px" in layout.APP_CSS
     assert '[class*="st-key-cta_"] button' in layout.APP_CSS  # the one pink action
+
+
+def test_answer_sentence_switch_keep_and_closest() -> None:
+    rows = {
+        "Current": {"cagr": "5.04%", "annual_volatility": "8.59%"},
+        "Max Sharpe": {"cagr": "6.67%", "annual_volatility": "8.33%"},
+    }
+
+    def report(choice, status):
+        return {"recommendation": {"choice": choice, "status": status},
+                "walk_forward_after_costs": rows}  # fmt: skip
+
+    assert ws.answer_sentence(report("Max Sharpe", "recommended")) == (
+        "Switch to Max Sharpe: return 5.04% to 6.67%, volatility 8.59% to 8.33%."
+    )
+    assert ws.answer_sentence(report("Keep your current portfolio", "keep")) == (
+        "Keep your current portfolio: no method beat it after costs."
+    )
+    assert ws.answer_sentence(report("Max Sharpe", "next_best")).startswith("Next best: switch")
+    assert ws.answer_sentence(report("Keep your current portfolio", "closest_fails")).startswith(
+        "No portfolio meets every IPS rule: your current portfolio is the closest"
+    )
+
+
+def test_money_has_separators_and_never_a_negative_zero() -> None:
+    from formatting import money
+
+    assert money(1_269_900) == "USD 1,269,900"
+    assert money(-0.4) == "USD 0" and money(-0.0) == "USD 0"  # never "USD -0"
+    assert money(107.981, 2) == "USD 107.98"
+    assert money(None) == "–" and money(float("nan")) == "–"
