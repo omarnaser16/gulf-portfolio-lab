@@ -523,3 +523,66 @@ def test_candidate_statuses_improve() -> None:
     st = candidate_statuses(table, keep, "improve")
     assert st["Current"] == ("✓ Keep (recommended)", "not enough")
     assert st["Max Sharpe"][0] == "✗ Not enough better than today"
+
+
+# --------------------------------------- lower risk, keep today's return; too cautious
+
+
+def test_lower_risk_keep_return_allows_at_most_a_quarter_point_less_return() -> None:
+    # current: CAGR 8.00%, volatility 12%
+    rows = {
+        "Current": (0.0800, 0.12, 0.50, 0.55),
+        "Min variance": (0.0770, 0.07, 0.62, 0.70),  # 0.30 pp less return: rejected
+        "Risk parity": (0.0780, 0.09, 0.60, 0.70),  # 0.20 pp less return: allowed
+        "Max Sharpe": (0.0850, 0.125, 0.60, 0.70),  # more volatile: not lower risk
+    }
+    rec = recommend("reduce_risk_keep_return", table(rows))
+    assert rec.choice == "Risk parity" and rec.ranking == ["Risk parity"]
+    assert "at most 0.25 percentage points a year below" in rec.rule
+    # plain "lower risk" would take the lowest volatility, whatever the return
+    assert recommend("reduce_risk", table(rows)).choice == "Min variance"
+    # a looser tolerance lets Min variance in
+    assert recommend("reduce_risk_keep_return", table(rows), return_tolerance=0.004).choice == (
+        "Min variance"
+    )
+    none = {**rows, "Risk parity": (0.0760, 0.09, 0.60, 0.70)}
+    kept = recommend("reduce_risk_keep_return", table(none))
+    assert kept.choice == KEEP and "gave up more than 0.25 percentage points" in kept.reasons[0]
+
+
+GROWTH = {  # a 5/5 client: IPS volatility cap 20%, so under 10% is too cautious
+    "Current": (0.090, 0.150, 0.45, 0.50),
+    "Min variance": (0.055, 0.080, 0.60, 0.70),  # best Sharpe, but half the volatility
+    "Max Sharpe": (0.105, 0.140, 0.58, 0.70),
+    "Risk parity": (0.070, 0.095, 0.52, 0.70),
+}
+
+
+def test_too_cautious_candidates_are_ruled_out_for_a_growth_client() -> None:
+    rec = recommend("max_risk_adjusted", table(GROWTH), min_volatility=0.10)
+    assert rec.choice == "Max Sharpe"
+    assert set(rec.too_cautious) == {"Min variance", "Risk parity"}
+    assert "under 10.00%" in rec.too_cautious["Min variance"]
+    # without the floor the rule would steer the 5/5 client into Min variance
+    assert recommend("max_risk_adjusted", table(GROWTH)).choice == "Min variance"
+    # a lower-risk goal allows it: the client chose to lower risk
+    lower = recommend("reduce_risk", table(GROWTH), min_volatility=0.10)
+    assert lower.choice == "Min variance" and lower.too_cautious == {}
+
+
+def test_too_cautious_below_the_required_return_and_when_all_are() -> None:
+    rec = recommend("max_risk_adjusted", table(GROWTH), min_return=0.06)
+    assert set(rec.too_cautious) == {"Min variance"}  # 5.50% < 6.00% needed
+    assert "below the 6.00% the client's goals need" in rec.too_cautious["Min variance"]
+    assert rec.choice == "Max Sharpe"
+    every = recommend("max_risk_adjusted", table(GROWTH), min_return=0.20)
+    assert every.choice == KEEP and "too cautious for this client" in every.reasons[0]
+
+
+def test_too_cautious_status_label() -> None:
+    from gpl.recommend import candidate_statuses
+
+    rec = recommend("max_risk_adjusted", table(GROWTH), min_volatility=0.10)
+    status = candidate_statuses(table(GROWTH), rec, "improve")
+    assert status["Min variance"][0] == "✗ Too cautious for this client"
+    assert status["Max Sharpe"][0] == "✓ Recommended"

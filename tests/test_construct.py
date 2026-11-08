@@ -262,6 +262,7 @@ def test_improve_strategy_swaps_and_caps_turnover() -> None:
     )  # fmt: skip
     res = run_backtest((1 + r).cumprod(), st, lookback=252, cost_bps=10)
     assert [s.kind for s in st.latest_swaps] == ["diversifier"]
+    assert 0 < st.swap_months <= len(res.weights)  # months where the swap rules changed holdings
     w = res.weights
     added = st.latest_swaps[0].add
     assert w[added].iloc[-1] > 0  # the diversifier is held

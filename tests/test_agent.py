@@ -670,3 +670,46 @@ def test_mixed_calendar_sharpe_charges_interest_once(ctx) -> None:
     expected = float(sharpe_ratio(on_dates, rf, per_year))  # interest charged once
     shown = float(swapped["walk_forward_after_costs"]["Current"]["sharpe"])
     assert abs(shown - expected) < 0.02, (shown, expected)  # charged twice: ~0.09 lower
+
+
+def test_swaps_follow_the_goals_method_and_vanish_when_no_swap_fires(ctx) -> None:
+    """Regression (demo seed 92713): with "reduce risk" and no swap ever applied, "Re-weight +
+    swaps" was Min variance again, shown as a second candidate with the same figures."""
+    from gpl.agent.tools import LEAD_METHOD, run_candidates
+    from gpl.optimise import OptimisationSpec
+
+    c, uni = _universe_ctx(ctx)
+    assert LEAD_METHOD["max_risk_adjusted"] == "Max Sharpe"
+    assert LEAD_METHOD["reduce_risk"] == LEAD_METHOD["reduce_risk_keep_return"] == "Min variance"
+    no_swaps = {"SPY": 0.6, "AGG": 0.4}  # a bond fund held and no near-duplicates
+    report, _ = run_candidates(
+        c, "reduce_risk", OptimisationSpec(max_weight=0.7), no_swaps, max_turnover=0.30,
+        universe=uni,
+    )  # fmt: skip
+    assert "Re-weight + swaps" not in report["walk_forward_after_costs"]
+    note = report["identical_methods_shown_once"]["Re-weight + swaps"]
+    assert "made no swap in any month" in note and note.endswith("same as Min variance; shown once")
+    # with a swap to make (no bonds held), it runs on the Sharpe goal's own method
+    swapped, run = run_candidates(
+        c, "max_risk_adjusted", OptimisationSpec(max_weight=0.6),
+        {"SPY": 0.5, "EFA": 0.3, "EEM": 0.2}, max_turnover=0.30, universe=uni,
+    )  # fmt: skip
+    rows = swapped["walk_forward_after_costs"]
+    assert "Re-weight + swaps" in rows
+    assert (
+        rows["Re-weight + swaps"]["annual_volatility"] != rows["Min variance"]["annual_volatility"]
+    )
+
+
+def test_too_cautious_limits_from_the_ips() -> None:
+    from gpl.agent.tools import too_cautious_limits
+    from gpl.client import ClientProfile, build_ips
+    from gpl.demo import demo_client
+
+    assert too_cautious_limits(None) == {"min_return": None, "min_volatility": None}
+    growth = build_ips(demo_client(92713).profile, CFG)  # risk score 5: 20% volatility cap
+    assert growth.risk.score == 5
+    limits = too_cautious_limits(growth, 0.5)
+    assert limits["min_volatility"] == pytest.approx(0.5 * growth.limits["max_volatility"])
+    cautious = build_ips(ClientProfile(), CFG)  # incomplete questionnaire: no floor
+    assert too_cautious_limits(cautious)["min_volatility"] is None

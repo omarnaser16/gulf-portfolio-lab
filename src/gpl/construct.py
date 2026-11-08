@@ -749,7 +749,9 @@ def improve_strategy(
     """Walk-forward "re-weight + swaps": at each rebalance, the swap rules run on the trailing
     window only, the resulting holdings are re-optimised with ``spec_for(holdings)`` (the
     goal's objective under the IPS and form limits), and the move from the previous target is
-    capped at ``max_turnover``. ``strategy.latest_swaps`` holds the last window's swaps."""
+    capped at ``max_turnover``. ``strategy.latest_swaps`` holds the last window's swaps and
+    ``strategy.swap_months`` counts the rebalances where the swap rules changed the holdings
+    (zero: the candidate is just the goal's own method re-weighting today's holdings)."""
     state: dict = {"last": current / current.sum()}
 
     def strategy(window: pd.DataFrame) -> pd.Series:
@@ -761,6 +763,7 @@ def improve_strategy(
         cov, _ = ledoit_wolf_cov(win, periods_per_year)
         result = optimise(mu, cov, spec_for(holdings), _annual_rf_at(rf, window.index[-1]))
         strategy.latest_swaps = swaps  # the ideas, even in a month the limits can't be met
+        strategy.swap_months += bool(swaps)
         if result.feasible:
             target = result.weights
         else:
@@ -774,6 +777,7 @@ def improve_strategy(
 
     strategy.infeasible_dates = []
     strategy.latest_swaps = []
+    strategy.swap_months = 0
     return strategy
 
 

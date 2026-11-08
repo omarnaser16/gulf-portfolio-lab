@@ -102,7 +102,6 @@ class AnalystContext:
     proposed: dict | None = None  # {"name", "weights", "source"}: latest what-if or recommendation
     holding_groups: Mapping[str, str] | None = None  # ticker -> group chosen on the Portfolio tab
     charts: list = field(default_factory=list)  # ChartData requested via show_chart, by chart id
-    last_user_message: str = ""  # set by the Analyst; what-if numbers must come from it
     ips: Any = None  # gpl.client.IPS of the client on the Client tab, if any
     attributes: Mapping[str, Mapping[str, str]] | None = None  # Sharia status, sector
     portfolio_value: float | None = None  # USD, for the liquidity rule
@@ -692,6 +691,7 @@ def run_candidates(
         infeasible_months[name] = len(walk.infeasible_dates)
 
     swaps_run, swap_name, swaps_infeasible = None, "Re-weight + swaps", None
+    swaps_unused = None
     if universe is not None:
         say(0.72, f"2/4 Testing up to {max_swaps} swap ideas month by month")
         swaps_run = _swap_candidate(
@@ -699,7 +699,14 @@ def run_candidates(
         )
         months_run = len(swaps_run["result"].weights) if swaps_run is not None else 0
         swaps_infeasible = None
-        if swaps_run is not None and swaps_run["infeasible"] >= months_run:
+        if swaps_run is not None and swaps_run["swap_months"] == 0:
+            # no swap rule fired in any month: it is the goal's own method again, so show it once
+            swaps_unused = (
+                f"{swap_name} made no swap in any month (no near-duplicate holdings and no "
+                f"missing diversifier), so it is the same as {swaps_run['lead']}; shown once"
+            )
+            swaps_run = None
+        elif swaps_run is not None and swaps_run["infeasible"] >= months_run:
             swaps_infeasible = [
                 "After the swaps, the holdings can't meet your limits in any month."
             ]
@@ -796,6 +803,8 @@ def run_candidates(
         held_up_ratio=lab.get("held_up_ratio", 0.5),
         min_sharpe_gain=lab.get("min_sharpe_gain", 0.05),
         extra=(swap_name,) if swaps_run is not None else (),
+        return_tolerance=lab.get("keep_return_tolerance", 0.0025),
+        **too_cautious_limits(ctx.ips, lab.get("too_cautious_vol_share", 0.5)),
     )
 
     months = len(results[CURRENT].weights)
@@ -833,7 +842,8 @@ def run_candidates(
         | ({swap_name: swaps_infeasible} if universe is not None and swaps_infeasible else {}),
         "identical_methods_shown_once": {
             n: f"same weights and results as {first}" for n, first in same_as.items()
-        },
+        }
+        | ({swap_name: swaps_unused} if swaps_unused else {}),
         "same_latest_weights_different_history": same_weights,
         "recommendation": {
             "choice": rec.choice,
@@ -960,9 +970,29 @@ def run_candidates(
     return report, CandidateRun(equity, latest, rec, ips_checks, full_targets, full_checks)
 
 
+def too_cautious_limits(ips, vol_share: float = 0.5) -> dict[str, float | None]:
+    """The floors below which a candidate is too cautious for the client (``recommend``).
+
+    ``min_return``: the IPS's required return (income need net of inflation), if any;
+    ``min_volatility``: for risk scores 4 and 5, ``vol_share`` (half) of the IPS volatility
+    cap. None when there is no IPS or no such floor.
+    """
+    if ips is None:
+        return {"min_return": None, "min_volatility": None}
+    lim = ips.limits
+    growth = ips.risk.score is not None and ips.risk.score >= 4
+    return {
+        "min_return": lim.get("required_return"),
+        "min_volatility": vol_share * lim["max_volatility"]
+        if growth and lim.get("max_volatility")
+        else None,
+    }
+
+
 LEAD_METHOD = {  # the goal's own method, used for "Re-weight + swaps"
     "max_risk_adjusted": "Max Sharpe",
     "reduce_risk": "Min variance",
+    "reduce_risk_keep_return": "Min variance",
     "target_return": "Min variance",
     "target_volatility": "Target volatility",
     "beat_benchmark_less_risk": "Max Sharpe",
@@ -1023,6 +1053,8 @@ def _swap_candidate(ctx, goal, specs, current, universe, max_turnover, max_swaps
     return {
         "result": result,
         "swaps": strategy.latest_swaps,
+        "swap_months": strategy.swap_months,
+        "lead": LEAD_METHOD.get(goal, "Max Sharpe"),
         "infeasible": len(strategy.infeasible_dates),
         "in_sample": full.sharpe if full.feasible else float("nan"),
     }
@@ -1476,62 +1508,6 @@ def show_chart(ctx: AnalystContext, chart: str, section: str) -> dict:
     }
 
 
-def what_if_portfolio(ctx: AnalystContext, changes: list[dict]) -> dict:
-    """Apply the user's own what-if weights (others scaled pro-rata) and compare with today.
-
-    Every weight must appear in the user's latest message: the model transcribes, it never
-    works out a weight (e.g. "halve NVDA" must be answered with a question, not a number).
-    """
-    from gpl.agent.spec import numbers_not_in_goals
-    from gpl.scenarios import apply_what_if
-
-    if not ctx.user_portfolio:
-        raise ToolError("the user has not entered a portfolio on the Portfolio tab")
-    if not changes:
-        raise ToolError("name at least one holding and its new weight")
-    invented = numbers_not_in_goals(
-        {"asset_limits": [{"min_pct": c["weight_pct"], "max_pct": None} for c in changes]},
-        ctx.last_user_message,
-    )
-    if invented:
-        raise ToolError(
-            f"these weights are not in the user's message: {', '.join(invented)}. Ask the user "
-            "for the exact weights instead of working them out."
-        )
-    unknown = [c["ticker"] for c in changes if c["ticker"] not in ctx.prices.columns]
-    if unknown:
-        raise ToolError(f"no price data loaded for {', '.join(unknown)}")
-    try:
-        new = apply_what_if(
-            ctx.user_portfolio, {c["ticker"]: c["weight_pct"] / 100 for c in changes}
-        )
-    except ValueError as e:
-        raise ToolError(str(e)) from e
-    label = ", ".join(f"{c['ticker']} {c['weight_pct']:g}%" for c in changes)
-    ctx.proposed = {"name": "What-if", "weights": new[new > 0].to_dict(), "source": label}
-    old = pd.Series(ctx.user_portfolio, dtype=float).reindex(new.index).fillna(0.0)
-    out: dict[str, Any] = {
-        "what_if": label,
-        "rule": "Named holdings set exactly; the others scaled pro-rata to keep 100%.",
-        "weights": {
-            t: {
-                "current": pct(old[t]),
-                "what_if": pct(new[t]),
-                "change": pp_change(new[t] - old[t]),
-            }
-            for t in new.index
-        },
-        "now_proposed": "Charts compare Current with What-if until the next what-if.",
-    }
-    if ctx.benchmark is not None:
-        from gpl.agent.charts import chart_data, metrics_display
-
-        out["key_figures_after_costs"] = metrics_display(
-            chart_data(ctx, "metrics_table").frames["kpis"]
-        ).to_dict()
-    return out
-
-
 def stress_test(ctx: AnalystContext) -> dict:
     """Current (and proposed) portfolio vs the benchmark in historical stress episodes."""
     from gpl.agent.charts import chart_data, chart_summary
@@ -1760,26 +1736,6 @@ def tool_definitions(ctx: AnalystContext) -> list[dict]:
             },
         ),
         tool(
-            "what_if_portfolio",
-            "Try the user's own what-if weights, e.g. 'cut NVDA to 10%'. Weights in percent, "
-            "copied exactly from the user's message (never work one out); the other holdings "
-            "are scaled pro-rata to keep 100%. Sets the proposed portfolio for later charts.",
-            {
-                "changes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "ticker": {"type": "string", "enum": list(ctx.prices.columns)},
-                            "weight_pct": {"type": "number"},
-                        },
-                        "required": ["ticker", "weight_pct"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-        ),
-        tool(
             "stress_test",
             "How the current portfolio (and the proposed one, if any) did against the benchmark "
             "in historical stress episodes (COVID crash, 2020 oil crash, 2022 rate shock), with "
@@ -1952,7 +1908,6 @@ EXECUTORS: dict[str, Callable[..., dict]] = {
     "get_my_portfolio": get_my_portfolio,
     "get_portfolio_diagnosis": get_portfolio_diagnosis,
     "show_chart": show_chart,
-    "what_if_portfolio": what_if_portfolio,
     "stress_test": stress_test,
     "check_suitability": check_suitability_tool,
     "get_drift_and_trades": get_drift_and_trades,

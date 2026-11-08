@@ -104,6 +104,8 @@ optimise_lab:
   volatility_tolerance: 0.005      # 0.50 pp: "about the same" / "on target" volatility
   held_up_ratio: 0.50              # keeps >= 50% of its in-sample Sharpe out of sample
   min_sharpe_gain: 0.05            # a change must beat the current Sharpe by this much
+  keep_return_tolerance: 0.0025    # lower risk, keep today's return: at most 0.25 pp a year less
+  too_cautious_vol_share: 0.5      # risk scores 4-5: volatility under half the IPS cap is too cautious
   # "Build a portfolio for me" and "Improve my current portfolio" (gpl/construct.py)
   tracking_error_max: 0.04         # build: at most 4% a year away from the benchmark
   build_min_information_ratio: 0.10  # build: "beats the benchmark" needs IR >= 0.10 (else noise)

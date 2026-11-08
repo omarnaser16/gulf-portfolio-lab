@@ -20,6 +20,7 @@ from gpl.optimise import OptimisationSpec
 GOALS: dict[str, str] = {
     "max_risk_adjusted": "Maximise risk-adjusted return (Sharpe)",
     "reduce_risk": "Reduce risk",
+    "reduce_risk_keep_return": "Lower risk, keep today's return",
     "target_return": "Reach a target return with the least risk",
     "target_volatility": "Highest return at a target volatility",
     "beat_benchmark_less_risk": "Beat the benchmark with less risk",
@@ -33,6 +34,8 @@ CANDIDATES: dict[str, str] = {  # display name -> optimiser objective
 }
 CURRENT, BENCHMARK, KEEP = "Current", "Benchmark", "Keep your current portfolio"
 SHARPE_GOALS = ("max_risk_adjusted", "beat_benchmark_less_risk")  # decided on Sharpe ratios
+LOWER_RISK_GOALS = ("reduce_risk", "reduce_risk_keep_return")  # may be cautious on purpose
+TOO_CAUTIOUS = "Too cautious for this client"
 _EPS = 1e-9  # so a gain of exactly the minimum counts despite floating-point rounding
 
 
@@ -80,6 +83,7 @@ class Recommendation:
     # closest one, or KEEP when the current portfolio is closest)
     status: str = "recommended"
     current_passes_ips: bool | None = None  # None: no IPS to check against
+    too_cautious: dict[str, str] = field(default_factory=dict)  # candidate -> why
 
 
 def _closest(pool: pd.DataFrame) -> str:
@@ -95,6 +99,11 @@ RULES = {
     "reduce_risk": (
         "Lowest walk-forward volatility, below your current portfolio's; when two are within "
         "{tol} of each other, the higher Sharpe ratio wins."
+    ),
+    "reduce_risk_keep_return": (
+        "Lowest walk-forward volatility, below your current portfolio's, among methods whose "
+        "walk-forward CAGR is at most {keep} a year below your current portfolio's; when two are "
+        "within {tol} of each other, the higher Sharpe ratio wins."
     ),
     "target_return": (
         "Lowest walk-forward volatility among methods whose walk-forward CAGR reached your "
@@ -126,18 +135,32 @@ def held_up(in_sample_sharpe: float, walk_forward_sharpe: float, ratio: float = 
     return walk_forward_sharpe >= ratio * in_sample_sharpe
 
 
-def _ranked(goal, cands, current, benchmark, target, tol) -> tuple[list[str], list[str]]:
-    """Qualifying candidates, best first, and notes (e.g. 'none reached the target')."""
+def _ranked(
+    goal, cands, current, benchmark, target, tol, keep: float = 0.0025
+) -> tuple[list[str], list[str]]:
+    """Qualifying candidates, best first, and notes (e.g. 'none reached the target').
+
+    ``keep``: for "lower risk, keep today's return", how far below the current portfolio's
+    walk-forward CAGR a candidate may fall (0.0025 = 0.25 percentage points a year).
+    """
     notes: list[str] = []
     by_sharpe = cands.sort_values("sharpe", ascending=False)
     match goal:
         case "max_risk_adjusted":
             return list(by_sharpe.index), notes
-        case "reduce_risk":
+        case "reduce_risk" | "reduce_risk_keep_return":
             lower = cands[cands["volatility"] < current["volatility"]]
             if lower.empty:
                 notes.append("No method had lower volatility than your current portfolio.")
                 return [], notes
+            if goal == "reduce_risk_keep_return":
+                lower = lower[lower["cagr"] >= current["cagr"] - keep - _EPS]
+                if lower.empty:
+                    notes.append(
+                        "Every method with lower volatility gave up more than "
+                        f"{keep * 100:.2f} percentage points of return a year."
+                    )
+                    return [], notes
             # bucket volatility by the tolerance, then prefer the higher Sharpe within a bucket
             lowest = lower["volatility"].min()
             near = lower[lower["volatility"] <= lowest + tol].sort_values("sharpe", ascending=False)
@@ -171,7 +194,7 @@ def _ranked(goal, cands, current, benchmark, target, tol) -> tuple[list[str], li
     raise ValueError(f"unknown goal {goal!r}; choose one of {list(GOALS)}")
 
 
-def _improves(goal, pick, current, benchmark, target, tol, min_gain) -> bool:
+def _improves(goal, pick, current, benchmark, target, tol, min_gain, keep=0.0025) -> bool:
     """Does the pick do better than the current portfolio on the goal's own terms?
 
     Where the comparison is on the Sharpe ratio, the pick must beat the current portfolio by at
@@ -182,6 +205,11 @@ def _improves(goal, pick, current, benchmark, target, tol, min_gain) -> bool:
             return pick["sharpe"] >= current["sharpe"] + min_gain - _EPS
         case "reduce_risk":
             return pick["volatility"] < current["volatility"]
+        case "reduce_risk_keep_return":
+            return (
+                pick["volatility"] < current["volatility"]
+                and pick["cagr"] >= current["cagr"] - keep - _EPS
+            )
         case "target_return":
             if pick["cagr"] >= target:
                 return current["cagr"] < target or pick["volatility"] < current["volatility"]
@@ -213,10 +241,23 @@ def recommend(
     held_up_ratio: float = 0.5,
     min_sharpe_gain: float = 0.05,
     extra: tuple[str, ...] = (),
+    return_tolerance: float = 0.0025,
+    min_return: float | None = None,
+    min_volatility: float | None = None,
 ) -> Recommendation:
     """Apply the goal's rule to walk-forward results.
 
     ``extra``: further candidate rows judged by the same rule (e.g. "Re-weight + swaps").
+    ``return_tolerance``: for "lower risk, keep today's return", the most a candidate's
+    walk-forward CAGR may fall below the current portfolio's (0.0025 = 0.25 pp a year).
+
+    Too cautious for this client
+    ----------------------------
+    Suitability works both ways: unless the goal is a lower-risk one, a candidate is ruled out
+    as too cautious if its walk-forward CAGR is below ``min_return`` (the IPS's required return)
+    or its volatility is below ``min_volatility`` (half the IPS volatility cap for risk scores 4
+    and 5). A growth client is never steered into a portfolio that roughly halves their growth
+    without choosing that goal.
 
     Parameters
     ----------
@@ -257,13 +298,32 @@ def recommend(
     if goal in ("target_return", "target_volatility") and target is None:
         raise ValueError(f"{goal} needs a target")
     tol_text = f"{tolerance * 100:.2f} percentage points"
-    rule = RULES[goal].format(tol=tol_text, gain=f"{min_sharpe_gain:.2f}")
+    rule = RULES[goal].format(
+        tol=tol_text,
+        gain=f"{min_sharpe_gain:.2f}",
+        keep=f"{return_tolerance * 100:.2f} percentage points",
+    )
     current = table.loc[CURRENT]
     benchmark = table.loc[BENCHMARK] if BENCHMARK in table.index else None
     if goal == "beat_benchmark_less_risk" and benchmark is None:
         raise ValueError("beat_benchmark_less_risk needs a Benchmark row")
     cands = table[table.index.isin([*CANDIDATES, *extra])]
     cands = cands[cands["feasible"].astype(bool)]
+    cautious: dict[str, str] = {}
+    if goal not in LOWER_RISK_GOALS:
+        for name, r in cands.iterrows():
+            if min_return is not None and r["cagr"] < min_return - _EPS:
+                cautious[name] = (
+                    f"Return {r['cagr']:.2%} a year is below the {min_return:.2%} the client's "
+                    "goals need."
+                )
+            elif min_volatility is not None and r["volatility"] < min_volatility - _EPS:
+                cautious[name] = (
+                    f"Volatility {r['volatility']:.2%} is under {min_volatility:.2%}, half of what "
+                    "this client's risk score allows: too little growth for a growth investor "
+                    "(choose a lower-risk goal to allow it)."
+                )
+        cands = cands.drop(index=list(cautious))
     survived = {
         n: held_up(r["in_sample_sharpe"], r["sharpe"], held_up_ratio) for n, r in cands.iterrows()
     }
@@ -273,7 +333,7 @@ def recommend(
     def keep(reasons: list[str], ranking: list[str]) -> Recommendation:
         if gate:
             reasons = [*reasons, "Your current portfolio passes every IPS rule."]
-        return Recommendation(KEEP, rule, reasons, ranking, survived, "keep", current_ok)
+        return Recommendation(KEEP, rule, reasons, ranking, survived, "keep", current_ok, cautious)
 
     if gate:
         passing = cands[cands["passes_ips"].astype(bool)]
@@ -295,16 +355,29 @@ def recommend(
                 "breaches). It is shown for discussion, not as a suitable portfolio."
             )
             choice = KEEP if closest == CURRENT else closest
-            return Recommendation(choice, rule, reasons, [], survived, "closest_fails", current_ok)
-        if not current_ok:
-            return _move_off_failing(
-                goal, passing, current, benchmark, target, tolerance, rule, survived, held_up_ratio
+            return Recommendation(
+                choice, rule, reasons, [], survived, "closest_fails", current_ok, cautious
             )
+        if not current_ok:
+            moved = _move_off_failing(
+                goal, passing, current, benchmark, target, tolerance, rule, survived,
+                held_up_ratio, return_tolerance,
+            )  # fmt: skip
+            moved.too_cautious = cautious
+            return moved
         cands = passing
     if cands.empty:
+        if cautious:
+            return keep(
+                [
+                    f"Every method that met your limits was {TOO_CAUTIOUS.lower()}: "
+                    + " ".join(f"{n}: {why}" for n, why in cautious.items())
+                ],
+                [],
+            )
         return keep(["No method could meet your limits."], [])
 
-    ranking, reasons = _ranked(goal, cands, current, benchmark, target, tolerance)
+    ranking, reasons = _ranked(goal, cands, current, benchmark, target, tolerance, return_tolerance)
     if not ranking:
         return keep(reasons, ranking)
     pick = next((n for n in ranking if survived[n]), None)
@@ -320,7 +393,10 @@ def recommend(
             f"{held_up_ratio:.0%} of its in-sample Sharpe ratio), so the next method that did "
             f"is recommended."
         )
-    if not _improves(goal, cands.loc[pick], current, benchmark, target, tolerance, min_sharpe_gain):
+    if not _improves(
+        goal, cands.loc[pick], current, benchmark, target, tolerance, min_sharpe_gain,
+        return_tolerance,
+    ):  # fmt: skip
         gain = cands.loc[pick, "sharpe"] - current["sharpe"]
         if goal in SHARPE_GOALS and 0 < gain < min_sharpe_gain - _EPS:
             reasons.append(
@@ -337,11 +413,13 @@ def recommend(
     reasons.insert(0, f"{pick} ranks first under the rule: {rule[0].lower()}{rule[1:]}")
     if gate:
         reasons.append(f"{pick} passes every IPS rule.")
-    return Recommendation(pick, rule, reasons, ranking, survived, "recommended", current_ok)
+    return Recommendation(
+        pick, rule, reasons, ranking, survived, "recommended", current_ok, cautious
+    )
 
 
 def _move_off_failing(
-    goal, passing, current, benchmark, target, tol, rule, survived, held_up_ratio
+    goal, passing, current, benchmark, target, tol, rule, survived, held_up_ratio, keep=0.0025
 ) -> Recommendation:
     """The current portfolio fails the IPS: recommend the best candidate that passes.
 
@@ -349,7 +427,7 @@ def _move_off_failing(
     for the goal), and one that held up out of sample is preferred, but no improvement on the
     goal is required: staying outside the client's limits is not an option.
     """
-    ranking, notes = _ranked(goal, passing, current, benchmark, target, tol)
+    ranking, notes = _ranked(goal, passing, current, benchmark, target, tol, keep)
     rest = [n for n in passing.sort_values("sharpe", ascending=False).index if n not in ranking]
     order = ranking + rest
     pick = next((n for n in order if survived[n]), order[0])
@@ -711,7 +789,9 @@ def candidate_statuses(
                 out[name] = ("Ranked lower", "Passed every test; another option ranked higher.")
             continue
         # improve
-        if "passes_ips" in table and not bool(r["passes_ips"]):
+        if name in rec.too_cautious:
+            out[name] = (f"✗ {TOO_CAUTIOUS}", rec.too_cautious[name])
+        elif "passes_ips" in table and not bool(r["passes_ips"]):
             out[name] = (STATUS_LABELS["ips"], why_failed(name, ["ips"]))
         elif not rec.held_up.get(name, True):
             out[name] = (STATUS_LABELS["held_up"], why_failed(name, ["held_up"]))
