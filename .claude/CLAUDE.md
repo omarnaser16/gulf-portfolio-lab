@@ -109,7 +109,8 @@ streamlit run app/streamlit_app.py
   engine. What-if weights must appear in the user's own message; the other holdings are scaled
   pro-rata.
 - **Adviser workflow:** the AI only fills the client form's facts from the adviser's notes
-  (never the risk questionnaire, scores or limits); the risk score, IPS limits, suitability,
+  (never the risk questionnaire, scores or limits; its tool is too large for strict mode, so
+  `profile.clean_draft` validates every field in code); the risk score, IPS limits, suitability,
   drift trades and domicile figures come from tested rules (`client.py`, `suitability.py`,
   `scenarios.py`, `domicile.py`). Everything is decision support for a licensed adviser;
   domicile output is labelled "information, not tax advice".

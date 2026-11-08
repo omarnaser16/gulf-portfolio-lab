@@ -121,8 +121,8 @@ Every limitation, in detail: [docs/METHODOLOGY.md](docs/METHODOLOGY.md#limitatio
 
 The LLM (Claude, via the Anthropic API) never calculates, chooses weights or picks the
 recommendation:
-- **Forms only:** it copies facts into forms through strict tool schemas with no weight, score or
-  method fields.
+- **Forms only:** it copies facts into forms through tool schemas with no weight, score or
+  method fields; code checks every field (type, range, allowed values) before a form changes.
 - **Tools for figures:** it explains results by calling 17 tools that wrap the engine.
 - **Checked by code:** every figure in its memo is compared with the tool outputs. See
   [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -182,7 +182,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 972 tests, no network needed
+pytest -q                       # 989 tests, no network needed (live AI tests skip without a key)
 streamlit run app/streamlit_app.py
 ```
 

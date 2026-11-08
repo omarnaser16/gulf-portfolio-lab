@@ -671,3 +671,30 @@ days; the work itself was done in a series of sessions.
   something worse than what it rejected. A turnover number is only as good as its annualisation.
   A turnover limit on its own leaves dust; selling it has to fit inside the same limit.
 - **Status:** 972 tests (971 pass locally; the real-install test runs in CI).
+
+## 2026-11-08 — "Fill the form with AI" failed on the live app
+- **Problem:** the Client tab's AI intake returned a raw 400: "The compiled grammar is too
+  large… Simplify your tool schemas or reduce the number of strict tools." The fact-find tool
+  had grown to about 40 fields, too many for the API's strict mode.
+- **Decided:** fix it without loosening the rule that the AI only copies facts and never fills
+  the risk questionnaire; check every other AI tool; show plain messages; add live tests.
+- **Built by Claude Code:**
+  - A live probe with my key first: only the intake tool failed. `propose_spec` and the
+    analyst's 17 tools compile even with all 62 securities in their lists.
+  - The intake tool is no longer strict. `profile.clean_draft` checks every field in code before
+    the form changes (numbers in range, choices from the form's options, yes/no as yes/no) and
+    drops anything else, including any field the form doesn't have (a risk score, say), and
+    tells the adviser what was dropped. Field descriptions in the schema now point "at least
+    15% in the Gulf" to the GCC minimum: before, the model filed it under unmapped requests in
+    4 of 6 tries; after, 8 of 8.
+  - `agent/api.py`: strict tools retry once without strict mode if the grammar is ever too
+    large (their inputs are also checked in code); `friendly_error` turns API failures into
+    plain messages (key rejected, busy, unavailable, couldn't process) and logs the details.
+    Used by the client form, Optimise's goals and the analyst.
+  - Live smoke tests (`pytest -m live`, skipped without a key, so CI skips them): a short note
+    ("Risky investor aiming for high returns in Europe"), a long detailed note, the goals tool,
+    and both strict tool sets with the full universe. All pass with my key.
+- **Learned:** strict mode guarantees the schema but has a size budget; past it, validate in
+  code instead. Model output varies run to run, so a live test needs repeating before trusting
+  it (the first run passed by luck).
+- **Status:** 989 tests: 988 pass locally with my key (including 6 live API tests), the real-install test runs in CI; CI skips the live ones.

@@ -43,7 +43,7 @@ flowchart TB
     end
 
     subgraph GUARD["Code-enforced guardrails"]
-        G1["Strict tool schemas:<br/>no weight, method or score fields"]
+        G1["Tool schemas with no weight,<br/>method or score fields;<br/>inputs checked in code"]
         G2["Numbers not in the user's text<br/>are flagged before use"]
         G3["calculate accepts only numbers<br/>already returned by tools"]
         G4["Every figure in the memo checked<br/>against tool outputs; disclaimer appended"]
@@ -102,6 +102,7 @@ Everything that produces a number a client might rely on:
   rule. Otherwise the rule keeps the current portfolio, falls back to a labelled next-best option
   (in Build, held to the same tests as every candidate, and never one another IPS-passing
   candidate beats on every measure), or shows the closest portfolio with its breaches.
+- **Calling the API** (`agent/api.py`): strict tools fall back once to non-strict if their grammar is ever too large (every input is also checked in code), and API failures are shown as plain messages, with details in the log.
 - **The plain-English summary** (`summary.py`, `recommend.candidate_statuses`): the summary
   card ("what we did / found / recommend / what changes"), each candidate's status and reason,
   and the current-vs-recommended cards are assembled by code from the report's facts. They are
@@ -130,7 +131,7 @@ The LLM is called in three places, each with a narrow job.
 
 | Call | It does | It cannot |
 |---|---|---|
-| `agent/profile.py` `propose_profile` | Copies facts from the adviser's notes into the client form (name, age, dated cash needs, tax notes, region minimums). | Fill in the risk questionnaire, scores or IPS limits. Any number not in the notes is flagged, and code (not the AI) turns "in 18 months" into a date. |
+| `agent/profile.py` `propose_profile` | Copies facts from the adviser's notes into the client form (name, age, dated cash needs, tax notes, region minimums). | Fill in the risk questionnaire, scores or IPS limits. Any number not in the notes is flagged, and code (not the AI) turns "in 18 months" into a date. Its tool is not strict (too large for strict mode's grammar), so `clean_draft` checks every field's type, range and allowed values in code first. |
 | `agent/spec.py` `propose_spec` | Turns plain-English goals into one of five goals, a target and limits, as written. | Choose weights or a method: the strict schema has no such fields. The adviser confirms the spec before anything runs. |
 | `agent/analyst.py` `Analyst` | Writes the memo: decides which of the 17 tools to call, which charts to show (from a fixed list) and how to explain the results. | Calculate, change a chart's data, or recommend anything the rule did not choose. |
 
@@ -162,7 +163,7 @@ The LLM is called in three places, each with a narrow job.
 | Choose weights or an optimisation method | `propose_spec` has a strict schema with no weight or method fields, and the user confirms the spec. |
 | Choose the recommendation | `recommend.py` applies a fixed, tested rule; the agent can only read it with `get_optimisation_result`. |
 | Call a failing portfolio suitable | Only portfolios that pass every suitability rule can be recommended; otherwise `closest_fails` shows each breach. |
-| Set the risk score or IPS limits | `client.py` scores the questionnaire and sets the limits; `propose_profile`'s schema excludes them. |
+| Set the risk score or IPS limits | `client.py` scores the questionnaire and sets the limits; `propose_profile`'s schema excludes them, and `clean_draft` drops any field the form doesn't have before it is applied. |
 | Invent chart data | `agent/charts.py` computes each chart from the engine, and tests check that the AI's text cannot change one. |
 | Promise returns | The prompt forbids it; results are labelled historical, and code appends the "not investment advice" disclaimer. |
 

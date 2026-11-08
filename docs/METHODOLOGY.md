@@ -337,6 +337,18 @@ key figures the AI may quote. Tests check every chart type against an independen
 and that the AI's text cannot change a chart. `what_if_portfolio` refuses any weight that isn't
 in the user's own message ("halve NVDA" gets a question back, not a computed 10%).
 
+**Notes to the client form.** One model call fills `propose_profile` with facts the adviser
+wrote. It has no fields for the risk questionnaire, scores or limits. With about 40 fields its
+schema is too large for the API's strict mode (a live 400, "The compiled grammar is too large",
+on 8 Nov 2026), so the tool is not strict and `profile.clean_draft` enforces the schema in code
+before the form changes: numbers must be numbers within a sensible range, choices must be the
+form's options, and any extra field (a risk score, say) is dropped and reported to the adviser.
+Numbers not in the notes are flagged as before. The other AI tools stay strict and fit the
+grammar with all 62 securities in their lists (checked live); if one ever doesn't, the call is
+retried once without strict mode (`agent/api.py`). API failures are shown in plain words; live
+smoke tests (`pytest -m live`, skipped without a key) call the real API with a short and a long
+note.
+
 **Goals to a recommendation.** A separate, single model call fills one strict tool,
 `propose_spec`, whose schema is the spec: one of five goals, a target if the goal needs one, a
 per-asset cap, asset and group limits, a volatility cap and a return floor, in percent as the user
@@ -371,7 +383,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 972 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
+**Testing.** 989 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
