@@ -929,7 +929,7 @@ def client_report(inputs: ReportInputs, compress: bool = True) -> bytes:
         story.append(para("Why", "h3"))
         story += _bullets(rec["reasons"])
         if rec.get("swaps"):
-            story.append(para("Changes to your holdings", "h3"))
+            story.append(para("Swap ideas", "h3"))
             story += _bullets(rec["swaps"])
         if rec.get("securities"):
             story.append(para("Securities chosen and why", "h3"))

@@ -610,8 +610,9 @@ def swap_ideas(
                         "duplicate",
                         drop,
                         None,
-                        f"{drop} and {keep} move almost together (weekly correlation {c:.2f}): "
-                        f"sell {drop}, which had the lower risk-adjusted return, and keep {keep}.",
+                        f"{drop} and {keep} move almost together (weekly correlation {c:.2f}) "
+                        f"and {drop} had the lower risk-adjusted return, so the swap rule sells "
+                        f"{drop} and keeps {keep}.",
                     )
                 )
     has_defensive = any(classes.get(t) in DEFENSIVE[:3] for t in held)
@@ -631,9 +632,10 @@ def swap_ideas(
                     "diversifier",
                     None,
                     pick,
-                    f"No bond, sukuk or cash holding: add {pick} ({universe[pick]['name']}), the "
-                    f"eligible {universe[pick]['asset_class'].lower()} fund least correlated "
-                    f"with the portfolio ({corr[pick]:.2f}).",
+                    f"No bond, sukuk or cash holding, so the swap rule adds {pick} "
+                    f"({universe[pick]['name']}), the eligible "
+                    f"{universe[pick]['asset_class'].lower()} fund least correlated with the "
+                    f"portfolio ({corr[pick]:.2f}).",
                 )
             )
     return ideas[:max_swaps]
@@ -677,6 +679,50 @@ def domicile_suggestions(
             )
         )
     return out
+
+
+def swap_outcome(
+    swap: Swap,
+    choice: str,
+    is_swap_candidate: bool,
+    now: Mapping[str, float],
+    recommended: Mapping[str, float] | None,
+    max_turnover: str | None = None,
+) -> str:
+    """What today's recommended move does with a swap idea, in one sentence.
+
+    The swap rule's reason says what the rule found; the recommended portfolio may still differ:
+    another method may be recommended, or the turnover limit may allow only part of the move.
+    ``now`` / ``recommended``: today's and the recommended weights (``recommended`` None when
+    the advice is to keep the current portfolio); ``max_turnover`` as shown, e.g. "30.00%".
+    E.g. "Within the 30.00% turnover limit, today's move only trims IEF from 7.31% to 4.97%;
+    a full restructure would sell it all."
+    """
+    if recommended is None:
+        return "The advice is to keep the current portfolio, so this swap is not made today."
+    ticker = swap.remove or swap.add
+    before, after = float(now.get(ticker, 0.0)), float(recommended.get(ticker, 0.0))
+    limit = f"Within the {max_turnover} turnover limit, " if max_turnover else ""
+    if swap.remove:
+        if after <= 1e-9:
+            return (
+                "The recommended move sells it."
+                if is_swap_candidate
+                else f"The recommended {choice} portfolio also sells it."
+            )
+        if is_swap_candidate:
+            return (
+                f"{limit}today's move only trims {ticker} from {before:.2%} to {after:.2%}; "
+                "a full restructure would sell it all."
+            )
+        return (
+            f"The recommended {choice} portfolio doesn't make this swap: it holds {ticker} at "
+            f"{after:.2%} (from {before:.2%})."
+        )
+    if after > 1e-9:
+        who = "move" if is_swap_candidate else f"{choice} portfolio"
+        return f"The recommended {who} buys {after:.2%}."
+    return f"The recommended {choice} portfolio doesn't add it."
 
 
 def apply_swaps(current: pd.Series, swaps: list[Swap]) -> list[str]:

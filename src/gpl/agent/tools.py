@@ -916,8 +916,25 @@ def run_candidates(
                 row["passes_ips"] = "no IPS"
             report["full_restructure_to_target"][name] = row
     if swaps_run is not None:
+        from gpl.construct import swap_outcome
+
+        recommended = None if rec.choice == KEEP else latest.loc[rec.choice].to_dict()
         report["swaps"] = [
-            {"kind": sw.kind, "sell": sw.remove, "buy": sw.add, "why": sw.reason}
+            {
+                "kind": sw.kind,
+                "sell": sw.remove,
+                "buy": sw.add,
+                "why": sw.reason
+                + " "
+                + swap_outcome(
+                    sw,
+                    rec.choice,
+                    rec.choice == swap_name,
+                    w_now.to_dict(),
+                    recommended,
+                    report.get("max_turnover"),
+                ),
+            }
             for sw in swaps_run["swaps"]
         ]
     if universe is not None:

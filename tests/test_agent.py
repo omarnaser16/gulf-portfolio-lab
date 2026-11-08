@@ -527,6 +527,15 @@ def test_improve_caps_turnover_runs_swaps_and_lists_domicile_ideas(ctx) -> None:
     assert set(report["candidate_status"]) == set(report["walk_forward_after_costs"])
     assert "Re-weight + swaps" in report["walk_forward_after_costs"]
     assert any(sw["kind"] == "diversifier" for sw in report["swaps"])
+    # each swap note says what the recommended move does with it, not just "sell" or "add"
+    choice = report["recommendation"]["choice"]
+    for sw in report["swaps"]:
+        assert "the swap rule" in sw["why"]
+        assert (
+            "keep the current portfolio" in sw["why"]
+            or "The recommended" in sw["why"]
+            or ("today's move only trims" in sw["why"])
+        ), (choice, sw["why"])
     now = pd.Series(current)
     for name in run.latest_weights.index.drop("Current"):
         assert turnover(now, run.latest_weights.loc[name]) <= 0.30 + 1e-6, name

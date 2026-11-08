@@ -372,3 +372,34 @@ def test_domicile_suggestions_only_claim_what_applies() -> None:
     assert "withholding on its dividends" in ideas["SPY"]
     assert "withholding" not in ideas["BIL"] and "estate-tax" in ideas["BIL"]
     assert "pays no dividends" in ideas["GLD"]
+
+
+def test_swap_outcome_says_what_the_recommended_move_does() -> None:
+    from gpl.construct import Swap, swap_outcome
+
+    sell = Swap("duplicate", "IEF", None, "IEF and AGG move almost together…")
+    now = {"IEF": 0.0731, "AGG": 0.2269}
+    # the seed-2 case: another method is recommended and only trims IEF
+    assert swap_outcome(sell, "Max Sharpe", False, now, {"IEF": 0.0497}, "30.00%") == (
+        "The recommended Max Sharpe portfolio doesn't make this swap: it holds IEF at 4.97% "
+        "(from 7.31%)."
+    )
+    # the swap candidate is recommended but the turnover limit allows only part of the sale
+    assert swap_outcome(sell, "Re-weight + swaps", True, now, {"IEF": 0.0497}, "30.00%") == (
+        "Within the 30.00% turnover limit, today's move only trims IEF from 7.31% to 4.97%; "
+        "a full restructure would sell it all."
+    )
+    assert swap_outcome(sell, "Re-weight + swaps", True, now, {"AGG": 0.3}) == (
+        "The recommended move sells it."
+    )
+    assert swap_outcome(sell, "Max Sharpe", False, now, {"AGG": 0.3}) == (
+        "The recommended Max Sharpe portfolio also sells it."
+    )
+    assert swap_outcome(sell, "Keep", False, now, None).startswith("The advice is to keep")
+    add = Swap("diversifier", None, "SPSK", "No bond, sukuk or cash holding…")
+    assert swap_outcome(add, "Re-weight + swaps", True, now, {"SPSK": 0.12}) == (
+        "The recommended move buys 12.00%."
+    )
+    assert swap_outcome(add, "Max Sharpe", False, now, {"IEF": 0.1}) == (
+        "The recommended Max Sharpe portfolio doesn't add it."
+    )
