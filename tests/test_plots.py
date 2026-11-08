@@ -96,7 +96,8 @@ def test_risk_contribution_chart_pairs_weight_and_risk() -> None:
     w = pd.Series({"SPY": 0.6, "AGG": 0.4})
     rc = pd.Series({"SPY": 0.9, "AGG": 0.1})
     fig = risk_contribution_chart(w, rc)
-    assert [t.name for t in fig.data] == ["Weight", "Share of risk"]
+    assert [t.name for t in fig.data] == ["Share of money", "Share of risk"]
+    assert [t.marker.color for t in fig.data] == ["#7CC4E4", "#1F3A5F"]  # light blue, navy
     assert list(fig.data[1].y) == ["AGG", "SPY"]  # sorted by risk share
     np.testing.assert_allclose(fig.data[0].x, [0.4, 0.6])
 
@@ -168,3 +169,11 @@ def test_several_benchmarks_are_grey_with_different_dashes_and_take_no_slot() ->
     dashes = {t.name: t.line.dash for t in fig.data}
     assert dashes["60/40"] == "dash" and dashes["SPY"] == "dot" and dashes["S0"] is None
     assert drawdown_chart(frame - 1, reference=["60/40", "SPY"]).data[8].line.dash == "dash"
+
+
+def test_allocation_donut_centre_text_and_hidden_labels() -> None:
+    fig = allocation_chart(pd.Series({"A": 0.6, "B": 0.4}), "", center="Total<br>$360K",
+                           labels=False)  # fmt: skip
+    assert fig.layout.annotations[0].text == "Total<br>$360K"
+    assert fig.data[0].texttemplate == "" and fig.data[0].textposition == "none"
+    assert list(fig.data[0].marker.colors) == ["#1F3A5F", "#0593C6"]  # the composition palette

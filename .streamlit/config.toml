@@ -1,16 +1,18 @@
-# Light private-bank theme: off-white page, white cards, deep navy and an azure accent. Charts
-# use the matching plotly template in src/gpl/plots.py ("gpl_light"); the app passes
-# theme=None so Streamlit doesn't override it. Green/red are kept for gains, losses, pass/fail.
+# Theme: mirrors the design tokens in src/gpl/theme.py (tests/test_theme.py keeps them equal).
+# Charts use the plotly template "gpl_light" in src/gpl/plots.py; the app passes theme=None so
+# Streamlit doesn't override it. Green/red are kept for gains, losses, pass/fail.
 [theme]
 base = "light"
-primaryColor = "#2563EB"
-backgroundColor = "#F7F6F2"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#2B2B2B"
-font = "sans serif"
-codeFont = "monospace"
-borderColor = "#E3E1DA"
+primaryColor = "#0593C6"
+backgroundColor = "#FCFFFF"
+secondaryBackgroundColor = "#F3F7F9"
+textColor = "#1A2530"
+linkColor = "#04759F"
+borderColor = "#E2E8EC"
 showWidgetBorder = true
+baseRadius = "12px"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "monospace"
 
 [client]
 showSidebarNavigation = false

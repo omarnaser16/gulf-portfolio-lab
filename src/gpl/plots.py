@@ -8,9 +8,10 @@ beyond reshaping (e.g. summing weights within an asset group).
 
 Colour follows the entity, not its rank: series get categorical slots in a fixed order.
 All charts share one light plotly template, ``gpl_light``, set on every figure (not only as
-plotly's default, which importing Streamlit replaces), matching the dashboard's private-bank
-theme (white cards on an off-white page, navy and azure). A benchmark or other reference
-series is drawn as a neutral grey dashed line outside the categorical slots.
+plotly's default, which importing Streamlit replaces), matching the dashboard's design
+tokens (``gpl.theme``: white cards, brand blue, accent pink for the recommendation). A
+benchmark or other reference series is drawn as a neutral grey dashed line outside the
+categorical slots.
 """
 
 from collections.abc import Mapping, Sequence
@@ -20,41 +21,34 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-# Categorical palette for the light private-bank surface (white charts on an off-white page),
-# assigned in this order, never cycled. Checked with the dataviz validator against #FFFFFF:
-# lightness band and chroma pass; adjacent colour-blind separation worst 6.1 (slots 6-7, a
-# floor-band pair: legends and tables give the secondary encoding) and normal-vision worst
-# 19.6. Slot 1 (navy blue) is "current", slot 2 (orange) "proposed": the first three slots
-# pass on every pair, so scatter charts stay readable. Navy and the azure accent are too close
-# to tell apart as two series (normal-vision 12.8), so azure is slot 8 and otherwise reserved
-# for the interface. Green and red stay for gains, losses and pass/fail.
-SERIES_COLORS = [
-    "#3d5a99",  # navy blue
-    "#eb6834",  # orange
-    "#0e8fa8",  # teal
-    "#eda100",  # amber
-    "#6250d6",  # violet
-    "#e87ba4",  # pink
-    "#1baf7a",  # aqua
-    "#2563eb",  # azure
-]
-REFERENCE_COLOR = "#8a8a85"  # benchmark / reference series: grey, dashed
-SHADE = "#e9edf5"  # background shading (e.g. stressed months), visible on white
-SURFACE = "#ffffff"
-TEXT_PRIMARY = "#2b2b2b"
-TEXT_SECONDARY = "#5f6368"
-GRID = "#ecebe6"
-HOVER = "#ffffff"
+from gpl import theme
+
+# Colours and type come from the design tokens (gpl.theme). Series are assigned in a fixed
+# order, never cycled: slot 1 (brand blue) is "current"/"portfolio", slot 2 (accent pink)
+# "recommended"/"proposed". Green and red stay for gains, losses and pass/fail; the benchmark
+# is a grey dashed reference line outside the slots.
+SERIES_COLORS = list(theme.SERIES)
+REFERENCE_COLOR = theme.REFERENCE  # benchmark / reference series: grey, dashed
+SHADE = theme.BRAND_TINT  # background shading (e.g. stressed months), visible on white
+SURFACE = theme.CARD
+TEXT_PRIMARY = theme.TEXT
+TEXT_SECONDARY = theme.MUTED
+GRID = theme.GRID
+HOVER = theme.CARD
 PCT = ".2%"  # d3 format: 0.09 -> 9.00%
-SEQUENTIAL_BLUE = ["#dbe4f3", "#a9bce0", "#3d5a99"]  # light -> navy, one hue
-MONO = "SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
+SEQUENTIAL_BLUE = ["#D6EEF8", "#7CC4E4", theme.BRAND]  # light -> brand, one hue
+MONO = theme.FONT_STACK  # numbers use Inter too (tabular figures come from the page CSS)
 
 pio.templates["gpl_light"] = go.layout.Template(
     layout={
         "paper_bgcolor": SURFACE,
         "plot_bgcolor": SURFACE,
-        "font": {"color": TEXT_SECONDARY, "size": 12},
-        "title": {"font": {"color": TEXT_PRIMARY, "size": 16}, "x": 0.01, "xanchor": "left"},
+        "font": {"family": theme.FONT_STACK, "color": TEXT_SECONDARY, "size": 12},
+        "title": {
+            "font": {"family": theme.FONT_STACK, "color": TEXT_PRIMARY, "size": 15},
+            "x": 0.01,
+            "xanchor": "left",
+        },
         "colorway": SERIES_COLORS,
         "xaxis": {
             "gridcolor": GRID,
@@ -398,11 +392,17 @@ def paired_bars_chart(
     names: tuple[str, str],
     title: str,
     sort_by_second: bool = True,
+    colors: tuple[str, str] | None = None,
 ) -> go.Figure:
-    """Horizontal bar pairs per item (e.g. weight vs share of risk, current vs optimised)."""
+    """Horizontal bar pairs per item (e.g. weight vs share of risk, current vs optimised).
+
+    ``colors``: the two series' colours (default: brand blue then accent pink, i.e. current
+    then recommended).
+    """
     order = (second if sort_by_second else first).sort_values().index
     fig = go.Figure()
-    for color, name, values in zip(SERIES_COLORS, names, (first, second), strict=False):
+    pair = colors or (SERIES_COLORS[0], SERIES_COLORS[1])
+    for color, name, values in zip(pair, names, (first, second), strict=False):
         fig.add_trace(
             go.Bar(
                 y=list(order),
@@ -423,12 +423,24 @@ def paired_bars_chart(
 def risk_contribution_chart(
     weights: pd.Series, contributions: pd.Series, title: str = "Share of money vs share of risk"
 ) -> go.Figure:
-    """Horizontal bars per holding: its weight and its share of portfolio risk."""
-    return paired_bars_chart(weights, contributions, ("Weight", "Share of risk"), title)
+    """Horizontal bars per holding: its weight (light blue) and its share of risk (navy)."""
+    return paired_bars_chart(
+        weights, contributions, ("Share of money", "Share of risk"), title,
+        colors=(theme.COMPOSITION[2], theme.COMPOSITION[0]),
+    )  # fmt: skip
 
 
-def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure:
-    """Donut of portfolio weights; beyond seven slices the smallest are combined as 'Others'."""
+def allocation_chart(
+    weights: pd.Series,
+    title: str = "Allocation",
+    center: str | None = None,
+    labels: bool = True,
+) -> go.Figure:
+    """Donut of portfolio weights; beyond seven slices the smallest are combined as 'Others'.
+
+    ``center``: text in the hole (e.g. "Total<br>$360K"); ``labels=False`` hides the slice
+    labels (when a legend lists them beside the chart).
+    """
     w = weights[weights > 0].sort_values(ascending=False)
     if len(w) > len(SERIES_COLORS):
         keep = len(SERIES_COLORS) - 1
@@ -439,10 +451,14 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
         go.Pie(
             labels=[str(t) for t in w.index],
             values=[float(v) for v in w],  # plain list: some plotly.js builds drop typed arrays
-            hole=0.55,
+            hole=0.62,
             sort=False,
-            marker={"colors": SERIES_COLORS[: len(w)], "line": {"color": SURFACE, "width": 2}},
-            texttemplate="%{label}<br>%{percent:.2%}",
+            marker={
+                "colors": theme.COMPOSITION[: len(w)],
+                "line": {"color": SURFACE, "width": 2},
+            },
+            texttemplate="%{label}<br>%{percent:.2%}" if labels else "",
+            textposition="outside" if labels else "none",
             hovertemplate="%{label}: %{percent:.2%}<extra></extra>",
         )
     )
@@ -452,9 +468,13 @@ def allocation_chart(weights: pd.Series, title: str = "Allocation") -> go.Figure
         paper_bgcolor=SURFACE,
         font={"color": TEXT_SECONDARY, "size": 12},
         showlegend=False,
-        margin={"l": 20, "r": 20, "t": 60, "b": 20},
-        height=360,
+        margin={"l": 20, "r": 20, "t": 60 if title else 10, "b": 20},
+        height=360 if labels else 280,
     )
+    if center:
+        fig.add_annotation(
+            text=center, showarrow=False, x=0.5, y=0.5, font={"size": 13, "color": TEXT_PRIMARY}
+        )
     return fig
 
 
