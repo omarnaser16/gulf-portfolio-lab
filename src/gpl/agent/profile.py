@@ -1,10 +1,13 @@
 """Fill the client form from the adviser's plain-English notes, and nothing more.
 
-The model fills one strict tool, ``propose_profile``, with facts the adviser wrote (horizon,
+The model fills one tool, ``propose_profile``, with facts the adviser wrote (horizon,
 amounts, residency, exclusions...). It cannot answer the risk questionnaire or set a risk
 score (there are no fields for them): those come from the client's own answers and the tested
-scoring rule. Every number it writes is checked against the notes. The adviser reviews the
-form before it is used.
+scoring rule. The tool is not strict (its schema is too large for the API's strict-mode
+grammar), so ``clean_draft`` checks every field in code before the form is touched: types,
+ranges and allowed values; anything else, including any field the form doesn't have, is
+dropped and reported. Every number it writes is checked against the notes. The adviser reviews
+the form before it is used.
 """
 
 import re
@@ -12,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from gpl.agent.api import create_message
 from gpl.client import (
     CLASSIFICATIONS,
     JURISDICTIONS,
@@ -78,7 +82,11 @@ def _choice(options) -> dict:
 
 
 def profile_tool() -> dict:
-    """Strict tool whose input is the factual part of the client form (no scores, no weights)."""
+    """Tool whose input is the factual part of the client form (no scores, no weights).
+
+    Not strict: with 40 fields the compiled grammar exceeded the API's limit (400 "The compiled
+    grammar is too large"). The schema still guides the model; ``clean_draft`` enforces it.
+    """
     props = {
         "horizon_years": _num(),
         "return_target_pct": _num(),
@@ -105,6 +113,8 @@ def profile_tool() -> dict:
         },
         "region_minimums": {
             "type": "array",
+            "description": "Minimum % in one named country or region (e.g. Saudi Arabia). A "
+            "minimum for the Gulf or GCC as a whole goes in home_bias_gcc_pct instead.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -123,7 +133,12 @@ def profile_tool() -> dict:
         },
         "sharia_only": {"type": ["boolean", "null"]},
         "excluded_sectors": {"type": "array", "items": {"type": "string"}},
-        "home_bias_gcc_pct": _num(),
+        "home_bias_gcc_pct": {
+            **_num(),
+            "description": "Minimum % in the Gulf / GCC as a whole, e.g. 'at least 15% in the "
+            "Gulf' or 'keep 20% in GCC markets' -> 15 or 20. Not a region_minimums entry and "
+            "not an unmapped request.",
+        },
         "max_volatility_pct": _num(),
         "max_drawdown_pct": _num(),
         "goals": {
@@ -157,13 +172,17 @@ def profile_tool() -> dict:
         "annual_contribution_usd": _num(False),  # 0: none stated
         "years_investing": _num(False),  # -1: not stated
         "products_used": {"type": "array", "items": {"type": "string", "enum": PRODUCTS}},
-        "unmapped_requests": {"type": "array", "items": {"type": "string"}},
+        "unmapped_requests": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Only requests that fit no other field (check home_bias_gcc_pct, "
+            "region_minimums, excluded_sectors and goals first).",
+        },
         "summary": {"type": "string"},
     }
     return {
         "name": "propose_profile",
         "description": "Record the client facts stated in the adviser's notes.",
-        "strict": True,
         "input_schema": {
             "type": "object",
             "properties": props,
@@ -232,6 +251,165 @@ def numbers_not_in_notes(draft: dict, notes: str) -> list[str]:
     return [f"{v:g}" for v in _draft_numbers(draft) if round(v, 6) not in written]
 
 
+# ------------------------------------------------------------------ checking the model's output
+
+# field -> (lowest, highest, whether 0 is a real value)
+NUMBERS = {
+    "horizon_years": (0, 100, False),
+    "return_target_pct": (-50, 100, True),
+    "portfolio_value_usd": (0, 1e12, False),
+    "annual_income_need_usd": (0, 1e10, True),
+    "age": (16, 120, False),
+    "home_bias_gcc_pct": (0, 100, True),
+    "max_volatility_pct": (0, 100, False),
+    "max_drawdown_pct": (0, 100, False),
+    "dependants": (0, 30, True),
+    "retirement_age": (30, 100, False),
+    "annual_contribution_usd": (0, 1e10, False),
+    "years_investing": (0, 90, True),
+}
+INTEGERS = {"age", "dependants", "retirement_age"}
+TEXT = ["name", "tax_notes", "residency", "nationality", "occupation", "employer",
+        "source_of_wealth", "source_of_funds", "summary"]  # fmt: skip
+CHOICES = {
+    "jurisdiction": tuple(JURISDICTIONS),
+    "classification": tuple(CLASSIFICATIONS),
+    "marital_status": tuple(MARITAL),
+    "employment_type": tuple(EMPLOYMENT),
+    "reporting_currency": tuple(CURRENCIES),
+    "primary_objective": tuple(OBJECTIVES),
+}
+NULL_CHOICES = {"jurisdiction", "classification"}  # null when not stated (others: "")
+BOOLS = ["us_person", "sharia_only"]
+TEXT_LISTS = ["excluded_sectors", "tax_residencies", "unmapped_requests"]
+MAX_TEXT, MAX_ITEMS = 600, 30
+
+
+def _number(value: Any) -> float | None:
+    """A number as the model wrote it: int, float or a plain numeric string ("500,000")."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.replace(",", "").strip())
+        except ValueError:
+            return None
+    return None
+
+
+def clean_draft(raw: Any) -> tuple[dict[str, Any], list[str]]:
+    """The model's tool input made safe for the form, and what was dropped and why.
+
+    Every field the form has is returned (None, "" or [] when not stated); numbers outside a
+    sensible range, unknown choices and fields the form doesn't have (a risk score, say) are
+    dropped and listed. The "not stated" sentinels (0 or -1) become None.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    problems: list[str] = []
+    out: dict[str, Any] = {}
+    known = set(profile_tool()["input_schema"]["properties"])
+    extra = sorted(set(raw) - known)
+    if extra:
+        risky = [k for k in extra if re.search(r"answer|score|risk|capacity|willing|toler", k)]
+        problems.append(
+            "Ignored fields the form doesn't have: "
+            + ", ".join(extra)
+            + (" (the AI never sets risk answers or scores)" if risky else "")
+            + "."
+        )
+
+    def drop(key: str, value: Any, why: str) -> None:
+        problems.append(f"Ignored {key.replace('_', ' ')} = {value!r}: {why}.")
+
+    for key, (lo, hi, zero_ok) in NUMBERS.items():
+        value = raw.get(key)
+        out[key] = None
+        if value is None or value == "" or (key in SENTINEL and value == SENTINEL[key]):
+            continue
+        x = _number(value)
+        if x is None:
+            drop(key, value, "not a number")
+        elif not (lo <= x <= hi) or (x == 0 and not zero_ok):
+            drop(key, value, f"outside {lo:g}-{hi:g}")
+        else:
+            out[key] = int(round(x)) if key in INTEGERS else x
+    for key in TEXT:
+        value = raw.get(key)
+        out[key] = str(value).strip()[:MAX_TEXT] if isinstance(value, str | int | float) else ""
+    for key, options in CHOICES.items():
+        value = raw.get(key)
+        empty = None if key in NULL_CHOICES else ""
+        if value in (None, ""):
+            out[key] = empty
+        elif value in options:
+            out[key] = value
+        else:
+            out[key] = empty
+            drop(key, value, "not one of the form's options")
+    for key in BOOLS:
+        value = raw.get(key)
+        if isinstance(value, str) and value.lower() in ("true", "false"):
+            value = value.lower() == "true"
+        out[key] = value if isinstance(value, bool) else None
+        if value is not None and not isinstance(value, bool):
+            drop(key, value, "not yes or no")
+    for key in TEXT_LISTS:
+        items = raw.get(key) if isinstance(raw.get(key), list) else []
+        out[key] = [str(i).strip()[:MAX_TEXT] for i in items if str(i).strip()][:MAX_ITEMS]
+    products = raw.get("products_used") if isinstance(raw.get("products_used"), list) else []
+    out["products_used"] = [p for p in products if p in PRODUCTS]
+    for p in products:
+        if p not in PRODUCTS:
+            drop("products_used", p, "not one of the form's options")
+    ages = raw.get("dependant_ages") if isinstance(raw.get("dependant_ages"), list) else []
+    out["dependant_ages"] = [
+        int(round(a)) for a in (_number(x) for x in ages) if a is not None and 0 <= a <= 120
+    ]
+    needs = []
+    for n in raw.get("liquidity_needs") or []:
+        if not isinstance(n, dict):
+            continue
+        amount = _number(n.get("amount_usd"))
+        if amount is None or not 0 < amount <= 1e11:
+            drop("cash need", n.get("amount_usd"), "no usable amount")
+            continue
+        needs.append(
+            {
+                "description": str(n.get("description") or "Cash need").strip()[:MAX_TEXT],
+                "amount_usd": amount,
+                "when": str(n.get("when") or "").strip()[:60],
+            }
+        )
+    out["liquidity_needs"] = needs[:MAX_ITEMS]
+    minimums = []
+    for r in raw.get("region_minimums") or []:
+        if not isinstance(r, dict):
+            continue
+        pct = _number(r.get("min_pct"))
+        if r.get("region") not in REGIONS:
+            drop("region minimum", r.get("region"), "not a region the form knows")
+        elif pct is None or not 0 < pct <= 100:
+            drop("region minimum", r.get("min_pct"), "not a percentage")
+        else:
+            minimums.append({"region": r["region"], "min_pct": pct})
+    out["region_minimums"] = minimums
+    goals = []
+    for g in raw.get("goals") or []:
+        if not isinstance(g, dict):
+            continue
+        goal = {"description": str(g.get("description") or "").strip()[:MAX_TEXT]}
+        for key, (lo, hi) in {"amount_usd": (0, 1e11), "multiple": (0, 100),
+                              "years": (0, 100)}.items():  # fmt: skip
+            x = _number(g.get(key))
+            goal[key] = x if x is not None and lo < x <= hi else None
+        if goal["description"] or any(goal[k] is not None for k in ("amount_usd", "multiple")):
+            goals.append(goal)
+    out["goals"] = goals[:MAX_ITEMS]
+    return out, problems
+
+
 @dataclass
 class ProfileProposal:
     draft: dict[str, Any]
@@ -243,19 +421,25 @@ class ProfileProposal:
 
 def propose_profile(client: Any, model: str, notes: str, effort: str = "low") -> ProfileProposal:
     """Ask the model to transcribe ``notes`` into the profile tool. Raises ValueError if not."""
-    response = client.messages.create(
+    response, _ = create_message(
+        client,
         model=model,
-        max_tokens=3000,
+        max_tokens=8000,
         system=PROFILE_SYSTEM_PROMPT,
         tools=[profile_tool()],
         output_config={"effort": effort},
         messages=[{"role": "user", "content": f"Adviser's notes:\n{notes}"}],
     )
     calls = [b for b in response.content if b.type == "tool_use" and b.name == "propose_profile"]
+    if response.stop_reason == "max_tokens":
+        raise ValueError(
+            "The notes were too long to fill the form in one go. Try shorter notes, or split "
+            "them and fill the form in two steps."
+        )
     if response.stop_reason == "refusal" or not calls:
         raise ValueError("The model did not fill the form. Try rephrasing the notes.")
-    draft = dict(calls[0].input)
-    problems = [
+    draft, cleaned = clean_draft(calls[0].input)
+    problems = cleaned + [
         f"Cash need '{n.get('description')}' (USD {n.get('amount_usd') or 0:,.0f}) has no "
         "usable date in the notes: add it on the form."
         for n in draft.get("liquidity_needs") or []

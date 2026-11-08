@@ -23,6 +23,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from gpl import data
+from gpl.agent.api import create_message
 from gpl.agent.tools import AnalystContext, ToolError, execute_tool, tool_definitions
 
 PROJECT_ROOT = data.PROJECT_ROOT  # repository folder, found the same way as config/
@@ -245,7 +246,9 @@ class Analyst:
         input_tokens = output_tokens = 0
 
         for _ in range(self.max_tool_rounds + 1):
-            response = self.client.messages.create(
+            # strict tools, with a one-time fallback if their grammar is too large
+            response, self.tools = create_message(
+                self.client,
                 model=self.model,
                 max_tokens=self.max_tokens,
                 system=SYSTEM_PROMPT,

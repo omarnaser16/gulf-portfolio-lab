@@ -4,6 +4,7 @@ import pytest
 
 from gpl.agent.profile import (
     apply_proposal,
+    clean_draft,
     numbers_in_text,
     numbers_not_in_notes,
     profile_tool,
@@ -50,20 +51,6 @@ DRAFT = {
 }
 
 
-def _unions(schema) -> int:
-    """Parameters with a type list or anyOf (the API allows at most 16 in a strict tool)."""
-    if isinstance(schema, dict):
-        own = int(isinstance(schema.get("type"), list) or "anyOf" in schema)
-        return own + sum(_unions(v) for v in schema.values())
-    if isinstance(schema, list):
-        return sum(_unions(v) for v in schema)
-    return 0
-
-
-def test_tool_stays_within_the_api_union_limit() -> None:
-    assert _unions(profile_tool()["input_schema"]) <= 16
-
-
 def test_tool_has_no_scores_or_weights() -> None:
     props = profile_tool()["input_schema"]["properties"]
     assert not {"answers", "risk_score", "capacity", "willingness", "weights"} & set(props)
@@ -80,7 +67,8 @@ def test_numbers_with_suffixes() -> None:
 def test_propose_and_apply_keep_the_questionnaire() -> None:
     client = FakeClient([response([tool_use("p1", "propose_profile", DRAFT)], "tool_use")])
     proposal = propose_profile(client, "m", NOTES)
-    assert proposal.numbers_not_in_notes == [] and client.requests[0]["tools"][0]["strict"]
+    assert proposal.numbers_not_in_notes == [] and proposal.problems == []
+    assert "strict" not in client.requests[0]["tools"][0]  # too large for strict mode
     before = ClientProfile(reference="X", answers={"tradeoff": 2})
     after = apply_proposal(before, proposal.draft)
     assert after.answers == {"tradeoff": 2}  # never filled by the model
@@ -243,3 +231,73 @@ def test_fact_find_facts_are_recorded_and_sentinels_mean_not_stated() -> None:
     assert numbers_not_in_notes({**DRAFT, **facts}, notes) == []
     flagged = numbers_not_in_notes({**DRAFT, **facts, "retirement_age": 60}, notes)
     assert flagged == ["60"]
+
+
+# ------------------------------------------------------------------ checking the output in code
+
+
+def test_clean_draft_keeps_valid_facts_unchanged() -> None:
+    draft, problems = clean_draft(DRAFT)
+    assert problems == []
+    for key, value in DRAFT.items():
+        assert draft[key] == value, key
+    assert draft["retirement_age"] is None and draft["products_used"] == []  # filled in
+
+
+def test_clean_draft_drops_scores_and_bad_values() -> None:
+    raw = {
+        **DRAFT,
+        "risk_score": 5,  # the AI never scores: not a form field
+        "answers": {"tradeoff": 4},
+        "age": "forty-five",  # not a number
+        "horizon_years": 250,  # out of range
+        "portfolio_value_usd": "500,000",  # a numeric string is fine
+        "jurisdiction": "Mars",
+        "marital_status": "complicated",
+        "us_person": "maybe",
+        "sharia_only": "true",
+        "products_used": ["Equities", "Crypto lottery"],
+        "dependant_ages": [7, 200, "x"],
+        "region_minimums": [{"region": "Atlantis", "min_pct": 10},
+                            {"region": "Saudi Arabia", "min_pct": 150}],
+        "liquidity_needs": [{"description": "Deposit", "amount_usd": -5, "when": "2027-01"},
+                            "not a dict"],
+        "retirement_age": 0,  # sentinel: not stated
+        "years_investing": -1,
+    }  # fmt: skip
+    draft, problems = clean_draft(raw)
+    text = " ".join(problems)
+    assert "risk_score" not in draft and "answers" not in draft
+    assert "answers, risk_score" in text and "never sets risk answers or scores" in text
+    _, junk = clean_draft({**DRAFT, "empty_placeholder": ""})
+    assert junk == ["Ignored fields the form doesn't have: empty_placeholder."]
+    assert draft["age"] is None and "not a number" in text
+    assert draft["horizon_years"] is None and "outside 0-100" in text
+    assert draft["portfolio_value_usd"] == 500_000.0
+    assert draft["jurisdiction"] is None and draft["marital_status"] == ""
+    assert draft["us_person"] is None and draft["sharia_only"] is True
+    assert draft["products_used"] == ["Equities"] and draft["dependant_ages"] == [7]
+    assert draft["region_minimums"] == [] and draft["liquidity_needs"] == []
+    assert draft["retirement_age"] is None and draft["years_investing"] is None
+    # what's left is safe to apply, and the questionnaire is untouched
+    after = apply_proposal(ClientProfile(answers={"tradeoff": 2}), draft)
+    assert after.answers == {"tradeoff": 2} and after.portfolio_value_usd == 500_000.0
+
+
+def test_clean_draft_survives_garbage() -> None:
+    draft, problems = clean_draft("not even a dict")
+    assert draft["name"] == "" and draft["goals"] == [] and problems == []
+
+
+def test_propose_reports_what_was_dropped() -> None:
+    raw = {**DRAFT, "risk_score": 9, "age": 300}
+    client = FakeClient([response([tool_use("p1", "propose_profile", raw)], "tool_use")])
+    proposal = propose_profile(client, "m", NOTES)
+    assert proposal.draft["age"] is None and "risk_score" not in proposal.draft
+    assert any("risk_score" in p for p in proposal.problems)
+
+
+def test_truncated_reply_asks_for_shorter_notes() -> None:
+    client = FakeClient([response([text("…")], "max_tokens")])
+    with pytest.raises(ValueError, match="too long"):
+        propose_profile(client, "m", NOTES)

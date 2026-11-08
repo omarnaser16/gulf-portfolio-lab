@@ -35,7 +35,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["network: test hits the real network (deselect with -m 'not network')"]
+markers = [
+    "network: test hits the real network (deselect with -m 'not network')",
+    "live: calls the real Claude API (skipped without ANTHROPIC_API_KEY)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -1469,6 +1469,27 @@ def test_ai_intake_fills_the_client_tab_and_constrains_optimise(optimise_app) ->
     assert limits["Cash need (no holding)"][0] == "at least 20.00%"
 
 
+def test_ai_intake_failure_shows_a_friendly_message(optimise_app) -> None:
+    import anthropic
+    import httpx2
+
+    at, client = optimise_app([])
+    req = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    raw = "Error code: 400 - invalid_request_error: The compiled grammar is too large"
+
+    def fail(**kwargs):
+        raise anthropic.BadRequestError(raw, response=httpx2.Response(400, request=req), body=None)
+
+    client.create = fail  # the live bug: every call to fill the form failed
+    at.button(key="client_new").click().run()
+    at.text_area(key="client_notes").set_value("Risky investor aiming for high returns in Europe")
+    at.button(key="client_interpret").click().run()
+    assert not at.exception, at.exception
+    shown = " ".join(e.value for e in at.error)
+    assert "couldn't process filling the form" in shown and "nothing was changed" in shown
+    assert "invalid_request_error" not in shown and "grammar" not in shown
+
+
 def test_report_uses_the_optimiser_recommendation_not_a_chat_what_if(
     optimise_app, monkeypatch
 ) -> None:

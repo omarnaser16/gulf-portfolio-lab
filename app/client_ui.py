@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 import workstation as ws
 
+from gpl.agent.api import friendly_error
 from gpl.agent.profile import apply_proposal, propose_profile
 from gpl.client import (
     CLOSEST_MIX_EXAMPLES,
@@ -168,8 +169,8 @@ def _interpret(make_client: Callable, model: str) -> None:
         return
     try:
         proposal = propose_profile(make_client(), model, notes)
-    except Exception as e:  # API or model errors are shown, not raised
-        st.session_state.client_error = str(e)
+    except Exception as e:  # API or model errors are shown in plain English, not raised
+        st.session_state.client_error = friendly_error(e, "filling the form")
         return
     base = current_profile() or ClientProfile()
     _set_profile(apply_proposal(base, proposal.draft))

@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from gpl.agent.api import create_message
 from gpl.optimise import OptimisationSpec
 from gpl.recommend import GOALS
 
@@ -153,7 +154,8 @@ def propose_spec(
         set(groups_by_ticker.values()) | {"GCC", "Global equity", "Bonds", "Gold", "Other"}
     )
     holdings = ", ".join(f"{t} ({g})" for t, g in groups_by_ticker.items())
-    response = client.messages.create(
+    response, _ = create_message(
+        client,
         model=model,
         max_tokens=max_tokens,
         system=SPEC_SYSTEM_PROMPT,

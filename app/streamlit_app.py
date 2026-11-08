@@ -24,6 +24,7 @@ from formatting import NUMBERS_CSS, pct, plot, show_metrics_table, style_columns
 from gpl import backtest as bt
 from gpl import regime as rg
 from gpl.agent import analyst as agent
+from gpl.agent.api import friendly_error
 from gpl.agent.charts import build_chart, chart_data
 from gpl.agent.spec import (
     active_limits,
@@ -647,12 +648,8 @@ def ask_analyst(analyst: agent.Analyst, question: str) -> dict:
     try:
         with st.spinner("The analyst is calling tools and writing…"):
             return {"role": "assistant", "reply": analyst.ask(question)}
-    except anthropic.AuthenticationError:
-        return {"role": "error", "text": "The API key was rejected."}
-    except anthropic.RateLimitError:
-        return {"role": "error", "text": "Rate limited; try again in a minute."}
-    except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
-        return {"role": "error", "text": f"API error: {e}"}
+    except anthropic.APIError as e:
+        return {"role": "error", "text": friendly_error(e, "the analyst's answer")}
 
 
 def render_reply(reply: agent.AnalystReply, key: str = "reply") -> None:
@@ -790,7 +787,7 @@ def _interpret(holding_groups: dict[str, str]) -> None:
     try:
         proposal = propose_spec(agent.make_client(), A["model"], goals, holding_groups)
     except (ValueError, anthropic.APIError) as e:
-        st.session_state.ws_interpret_error = str(e)
+        st.session_state.ws_interpret_error = friendly_error(e, "reading your goals")
         return
     st.session_state.ws_draft = proposal.draft
     st.session_state.ws_proposal = proposal
