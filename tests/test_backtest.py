@@ -10,6 +10,7 @@ import pytest
 
 from gpl.backtest import (
     BacktestResult,
+    annual_turnover,
     equal_weight,
     fixed_weights,
     max_sharpe_strategy,
@@ -296,3 +297,31 @@ def test_market_specific_costs_hand_value() -> None:
     assert first == pytest.approx((0.5 * 10 + 0.5 * 30) / 1e4)  # 0.20%
     flat = bt.run_backtest(prices, bt.equal_weight, lookback=20, cost_bps=10)
     assert flat.costs.iloc[0] == pytest.approx(10 / 1e4)  # one rate: unchanged behaviour
+
+
+def test_annual_turnover_is_total_trading_over_the_years_covered() -> None:
+    # Hand value: after the first purchase, two rebalances trading 0.30 and 0.20 over
+    # exactly 2 years (730.5 days) -> 0.50 / 2 = 0.25 a year, whatever the frequency.
+    days = pd.date_range("2020-01-01", periods=732, freq="D")
+    result = BacktestResult(
+        equity=pd.Series(1.0, index=days),
+        returns=pd.Series(0.0, index=days),
+        weights=pd.DataFrame(),
+        turnover=pd.Series(
+            [1.0, 0.30, 0.20], index=pd.DatetimeIndex(["2020-01-01", "2020-07-01", "2021-07-01"])
+        ),
+        costs=pd.Series(dtype=float),
+    )
+    span = (days[-1] - days[0]).days / 365.25
+    assert annual_turnover(result) == pytest.approx(0.50 / span)
+
+
+def test_annual_turnover_quarterly_is_not_scaled_as_monthly() -> None:
+    prices = pd.DataFrame(
+        {"A": np.linspace(100, 200, 800), "B": np.linspace(100, 80, 800)},
+        index=pd.bdate_range("2020-01-01", periods=800),
+    )
+    res = run_backtest(prices, fixed_weights({"A": 0.5, "B": 0.5}), rebalance="QE", lookback=5)
+    years = (res.returns.index[-1] - res.turnover.index[0]).days / 365.25
+    assert annual_turnover(res) == pytest.approx(res.turnover.iloc[1:].sum() / years)
+    assert annual_turnover(res) < res.turnover.iloc[1:].mean() * 12  # the old, 3x-too-high figure

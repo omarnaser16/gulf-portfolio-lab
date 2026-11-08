@@ -112,6 +112,7 @@ optimise_lab:
   tilt_min: 0.25                   # build: at least 25% in a tilt's top-scored names
   build_min_history_years: 10      # build: securities with 10+ years of prices
   build_min_history_years_sharia: 6  # Sharia funds start 2019: shorter, and labelled
+  build_max_turnover: 0.25        # build: at most 25% traded per quarter after the first build
   build_rebalance: QE              # build: securities re-chosen each quarter (monthly is ~2x slower)
   max_turnover: 0.30               # improve: at most 30% of the portfolio traded
   max_swaps: 3                     # improve: at most 3 swaps

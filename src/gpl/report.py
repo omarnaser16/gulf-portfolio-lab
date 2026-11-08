@@ -43,6 +43,7 @@ from gpl.factfind import (
     finances,
     goals_required_return,
 )
+from gpl.metrics import no_negative_zero
 from gpl.plots import REFERENCE_COLOR, SERIES_COLORS
 
 FOOTER = (
@@ -259,7 +260,7 @@ def ips_story(ips: IPS) -> list:
     lim = ips.limits
 
     def pct(x) -> str:
-        return "not set" if x is None else f"{x:.2%}"
+        return "not set" if x is None else f"{no_negative_zero(x, 4):.2%}"
 
     story = [para("Objectives and constraints (RRTTLLU)", "h2")]
     story.append(
@@ -455,7 +456,14 @@ def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
     for t in latest.columns:
         now, new = float(latest.loc["Current", t]), float(target[t])
         if now > 1e-9 or new > 1e-9:
-            weights.append([str(t), f"{now:.2%}", f"{new:.2%}", f"{(new - now) * 100:+.2f} pp"])
+            weights.append(
+                [
+                    str(t),
+                    f"{now:.2%}",
+                    f"{new:.2%}",
+                    f"{no_negative_zero((new - now) * 100, 2):+.2f} pp",
+                ]
+            )
     securities = [["Security", "What it is", "Weight", "Why it was chosen"]] + [
         [t, f"{v['name']} ({v['asset_class']}, {v['region']})", v["weight"], v["why"]]
         for t, v in report.get("securities_chosen", {}).items()
@@ -719,7 +727,9 @@ def kpi_rows(kpis: pd.DataFrame, benchmark: str) -> list[list[str]]:
         if pd.isna(x):
             return "n/a"
         if metric == "sharpe":
+            x = no_negative_zero(x, 2)
             return f"{x:+.2f}" if signed else f"{x:.2f}"
+        x = no_negative_zero(x, 4)
         return f"{x * 100:+.2f} pp" if signed else f"{x:.2%}"
 
     rows = [["", "Your portfolio", benchmark, "Difference"]]
@@ -739,7 +749,7 @@ def _goals_and_limits(c: ClientProfile, ips: IPS) -> Table:
     lim, r = ips.limits, ips.risk
 
     def pct(x) -> str:
-        return "not set" if x is None else f"{x:.2%}"
+        return "not set" if x is None else f"{no_negative_zero(x, 4):.2%}"
 
     rows = [
         ["Your goals", ips.sections["Return"].removeprefix("Goals: ")],

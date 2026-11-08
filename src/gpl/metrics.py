@@ -653,3 +653,11 @@ def kpi_table(
     out = out.astype(float)
     out.attrs["period"] = period_label(dates)
     return out
+
+
+def no_negative_zero(x: float, decimals: int) -> float:
+    """``x``, or 0.0 if it rounds to zero at ``decimals`` places, so a tiny negative like
+    -0.00001 prints as "0.00%" rather than "-0.00%". NaN and None pass through."""
+    if x is None or pd.isna(x):
+        return x
+    return 0.0 if round(float(x), decimals) == 0 else x

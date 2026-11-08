@@ -49,6 +49,51 @@ def limit_turnover(
     return w[w.abs() > 1e-12], share
 
 
+def limit_turnover_clean(
+    current: pd.Series, target: pd.Series, max_turnover: float, dust: float = 0.005
+) -> pd.Series:
+    """``limit_turnover`` without a tail of tiny leftovers.
+
+    Moving part of the way each quarter leaves a sliver of every holding the target no longer
+    wants. Here a holding the target doesn't hold that would fall below ``dust`` is sold
+    outright and the money goes to the holdings the target wants more of (in proportion to the
+    shortfall). That extra trading counts towards the limit: the share of the move is the
+    largest whose total turnover stays within ``max_turnover`` (found by bisection; turnover
+    only rises with the share). E.g. from 99.4% A and 0.6% D towards 100% B with a 0.40 limit:
+    D (0.48% after the move) is sold, and the result is 80% A and 20% B (turnover exactly 0.40).
+    """
+    idx = current.index.union(target.index)
+    w0 = current.reindex(idx, fill_value=0.0)
+    w1 = target.reindex(idx, fill_value=0.0)
+    full = turnover(w0, w1)
+    if full <= max_turnover or full == 0:
+        return w1[w1 > 1e-12]
+
+    def move(share: float) -> pd.Series:
+        w = w0 + share * (w1 - w0)
+        drop = (w1 <= 1e-12) & (w > 1e-12) & (w < dust)
+        freed = float(w[drop].sum())
+        w[drop] = 0.0
+        need = (w1 - w).clip(lower=0.0)
+        if freed > 0 and need.sum() > 0:
+            w = w + need * min(1.0, freed / float(need.sum()))
+            w = w + w1 * max(0.0, freed - float(need.sum()))  # only if more was freed than needed
+        return w
+
+    lo, hi = 0.0, max_turnover / full
+    if turnover(w0, move(hi)) <= max_turnover + 1e-12:
+        lo = hi
+    else:
+        for _ in range(50):
+            mid = (lo + hi) / 2
+            if turnover(w0, move(mid)) <= max_turnover + 1e-12:
+                lo = mid
+            else:
+                hi = mid
+    w = move(lo)
+    return w[w > 1e-12]
+
+
 # ------------------------------------------------------------------------ universe screen
 
 GCC_REGIONS = {"Saudi Arabia", "UAE", "Qatar", "Kuwait", "Bahrain", "Oman"}
@@ -175,6 +220,7 @@ class BuildSettings:
     tilt: str = "none"
     tilt_min: float = 0.25  # at least this much in the tilt's top-scored names
     vol_vs_benchmark: bool = True  # volatility at most the benchmark's
+    max_turnover: float | None = 0.25  # per rebalance after the first build; None = no limit
     periods_per_year: int = 252
 
 
@@ -457,19 +503,30 @@ def build_strategy(
 
 def turnover_limited(
     strategy,
-    start: Mapping[str, float],
+    start: Mapping[str, float] | None,
     max_turnover: float,
     spec: OptimisationSpec | None = None,
+    dust: float | None = None,
 ):
     """Wrap a walk-forward strategy so each rebalance moves at most ``max_turnover`` from the
     previous target, starting from the client's current weights. With ``spec``, each move is
     the closest compliant move within the limit (``compliant_move``): if the current weights
-    break a weight or group limit, the portfolio moves towards meeting it month by month."""
-    state = {"last": pd.Series(start, dtype=float)}
+    break a weight or group limit, the portfolio moves towards meeting it month by month.
+
+    ``start=None`` (Build): the first target is taken in full (the initial purchase), and only
+    later rebalances are limited. Without ``spec`` the move is along the straight line between
+    two targets, so any linear or convex limit both meet (weights, groups, volatility, tracking
+    error) is met on the way too. With ``dust`` (Build), leftovers the target doesn't want are
+    sold once under that weight, within the same limit (``limit_turnover_clean``)."""
+    state = {"last": None if start is None else pd.Series(start, dtype=float)}
 
     def limited(window: pd.DataFrame) -> pd.Series:
         target = strategy(window)
-        if spec is None:
+        if state["last"] is None:
+            w = target
+        elif spec is None and dust is not None:
+            w = limit_turnover_clean(state["last"], target, max_turnover, dust)
+        elif spec is None:
             w, _ = limit_turnover(state["last"], target, max_turnover)
         else:
             w = compliant_move(state["last"], target, max_turnover, spec).weights
@@ -814,7 +871,7 @@ def compliant_move(
 
 POLICY_BLOCKS = {  # sleeve -> funds (a sleeve over the per-holding cap is split across them)
     "conventional": {
-        "Equity": ("ACWI", "URTH"),
+        "Equity": ("ACWI",),  # one global equity fund
         "GCC": ("KSA", "UAE", "QAT"),
         "Bonds": ("AGG", "BNDX"),
         "Cash": ("BIL", "SHV"),
@@ -827,6 +884,9 @@ POLICY_BLOCKS = {  # sleeve -> funds (a sleeve over the per-holding cap is split
     },
 }
 POLICY_NAME = "Policy benchmark (fits the IPS)"
+# Broad index funds the per-holding cap doesn't apply to in the benchmark: a benchmark is not a
+# holding, and ACWI spreads its weight over about 2,300 companies in 47 markets.
+POLICY_CAP_EXEMPT = {"ACWI"}
 
 
 @dataclass
@@ -857,7 +917,8 @@ def policy_benchmark(
     (sukuk for Sharia) and cash. GCC is the IPS's GCC minimum, cash its cash need (as a share
     of the portfolio); equity is the largest share, in ``step`` steps, whose mix keeps
     volatility and the largest fall over ``returns`` (all history) within the IPS limits;
-    bonds take the rest. A sleeve above the per-holding cap is split across its funds.
+    bonds take the rest. A sleeve above the per-holding cap is split across its funds, except
+    a broad global index fund (``POLICY_CAP_EXEMPT``, ACWI), which is one fund at any weight.
     Returns the mix and whether it passes (if no mix does, the most defensive one and why).
     """
     lim = ips.limits
@@ -874,13 +935,14 @@ def policy_benchmark(
         weights: dict[str, float] = {}
         ok = True
         for sleeve, w in sleeves.items():
-            part = _split(w, blocks[sleeve], cap)
+            exempt = set(blocks[sleeve]) <= POLICY_CAP_EXEMPT
+            part = _split(w, blocks[sleeve], 1.0 if exempt else cap)
             if part is None:
                 ok, last_fail = False, f"{sleeve} at {w:.2%} can't stay within the {cap:.2%} cap"
                 break
             for t, x in part.items():
                 weights[t] = weights.get(t, 0.0) + x
-        if not ok or any(x > cap + 1e-9 for x in weights.values()):
+        if not ok or any(x > cap + 1e-9 for t, x in weights.items() if t not in POLICY_CAP_EXEMPT):
             last_fail = last_fail or f"a fund would exceed the {cap:.2%} cap"
             continue
         if not set(weights) <= set(returns.columns):
@@ -910,6 +972,12 @@ def policy_benchmark(
         f"{', '.join(parts)} ({funds}); rebalanced daily",
         [
             f"Volatility {vol:.2%} and largest fall {fall:.2%} over the full history, within the "
-            f"IPS limits; GCC at least {gcc:.2%}, cash need {cash:.2%}, no fund over {cap:.2%}."
+            f"IPS limits; GCC at least {gcc:.2%}, cash need {cash:.2%}, no fund over {cap:.2%}"
+            + (
+                " except ACWI, one broad global index fund (about 2,300 companies), to which "
+                "the per-holding cap doesn't apply."
+                if any(weights.get(t, 0.0) > cap + 1e-9 for t in POLICY_CAP_EXEMPT)
+                else "."
+            )
         ],
     )

@@ -192,6 +192,34 @@ def test_turnover_limited_strategy_caps_each_move() -> None:
     assert out[-1].get("CSH", 0) < out[0]["CSH"]
 
 
+def test_build_turnover_limit_takes_the_first_build_in_full_then_caps_each_quarter() -> None:
+    # Hand values: first target 100% EQ1 is bought in full; the next target, 100% BD1, is a
+    # turnover of 2.00, so a 0.25 limit moves 1/8 of the way: 87.5% EQ1, 12.5% BD1.
+    r = _returns()
+    targets = iter([pd.Series({"EQ1": 1.0})] + [pd.Series({"BD1": 1.0})] * 3)
+    st = turnover_limited(lambda window: next(targets), None, 0.25)
+    first, second = st(r.iloc[:10]), st(r.iloc[:10])
+    assert first.to_dict() == {"EQ1": 1.0}
+    assert second["EQ1"] == pytest.approx(0.875) and second["BD1"] == pytest.approx(0.125)
+    assert turnover(second, st(r.iloc[:10])) == pytest.approx(0.25)
+
+
+def test_limit_turnover_clean_sells_leftovers_within_the_limit() -> None:
+    from gpl.construct import limit_turnover_clean
+
+    # Hand value (docstring): 99.4% A, 0.6% D -> 100% B with a 0.40 limit gives 80% A, 20% B
+    w = limit_turnover_clean(pd.Series({"A": 0.994, "D": 0.006}), pd.Series({"B": 1.0}), 0.40)
+    assert set(w.index) == {"A", "B"}
+    assert w["A"] == pytest.approx(0.80, abs=1e-6) and w["B"] == pytest.approx(0.20, abs=1e-6)
+    assert turnover(pd.Series({"A": 0.994, "D": 0.006}), w) <= 0.40 + 1e-9
+    # a leftover still above the dust line is kept, and within the limit it's the plain move
+    w = limit_turnover_clean(pd.Series({"A": 0.9, "D": 0.1}), pd.Series({"B": 1.0}), 0.40)
+    assert w["D"] == pytest.approx(0.08) and w["A"] == pytest.approx(0.72)
+    # within the limit: straight to the target
+    w = limit_turnover_clean(pd.Series({"A": 1.0}), pd.Series({"A": 0.9, "B": 0.1}), 0.40)
+    assert w.to_dict() == pytest.approx({"A": 0.9, "B": 0.1})
+
+
 def test_benchmark_core_maps_to_ucits_when_needed() -> None:
     assert benchmark_core({"EQ1": 0.6, "BD1": 0.4}, UNI, ["EQ1", "BD1"]) == ("EQ1", "BD1")
     assert benchmark_core({"EQ1": 0.6, "BD1": 0.4}, UNI, ["IRL", "BD1"]) == ("IRL", "BD1")
@@ -320,7 +348,10 @@ def test_policy_benchmark_fits_the_ips_by_construction() -> None:
     assert p.passes and abs(sum(p.weights.values()) - 1) < 1e-9
     lim = ips.limits
     w = pd.Series(p.weights)
-    assert (w <= lim["max_weight"] + 1e-9).all()
+    assert (w.drop("ACWI") <= lim["max_weight"] + 1e-9).all()  # ACWI: broad index, exempt
+    assert "URTH" not in w  # one global equity fund
+    assert w["ACWI"] == pytest.approx(p.sleeves["Equity"])
+    assert w["ACWI"] > lim["max_weight"] and "per-holding cap doesn't apply" in p.reasons[0]
     assert p.sleeves["GCC"] == pytest.approx(0.10) and p.sleeves["Cash"] == pytest.approx(0.10)
     port = rets[list(w.index)] @ w
     assert port.std() * np.sqrt(252) <= lim["max_volatility"] + 1e-9

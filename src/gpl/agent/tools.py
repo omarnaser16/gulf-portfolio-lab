@@ -35,6 +35,7 @@ from gpl.metrics import (
     beta,
     compound_to,
     correlation_clusters,
+    no_negative_zero,
     summary_table,
 )
 from gpl.montecarlo import (
@@ -65,11 +66,16 @@ class ToolError(Exception):
 
 
 def pct(x: float) -> str:
-    return f"{x:.2%}"
+    return f"{no_negative_zero(x, 4):.2%}"
 
 
 def num(x: float) -> str:
-    return "–" if pd.isna(x) else f"{x:.2f}"
+    return "–" if pd.isna(x) else f"{no_negative_zero(x, 2):.2f}"
+
+
+def pp_change(x: float) -> str:
+    """A weight change in percentage points, e.g. +5.00 pp ('+0.00 pp', never '-0.00 pp')."""
+    return f"{no_negative_zero(x * 100, 2):+.2f} pp"
 
 
 def times(x: float) -> str:
@@ -365,7 +371,7 @@ def backtest_strategies(ctx: AnalystContext, strategies: list[str], regime_aware
         )
     )
     for n, r in results.items():
-        rows[n]["turnover_per_year"] = times(r.turnover.iloc[1:].mean() * 12)
+        rows[n]["turnover_per_year"] = times(bt.annual_turnover(r))
         rows[n]["latest_weights"] = _weights(r.weights.iloc[-1])
     first = next(iter(results.values())).equity.index
     lookback = ctx.settings["lookback"]
@@ -610,6 +616,7 @@ def run_candidates(
     max_turnover: float | None = None,
     universe: UniverseData | None = None,
     max_swaps: int = 3,
+    progress: Callable[[float, str], None] | None = None,
 ) -> tuple[dict, CandidateRun]:
     """Run every candidate method within ``limits``, walk-forward after costs, and recommend one.
 
@@ -623,7 +630,8 @@ def run_candidates(
 
     Covariances use Ledoit-Wolf shrinkage (each month on that month's window only). Expected
     returns are window means. The recommendation is made by ``gpl.recommend.recommend``, a
-    fixed rule per goal; this function only formats its inputs and outputs.
+    fixed rule per goal; this function only formats its inputs and outputs. ``progress``, if
+    given, is called with (share done, step in words) as the run goes.
     """
     from gpl.agent.spec import describe_goal, describe_limits
     from gpl.recommend import (
@@ -632,6 +640,7 @@ def run_candidates(
         CURRENT,
         KEEP,
         candidate_specs,
+        candidate_statuses,
         recommend,
         volatility_target,
     )
@@ -657,8 +666,14 @@ def run_candidates(
     vol_target = volatility_target(goal, target, current_vol, bench_vol, limits.max_volatility)
     specs = candidate_specs(limits, vol_target)
 
+    say = progress or (lambda share, text: None)
+    say(0.05, f"1/4 Diagnosing your portfolio and setting up {len(specs)} methods for your goal")
     in_sample, feasible, reasons, infeasible_months = {}, {}, {}, {}
-    for name, spec in specs.items():
+    for i, (name, spec) in enumerate(specs.items()):
+        say(
+            0.10 + 0.60 * i / len(specs),
+            f"2/4 Re-optimising {name} month by month, after costs ({i + 1} of {len(specs)})",
+        )
         full = optimise(mu, cov, spec, rf_annual)
         feasible[name], reasons[name] = full.feasible, full.reasons
         in_sample[name] = full.sharpe if full.feasible else float("nan")
@@ -678,6 +693,7 @@ def run_candidates(
 
     swaps_run, swap_name, swaps_infeasible = None, "Re-weight + swaps", None
     if universe is not None:
+        say(0.72, f"2/4 Testing up to {max_swaps} swap ideas month by month")
         swaps_run = _swap_candidate(
             ctx, goal, specs, current, universe, max_turnover, max_swaps, run
         )
@@ -694,6 +710,7 @@ def run_candidates(
             in_sample[swap_name] = swaps_run["in_sample"]
             infeasible_months[swap_name] = swaps_run["infeasible"]
 
+    say(0.85, "3/4 Comparing the results month by month, after costs")
     # from the first full day held, as on the Benchmark tab (day one only buys, paying costs)
     series = {n: r.returns.iloc[1:] for n, r in results.items()}
     if swaps_run is not None:  # the swaps ran on the universe's dates: compare like intervals
@@ -770,6 +787,7 @@ def run_candidates(
             n: _ips_checks(ctx, full_targets.loc[n].fillna(0.0), universe)
             for n in full_targets.index
         }
+    say(0.92, "4/4 Applying the recommendation rule")
     rec = recommend(
         goal,
         table,
@@ -790,7 +808,7 @@ def run_candidates(
             "max_drawdown": pct(table.loc[name, "max_drawdown"]),
         }
         if name in results:
-            row["turnover_per_year"] = times(results[name].turnover.iloc[1:].mean() * 12)
+            row["turnover_per_year"] = times(bt.annual_turnover(results[name]))
         if name in CANDIDATES or name == swap_name:
             row["in_sample_sharpe"] = num(in_sample[name])
             row["held_up_out_of_sample"] = "yes" if rec.held_up.get(name) else "no"
@@ -823,6 +841,16 @@ def run_candidates(
             "rule": rec.rule,
             "reasons": rec.reasons,
             "ranking_under_the_rule": rec.ranking,
+        },
+        "candidate_status": {
+            n: {"status": label, "why": why}
+            for n, (label, why) in candidate_statuses(
+                table,
+                rec,
+                "improve",
+                {n: [c.rule for c in failures(ch)] for n, ch in ips_checks.items()},
+                held_up_ratio=lab.get("held_up_ratio", 0.5),
+            ).items()
         },
         "caveats": (
             "Walk-forward results re-optimise each month using only data available at the "
@@ -906,7 +934,7 @@ def run_candidates(
             t: {
                 "current": pct(w_now_all[t]),
                 "recommended": pct(latest.loc[rec.choice, t]),
-                "change": f"{(latest.loc[rec.choice, t] - w_now_all[t]) * 100:+.2f} pp",
+                "change": pp_change(latest.loc[rec.choice, t] - w_now_all[t]),
             }
             for t in latest.columns
             if latest.loc[rec.choice, t] > 1e-9 or w_now_all[t] > 1e-9
@@ -983,6 +1011,7 @@ def _swap_candidate(ctx, goal, specs, current, universe, max_turnover, max_swaps
     }
 
 
+BUILD_DUST = 0.005  # Build: leftovers under 0.5% that the target doesn't hold are sold
 BUILD_CANDIDATES = {  # name -> (objective, tilt)
     "Max IR": ("max_information_ratio", "none"),
     "Max IR · low-vol tilt": ("max_information_ratio", "low_vol"),
@@ -1009,6 +1038,7 @@ def run_build(
     current: Mapping[str, float],
     settings: Any,
     benchmark_weights: Mapping[str, float],
+    progress: Callable[[float, str], None] | None = None,
 ) -> tuple[dict, CandidateRun]:
     """ "Build a portfolio for me": candidates from the curated universe, walk-forward after
     costs, and a recommendation by ``gpl.recommend.recommend_build`` (a fixed, tested rule).
@@ -1017,12 +1047,20 @@ def run_build(
     low-volatility, momentum or quality tilt), a diversified IPS portfolio, and a benchmark
     tracker (the benchmark's own funds, Irish UCITS equivalents for a non-US person where
     available). Each built candidate re-chooses its securities and weights every month from
-    the trailing window only (``gpl.construct.build_strategy``).
+    the trailing window only (``gpl.construct.build_strategy``). ``progress``, if given, is
+    called with (share done, step in words) as the run goes (step 1, screening, is the
+    caller's).
     """
     from dataclasses import replace as dc_replace
 
-    from gpl.construct import benchmark_core, build_once, build_strategy
-    from gpl.recommend import BENCHMARK, CURRENT, TRACKER, recommend_build
+    from gpl.construct import (
+        benchmark_core,
+        build_once,
+        build_strategy,
+        turnover,
+        turnover_limited,
+    )
+    from gpl.recommend import BENCHMARK, CURRENT, TRACKER, candidate_statuses, recommend_build
     from gpl.suitability import breach_text, closeness, failures
 
     bench = ctx.benchmark
@@ -1057,13 +1095,24 @@ def run_build(
         ret, vol = portfolio_performance(w_held, held_r.mean() * periods, held_r.cov() * periods)
         in_sample[CURRENT] = (ret - rf_annual) / vol if vol > 0 else float("nan")
         infeasible[CURRENT] = 0
-    for name, (objective, tilt) in BUILD_CANDIDATES.items():
+    say = progress or (lambda share, text: None)
+    for i, (name, (objective, tilt)) in enumerate(BUILD_CANDIDATES.items()):
+        say(
+            0.15 + 0.70 * i / len(BUILD_CANDIDATES),
+            f"2/4 Building {name} and testing it {every} by {every}, after costs "
+            f"({i + 1} of {len(BUILD_CANDIDATES)} built portfolios)",
+        )
         s = dc_replace(settings, tilt=tilt)
         strategy = build_strategy(
             eligible, universe.tags, bench_r, ctx.ips, limits, s, ctx.rf, objective,
             cash_like, dict(w_held) if CURRENT in results else None, core, rets,
         )  # fmt: skip
-        result = bt.run_backtest(prices, strategy, **run)
+        traded = (
+            strategy
+            if settings.max_turnover is None
+            else turnover_limited(strategy, None, settings.max_turnover, dust=BUILD_DUST)
+        )
+        result = bt.run_backtest(prices, traded, **run)
         if len(strategy.infeasible_dates) >= len(result.weights):  # never built: not a result
             never_built[name] = [strategy.last_reason or "The limits could never be met."]
             continue
@@ -1102,6 +1151,7 @@ def run_build(
         in_sample[TRACKER] = float("nan")
         infeasible[TRACKER] = 0
 
+    say(0.88, f"3/4 Comparing every candidate with {bench.name} month by month, after costs")
     frame = pd.DataFrame({n: r.returns.iloc[1:] for n, r in results.items()})
     frame[BENCHMARK] = bench_r
     frame = frame.dropna()
@@ -1118,6 +1168,7 @@ def run_build(
     table = table.join(rel)
     table.loc[BENCHMARK, ["excess_return", "tracking_error"]] = 0.0
     table["in_sample_sharpe"] = pd.Series(in_sample)
+    table["turnover_per_year"] = pd.Series({n: bt.annual_turnover(r) for n, r in results.items()})
     if TRACKER in table.index:  # a fixed portfolio: its "in-sample" is its own history
         table.loc[TRACKER, "in_sample_sharpe"] = table.loc[TRACKER, "sharpe"]
     months = len(results[next(iter(results))].weights)
@@ -1143,6 +1194,7 @@ def run_build(
             closeness(ips_checks[n])[1] if n in ips_checks else 0.0 for n in table.index
         ]
         table["passes_ips"] = [n in ips_checks and not failures(ips_checks[n]) for n in table.index]
+    say(0.96, "4/4 Applying the recommendation rule")
     rec = recommend_build(
         table,
         settings.tracking_error_max,
@@ -1178,7 +1230,7 @@ def run_build(
                 "tracking_error": pct(r["tracking_error"]),
                 "hit_rate_months": pct(r["hit_rate"]),
                 "worst_relative_drawdown": pct(r["worst_relative_drawdown"]),
-                "turnover_per_year": times(results[name].turnover.iloc[1:].mean() * 12),
+                "turnover_per_year": times(r["turnover_per_year"]),
             }
         if name in BUILD_CANDIDATES:
             row["in_sample_sharpe"] = num(in_sample[name])
@@ -1204,7 +1256,12 @@ def run_build(
                 "region": tags.get("region", ""),
                 "domicile": tags.get("domicile", ""),
                 "sharia": tags.get("sharia", "unknown"),
-                "why": why.get(t, "in the benchmark tracker" if chosen == TRACKER else ""),
+                "why": why.get(t)
+                or (
+                    "in the benchmark tracker"
+                    if chosen == TRACKER
+                    else "held from an earlier quarter: the turnover limit spreads the move"
+                ),
             }
     report: dict[str, Any] = {
         "mode": "build",
@@ -1212,6 +1269,11 @@ def run_build(
         f"ratio), volatility at most the benchmark's, tracking error at most "
         f"{pct(settings.tracking_error_max)}",
         "limits": describe_limits_build(limits, settings),
+        "turnover_limit_per_rebalance": (
+            "none"
+            if settings.max_turnover is None
+            else f"{pct(settings.max_turnover)} a {every} after the first build"
+        ),
         "candidates": {
             n: ("tilt: " + t if t != "none" else o) for n, (o, t) in BUILD_CANDIDATES.items()
         }
@@ -1230,6 +1292,19 @@ def run_build(
             "rule": rec.rule,
             "reasons": rec.reasons,
             "ranking_under_the_rule": rec.ranking,
+        },
+        "candidate_status": {
+            n: {"status": label, "why": why}
+            for n, (label, why) in candidate_statuses(
+                table,
+                rec,
+                "build",
+                {n: [c.rule for c in failures(ch)] for n, ch in ips_checks.items()},
+                settings.tracking_error_max,
+                tolerance=lab.get("volatility_tolerance", 0.005),
+                held_up_ratio=lab.get("held_up_ratio", 0.5),
+                min_information_ratio=lab.get("build_min_information_ratio", 0.10),
+            ).items()
         },
         "securities_chosen": securities,
         "caveats": (
@@ -1255,11 +1330,15 @@ def run_build(
             t: {
                 "current": pct(latest.loc[CURRENT, t]),
                 "recommended": pct(latest.loc[chosen, t]),
-                "change": f"{(latest.loc[chosen, t] - latest.loc[CURRENT, t]) * 100:+.2f} pp",
+                "change": pp_change(latest.loc[chosen, t] - latest.loc[CURRENT, t]),
             }
             for t in latest.columns
             if latest.loc[chosen, t] > 1e-9 or latest.loc[CURRENT, t] > 1e-9
         }
+        if w_now.sum() > 0:  # today's one-off move into it (later quarters: the limit above)
+            report["move_from_current_turnover"] = pct(
+                turnover(latest.loc[CURRENT], latest.loc[chosen])
+            )
     equity = pd.DataFrame({n: (1 + frame[n]).cumprod() for n in frame.columns})
     return report, CandidateRun(equity, latest, rec, ips_checks)
 
@@ -1421,7 +1500,7 @@ def what_if_portfolio(ctx: AnalystContext, changes: list[dict]) -> dict:
             t: {
                 "current": pct(old[t]),
                 "what_if": pct(new[t]),
-                "change": f"{(new[t] - old[t]) * 100:+.2f} pp",
+                "change": pp_change(new[t] - old[t]),
             }
             for t in new.index
         },

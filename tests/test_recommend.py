@@ -310,9 +310,18 @@ def test_build_falls_back_to_tracker_then_diversified_then_closest() -> None:
         "Max IR · momentum tilt": {"information_ratio": -0.1},
     }
     rec = recommend_build(_build_table(**none_beat), 0.04)
-    assert rec.status == "next_best" and rec.choice == TRACKER
-    assert "does not beat the benchmark" in rec.reasons[1]
-    rec = recommend_build(_build_table(**none_beat, **{TRACKER: {"passes_ips": False}}), 0.04)
+    # every test passed, none beat the benchmark: the highest Sharpe (0.85) is next best
+    assert rec.status == "next_best" and rec.choice == "Max IR · momentum tilt"
+    assert "does not beat the benchmark reliably" in rec.reasons[1]
+    assert "others: Max IR 0.80, Benchmark tracker 0.70" in rec.reasons[1]
+    weak = {"Max IR": {"excess_return": -0.01, "sharpe": 0.45},
+            "Max IR · momentum tilt": {"information_ratio": -0.1, "sharpe": 0.45}}  # fmt: skip
+    rec = recommend_build(_build_table(**weak), 0.04)
+    assert rec.choice == TRACKER  # 0.70 beats the builds; Diversified's 5% TE is over the limit
+    rec = recommend_build(
+        _build_table(**weak, **{TRACKER: {"passes_ips": False}, DIVERSIFIED:
+                                {"tracking_error": 0.03}}), 0.04
+    )  # fmt: skip
     assert rec.status == "next_best" and rec.choice == DIVERSIFIED
     all_fail = {n: {"passes_ips": False} for n in ("Max IR", "Max IR · momentum tilt", TRACKER,
                                                   DIVERSIFIED)}  # fmt: skip
@@ -322,12 +331,13 @@ def test_build_falls_back_to_tracker_then_diversified_then_closest() -> None:
 
 
 def test_build_needs_a_material_information_ratio() -> None:
-    from gpl.recommend import TRACKER, recommend_build
+    from gpl.recommend import recommend_build
 
     tiny = {"Max IR": {"information_ratio": 0.02}, "Max IR · momentum tilt":
             {"information_ratio": 0.08}}  # fmt: skip
     rec = recommend_build(_build_table(**tiny), 0.04)
-    assert rec.status == "next_best" and rec.choice == TRACKER  # 0.08 < 0.10: within noise
+    assert rec.status == "next_best"  # 0.08 < 0.10: within noise, so not "recommended"
+    assert rec.choice == "Max IR · momentum tilt"  # still the best Sharpe of the rest
     assert "at least 0.10" in rec.reasons[0]
     assert recommend_build(_build_table(**tiny), 0.04, min_information_ratio=0.05).choice == (
         "Max IR · momentum tilt"
@@ -341,7 +351,8 @@ def test_build_keeps_a_compliant_current_portfolio_over_a_worse_fallback() -> No
         "Max IR": {"excess_return": -0.01},
         "Max IR · momentum tilt": {"information_ratio": -0.1},
     }
-    table = _build_table(**none_beat)
+    weak = {n: {**c, "sharpe": 0.45} for n, c in none_beat.items()}  # below the tracker's 0.70
+    table = _build_table(**weak)
     table.loc["Current"] = table.loc[TRACKER]
     table.loc["Current", ["sharpe", "passes_ips"]] = [0.75, True]  # better than the 0.70
     rec = recommend_build(table, 0.04)
@@ -350,3 +361,165 @@ def test_build_keeps_a_compliant_current_portfolio_over_a_worse_fallback() -> No
     assert recommend_build(table, 0.04).choice == TRACKER
     table.loc["Current", ["sharpe", "passes_ips"]] = [0.90, False]  # better, but fails the IPS
     assert recommend_build(table, 0.04).choice == TRACKER
+
+
+def _seed_44593_table() -> pd.DataFrame:
+    """Demo seed 44593 against 60/40, real prices, 2022-01-04 to 2026-11-05 (live run,
+    8 Nov 2026). No candidate passes every test: the builds didn't hold up and are over the
+    4.00% tracking-error limit; the tracker breaks the IPS (home bias, liquidity)."""
+    from gpl.recommend import DIVERSIFIED, TRACKER
+
+    cols = [
+        "volatility",
+        "sharpe",
+        "max_drawdown",
+        "in_sample_sharpe",
+        "excess_return",
+        "information_ratio",
+        "tracking_error",
+        "turnover_per_year",
+        "passes_ips",
+    ]
+    rows = {
+        "Max IR": [0.1194, 0.30, -0.1941, 1.01, 0.0027, 0.06, 0.0518, 2.81, True],
+        "Max IR · low-vol tilt": [0.1140, 0.49, -0.1892, 1.07, 0.0255, 0.47, 0.0495, 2.07, True],
+        "Max IR · momentum tilt": [0.1199, 0.34, -0.1832, 0.97, 0.0075, 0.15, 0.0505, 2.60, True],
+        "Max IR · quality tilt": [0.1203, 0.31, -0.1974, 0.94, 0.0038, 0.08, 0.0523, 2.78, True],
+        DIVERSIFIED: [0.1376, 0.39, -0.2429, 1.44, 0.0187, 0.14, 0.1477, 3.59, True],
+        TRACKER: [0.1052, 0.29, -0.2053, 0.29, -0.0012, -0.05, 0.0420, 0.11, False],
+        "Current": [0.1142, 0.32, -0.1769, None, 0.0039, 0.07, 0.0487, 0.19, True],
+        "Benchmark": [0.1161, 0.28, -0.2027, None, 0.0, None, 0.0, None, None],
+    }  # fmt: skip
+    table = pd.DataFrame(rows, index=cols).T
+    table["ips_fails"] = [0 if p is True else 1 for p in table["passes_ips"]]
+    table["ips_breach"] = 0.0
+    return table
+
+
+def test_build_never_falls_back_to_a_portfolio_worse_than_a_rejected_candidate() -> None:
+    # Live finding: the old rule recommended Diversified (Sharpe 0.39, 14.77% tracking error)
+    # because only the fallback skipped the tests; the low-vol tilt (0.49) was better on all
+    # five measures and also passes the IPS.
+    from gpl.recommend import recommend_build
+
+    rec = recommend_build(_seed_44593_table(), tracking_error_max=0.04)
+    assert rec.status == "next_best" and rec.choice == "Max IR · low-vol tilt"
+    assert "no portfolio passed every test" in rec.reasons[1]
+    assert (
+        "fails the fewest tests (didn't hold up out of sample; too much tracking error)"
+        in (rec.reasons[1])
+    )
+    assert "Diversified (IPS) 0.39" in rec.reasons[1]
+
+
+def test_build_fallback_must_pass_the_same_tests_as_the_builds() -> None:
+    from gpl.recommend import DIVERSIFIED, recommend_build
+
+    table = _seed_44593_table()
+    # Diversified within every test, the builds still failing: it is the only full pass
+    table.loc[DIVERSIFIED, ["tracking_error", "in_sample_sharpe"]] = [0.03, 0.6]
+    table.loc[DIVERSIFIED, "volatility"] = 0.11
+    rec = recommend_build(table, tracking_error_max=0.04)
+    assert rec.choice == DIVERSIFIED and "pass the IPS, held up out of sample" in rec.reasons[1]
+
+
+def test_dominance_guard_switches_to_the_better_portfolio() -> None:
+    from gpl.recommend import DIVERSIFIED, dominated_by
+
+    table = _seed_44593_table()
+    pool = [n for n in table.index if table.loc[n, "passes_ips"] is True and n != "Current"]
+    assert dominated_by(table, DIVERSIFIED, pool) == "Max IR · low-vol tilt"
+    assert dominated_by(table, "Max IR · low-vol tilt", pool) is None
+    # worse on one measure (more turnover) is enough to not be dominated
+    table.loc["Max IR · low-vol tilt", "turnover_per_year"] = 4.0
+    table.loc[["Max IR · momentum tilt", "Max IR", "Max IR · quality tilt"], "sharpe"] = 0.1
+    assert dominated_by(table, DIVERSIFIED, pool) is None
+
+
+def test_build_keep_still_applies_to_the_new_fallback() -> None:
+    from gpl.recommend import KEEP, recommend_build
+
+    table = _seed_44593_table()
+    table.loc["Current", "sharpe"] = 0.55  # better than the low-vol tilt's 0.49
+    rec = recommend_build(table, tracking_error_max=0.04)
+    assert rec.choice == KEEP and "so keep it" in rec.reasons[-1]
+
+
+def test_build_test_failures_names_each_test() -> None:
+    from gpl.recommend import TRACKER, build_test_failures
+
+    fails = build_test_failures(_seed_44593_table(), tracking_error_max=0.04)
+    assert fails["Max IR · low-vol tilt"] == ["held_up", "tracking_error"]
+    assert fails[TRACKER] == ["ips"]  # its 4.20% is within 4.00% + 0.50 pp tolerance
+    assert "Current" not in fails and "Benchmark" not in fails
+
+
+def test_build_fallback_prefers_the_fewest_failed_tests_then_sharpe() -> None:
+    # Same client after the 25%-a-quarter turnover limit (live, 8 Nov 2026): Diversified's
+    # Sharpe rose to 0.54 but it fails three tests (held up, volatility, 12.77% tracking
+    # error); the low-vol tilt fails two (held up; 4.87% tracking error, just over the limit).
+    from gpl.recommend import DIVERSIFIED, recommend_build
+
+    table = _seed_44593_table()
+    table.loc[DIVERSIFIED, ["volatility", "sharpe", "max_drawdown", "tracking_error"]] = [
+        0.1220, 0.54, -0.2086, 0.1277,
+    ]  # fmt: skip
+    table.loc["Max IR · low-vol tilt", ["volatility", "tracking_error"]] = [0.1152, 0.0487]
+    rec = recommend_build(table, tracking_error_max=0.04)
+    assert rec.choice == "Max IR · low-vol tilt"
+    assert "Diversified (IPS) 0.54" in rec.reasons[1]  # the higher Sharpe is named, not hidden
+
+
+def test_candidate_statuses_build_in_plain_english() -> None:
+    from gpl.recommend import TRACKER, candidate_statuses, recommend_build
+
+    table = _seed_44593_table()
+    rec = recommend_build(table, tracking_error_max=0.04)
+    st = candidate_statuses(table, rec, "build", {TRACKER: ["Home-market bias", "Liquidity"]}, 0.04)
+    assert st["Max IR · low-vol tilt"][0] == "✓ Next best"
+    assert st[TRACKER] == ("✗ Breaks IPS", "Fails the IPS: Home-market bias; Liquidity.")
+    label, why = st["Max IR"]
+    assert label == "✗ Didn't hold up out of sample"
+    assert why == (
+        "Sharpe 0.30 in the test against 1.01 when fitted: it kept less than 50% of it; "
+        "Tracking error 5.18%, over the 4.00% limit."
+    )
+    assert st["Current"][0] == "— Today's portfolio" and st["Benchmark"][0] == "— Reference"
+
+
+def test_candidate_statuses_build_names_a_weak_information_ratio() -> None:
+    from gpl.recommend import candidate_statuses, recommend_build
+
+    tiny = {"Max IR": {"information_ratio": 0.02}}
+    table = _build_table(**tiny)
+    rec = recommend_build(table, 0.04)
+    st = candidate_statuses(table, rec, "build", None, 0.04)
+    assert rec.choice == "Max IR · momentum tilt" and st[rec.choice][0] == "✓ Recommended"
+    assert st["Max IR"][0] == "✗ Didn't beat the benchmark enough"
+    assert "Information ratio 0.02 (at least 0.10 is needed)" in st["Max IR"][1]
+
+
+def test_candidate_statuses_improve() -> None:
+    from gpl.recommend import KEEP, Recommendation, candidate_statuses
+
+    table = pd.DataFrame(
+        {
+            "sharpe": [0.5, 0.9, 0.3, 0.7, 0.6],
+            "in_sample_sharpe": [None, 1.0, 1.2, 0.8, 0.7],
+            "passes_ips": [True, True, True, False, True],
+            "feasible": [True, True, True, True, True],
+        },
+        index=["Current", "Max Sharpe", "Min variance", "Risk parity", "Equal weight"],
+    )
+    rec = Recommendation("Max Sharpe", "rule", ["r"], ["Max Sharpe", "Equal weight"],
+                         {"Max Sharpe": True, "Min variance": False, "Risk parity": True,
+                          "Equal weight": True})  # fmt: skip
+    st = candidate_statuses(table, rec, "improve", {"Risk parity": ["Concentration"]})
+    assert st["Max Sharpe"][0] == "✓ Recommended"
+    assert st["Min variance"][0] == "✗ Didn't hold up out of sample"
+    assert st["Risk parity"] == ("✗ Breaks IPS", "Fails the IPS: Concentration.")
+    assert st["Equal weight"] == ("Ranked lower", "Qualified under the rule; ranked 2 of 2.")
+    keep = Recommendation(KEEP, "rule", ["not enough"], ["Max Sharpe"], rec.held_up, "keep")
+    st = candidate_statuses(table, keep, "improve")
+    assert st["Current"] == ("✓ Keep (recommended)", "not enough")
+    assert st["Max Sharpe"][0] == "✗ Not enough better than today"

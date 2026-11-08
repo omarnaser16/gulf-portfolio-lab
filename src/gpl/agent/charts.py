@@ -21,6 +21,7 @@ from gpl.metrics import (
     compound_to,
     drawdown_series,
     kpi_table,
+    no_negative_zero,
     rolling_volatility,
 )
 from gpl.montecarlo import simulate_paths
@@ -314,7 +315,9 @@ def _fmt(metric: str, x: float, signed: bool = False) -> str:
     if pd.isna(x):
         return "–"
     if metric == "sharpe":
+        x = no_negative_zero(x, 2)
         return f"{x:+.2f}" if signed else f"{x:.2f}"
+    x = no_negative_zero(x, 4)
     return f"{x * 100:+.2f} pp" if signed else f"{x:.2%}"
 
 
@@ -335,7 +338,7 @@ def chart_summary(data: ChartData) -> dict:
     f, c = data.frames, data.chart
 
     def pct(x: float) -> str:
-        return "n/a" if pd.isna(x) else f"{x:.2%}"
+        return "n/a" if pd.isna(x) else f"{no_negative_zero(x, 4):.2%}"
 
     if c == "weights_current_vs_proposed":
         return {

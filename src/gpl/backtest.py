@@ -157,6 +157,20 @@ def run_backtest(
     )
 
 
+def annual_turnover(result: BacktestResult) -> float:
+    """Average turnover a year (buys plus sells as a share of the portfolio), excluding the
+    first purchase from cash.
+
+    Sums the turnover of every later rebalance and divides by the years the backtest covers, so
+    it is right whatever the rebalance frequency (monthly, quarterly, ...). 0.5 means half the
+    portfolio is bought and sold, in total, each year.
+    """
+    if len(result.turnover) < 2:
+        return 0.0
+    years = (result.returns.index[-1] - result.turnover.index[0]).days / 365.25
+    return float(result.turnover.iloc[1:].sum() / years) if years > 0 else float("nan")
+
+
 def _rebalance_dates(index: pd.DatetimeIndex, rebalance: str) -> pd.DatetimeIndex:
     """Last trading day of each period, excluding the final day of data (nothing follows)."""
     last_days = index.to_series().resample(rebalance).last().dropna()

@@ -476,11 +476,23 @@ def test_run_build_reports_candidates_rule_and_securities(ctx) -> None:
 
     c, uni = _universe_ctx(ctx)
     settings = BuildSettings(tracking_error_max=0.06, n_min=4, n_max=6)
+    steps = []
     report, run = run_build(
         c, uni, OptimisationSpec(max_weight=0.4), {"SPY": 0.6, "AGG": 0.4}, settings,
-        {"SPY": 0.6, "AGG": 0.4},
+        {"SPY": 0.6, "AGG": 0.4}, progress=lambda share, text: steps.append((share, text)),
     )  # fmt: skip
     rows = report["walk_forward_after_costs"]
+    # live progress: steps 2-4 in order, the share done only rising
+    assert [t[:3] for _, t in steps] == ["2/4"] * 5 + ["3/4", "4/4"]
+    assert "(1 of 5 built portfolios)" in steps[0][1] and "after costs" in steps[0][1]
+    assert [s for s, _ in steps] == sorted(s for s, _ in steps)
+    # a plain status for every row; the turnover limit is reported
+    status = report["candidate_status"]
+    assert set(status) == set(rows)
+    assert status["Benchmark"]["status"] == "— Reference"
+    assert report["turnover_limit_per_rebalance"] == "25.00% a quarter after the first build"
+    if report["recommendation"]["choice"] in run.latest_weights.index:  # not "keep"
+        assert report["move_from_current_turnover"].endswith("%")
     assert {"Max IR", "Diversified (IPS)", "Benchmark tracker", "Benchmark"} <= set(rows)
     for key in ("excess_return_vs_benchmark", "information_ratio", "hit_rate_months",
                 "worst_relative_drawdown", "tracking_error", "turnover_per_year"):  # fmt: skip
@@ -504,11 +516,15 @@ def test_improve_caps_turnover_runs_swaps_and_lists_domicile_ideas(ctx) -> None:
 
     c, uni = _universe_ctx(ctx)
     current = {"SPY": 0.5, "EFA": 0.3, "EEM": 0.2}  # no bonds: a diversifier is missing
+    steps = []
     report, run = run_candidates(
         c, "max_risk_adjusted", OptimisationSpec(max_weight=0.6), current,
-        max_turnover=0.30, universe=uni,
+        max_turnover=0.30, universe=uni, progress=lambda share, text: steps.append(text),
     )  # fmt: skip
     assert report["mode"] == "improve" and report["max_turnover"] == "30.00%"
+    assert steps[0].startswith("1/4") and steps[-1] == "4/4 Applying the recommendation rule"
+    assert any("swap ideas" in t for t in steps) and any(t.startswith("3/4") for t in steps)
+    assert set(report["candidate_status"]) == set(report["walk_forward_after_costs"])
     assert "Re-weight + swaps" in report["walk_forward_after_costs"]
     assert any(sw["kind"] == "diversifier" for sw in report["swaps"])
     now = pd.Series(current)
