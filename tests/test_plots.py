@@ -202,3 +202,15 @@ def test_equity_chart_can_hide_series_in_the_legend() -> None:
     eq = pd.DataFrame({"Current": [1, 1.1], "Max Sharpe": [1, 1.2], "Min variance": [1, 1.05]})
     fig = equity_chart(eq, visible=["Current", "Max Sharpe"])
     assert [t.visible for t in fig.data] == [True, True, "legendonly"]
+
+
+def test_risk_return_labels_of_nearby_dots_take_different_sides() -> None:
+    from gpl.plots import risk_return_chart
+
+    pts = pd.DataFrame(
+        {"volatility": [0.0833, 0.0902, 0.0859, 0.0863], "cagr": [0.0667, 0.0690, 0.0504, 0.0494]},
+        index=["Max Sharpe", "Target volatility", "Current", "Re-weight + swaps"],
+    )
+    by = {t.name: t.textposition for t in risk_return_chart(pts, "Max Sharpe").data}
+    assert by["Max Sharpe"] != by["Target volatility"]
+    assert by["Current"] != by["Re-weight + swaps"]

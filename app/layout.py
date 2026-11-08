@@ -304,8 +304,8 @@ h1, h2, h3, h4 {{ color: var(--gpl-text) !important; letter-spacing: -0.01em; }}
 .gpl-step.done .gpl-dot {{ background: var(--gpl-brand); border-color: var(--gpl-brand); }}
 .gpl-step-text {{ display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }}
 .gpl-step-text b {{ font-size: 0.82rem; font-weight: 600; }}
-.gpl-step-text small {{ font-size: 0.68rem; color: var(--gpl-muted); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; }}
+.gpl-step-text small {{ font-size: 0.68rem; color: var(--gpl-muted); white-space: normal;
+  line-height: 1.25; }}
 
 /* ---- page header */
 .gpl-title {{ font-size: 1.9rem !important; font-weight: 700 !important;
@@ -457,6 +457,10 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
 .st-key-cta_welcome_demo, .st-key-welcome_blank {{ width: 100% !important; display: flex;
   justify-content: center; }}
 .st-key-cta_welcome_demo button {{ font-size: 1.05rem; min-height: 3rem; padding: 0 2rem; }}
+
+/* ---- toasts: bottom right, above the sticky bar, so they never cover a header control */
+[data-testid="stToastContainer"] {{ top: auto !important; bottom: 96px !important;
+  right: 24px !important; }}
 
 /* ---- sticky Back/Next bar */
 [class*="st-key-footer_"] {{ position: fixed; bottom: 0; left: 0; right: 0; z-index: 980;

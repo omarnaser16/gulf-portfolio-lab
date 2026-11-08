@@ -173,6 +173,27 @@ def risk_return_chart(
     (today's portfolio, the benchmark) in brand blue and grey; the others in slate.
     """
     fig = go.Figure()
+    xs, ys = points["volatility"].astype(float), points["cagr"].astype(float)
+    # label placement: a dot near another (a label's width on the x axis, about 18% of the axis
+    # span and at least 1.2 pp; a label's height on the y axis) takes the next free side, so
+    # labels don't sit on top of each other
+    near_x = max((xs.max() - xs.min() + 0.02) * 0.18, 0.012)
+    near_y = max((ys.max() - ys.min() + 0.01) * 0.12, 0.004)
+    sides = [
+        "top center",
+        "bottom center",
+        "middle right",
+        "middle left",
+        "top right",
+        "bottom left",
+    ]
+    placed: list[tuple[float, float, str]] = []
+    position: dict[str, str] = {}
+    for name in points.sort_values("volatility").index:
+        x, y = float(xs[name]), float(ys[name])
+        taken = {pos for (px, py, pos) in placed if abs(px - x) < near_x and abs(py - y) < near_y}
+        position[str(name)] = next((pos for pos in sides if pos not in taken), "top center")
+        placed.append((x, y, position[str(name)]))
     for name, row in points.iterrows():
         name = str(name)
         if name == highlight:
@@ -190,7 +211,7 @@ def risk_return_chart(
                 mode="markers+text",
                 name=name,
                 text=[name],
-                textposition="top center",
+                textposition=position[name],
                 textfont={
                     "size": 11,
                     "color": TEXT_PRIMARY if name == highlight else TEXT_SECONDARY,
@@ -211,7 +232,6 @@ def risk_return_chart(
         height=380,
     )
     # room around the dots so their labels are never clipped at the edges
-    xs, ys = points["volatility"].astype(float), points["cagr"].astype(float)
     xpad = max((xs.max() - xs.min()) * 0.15, 0.01)
     ypad = max((ys.max() - ys.min()) * 0.15, 0.005)
     fig.update_xaxes(

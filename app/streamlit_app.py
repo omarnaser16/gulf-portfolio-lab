@@ -1256,9 +1256,8 @@ def suitability_html(results: dict) -> str:
     tone = {"pass": "pass", "fail": "fail", "review": "warn"}
     word = {"pass": "Pass", "fail": "Fail", "review": "Review"}
 
-    def short(text: str) -> str:
-        first = text.split(". ")[0].rstrip(".") + "."
-        return first if len(first) <= 110 else first[:107].rstrip() + "…"
+    def short(text: str) -> str:  # the first sentence, in full (it wraps; never cut)
+        return text.split(". ")[0].rstrip(".") + "."
 
     head = "".join(
         f'<th class="num{" rec" if n == last and len(names) > 1 else ""}">{escape(n)}</th>'
@@ -1812,6 +1811,7 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             "An AI explanation is available when an API key is set (`ANTHROPIC_API_KEY`); the "
             "recommendation itself never depends on it."
         )
+    memo_slot = st.container()  # the AI explanation, right under its button
     st.caption(f"The rule for this goal: {rec['rule']}")
 
     # details, collapsed
@@ -1916,9 +1916,9 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     memo = result.get("memo")
     if memo:
         if memo["role"] == "error":
-            st.warning(memo["text"])
+            memo_slot.warning(memo["text"])
         else:
-            with st.container(border=True, key="memo_card"):
+            with memo_slot.container(border=True, key="memo_card"):
                 st.markdown(
                     '<div class="gpl-section">AI explanation</div>',
                     unsafe_allow_html=True,
@@ -2558,7 +2558,8 @@ with step_portfolio:
 
     with sec_hold:
         render_data_warnings()
-        hold_col, alloc_col = st.columns([1.8, 1], gap="medium")
+        # full width, so every column of the holdings table is readable at 1280 px
+        hold_col = alloc_col = st
         with hold_col.container(border=True, key="holdings_card"):
             prices_as_of = ws.render_holdings(
                 find_securities, get_quote, CFG["groups"], NAMES, HOLDING_PRESETS, price_data_ok

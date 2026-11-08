@@ -491,7 +491,7 @@ def _form(
 
     # 1 Client & household -------------------------------------------------------------
     with _card("household", parts, p):
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3 = st.columns([1, 1, 1.4])  # regulator names are long: a wider column
         c4 = st
         vals["residency"] = c1.text_input(
             "Residency (country)",

@@ -378,8 +378,8 @@ def render_holdings(
             args=(key, [r["ticker"] for r in rows], mode_col),
             column_config={
                 "_index": st.column_config.TextColumn("Ticker", width=82),
-                "Name": st.column_config.TextColumn(width=150),
-                "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=104),
+                "Name": st.column_config.TextColumn(width=280),
+                "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=140),
                 mode_col: st.column_config.NumberColumn(
                     EDIT_LABEL[mode_col],
                     min_value=0.0,
@@ -391,9 +391,9 @@ def render_holdings(
                 "Remove": st.column_config.CheckboxColumn(
                     "✕", width=34, help="Tick to remove this holding."
                 ),
-                "Price (local)": st.column_config.NumberColumn(format="%.2f", width=78),
-                "Ccy": st.column_config.TextColumn(width=46),
-                "Price (USD)": st.column_config.NumberColumn(format="%.2f", width=78),
+                "Price (local)": st.column_config.NumberColumn(format="%.2f", width=100),
+                "Ccy": st.column_config.TextColumn(width=50),
+                "Price (USD)": st.column_config.NumberColumn(format="%.2f", width=100),
             },
             disabled=READ_ONLY_COLUMNS,
         )
@@ -408,7 +408,7 @@ def render_holdings(
             f'<div class="gpl-kv" style="grid-template-columns:70% 30%;font-weight:600">'
             f"<div>Total · {len(rows)} holding{'s' if len(rows) != 1 else ''}</div>"
             f'<div style="text-align:right">'
-            f"{f'{total:,.2f}' if mode_col == USD else f'{total:.2f}%'}</div></div>",
+            f"{money(total, prefix='') if mode_col == USD else f'{total:.2f}%'}</div></div>",
             unsafe_allow_html=True,
         )
         times: dict[str, list[str]] = {}
@@ -555,7 +555,9 @@ def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
         if value
         else f"{len(weights)} holdings"
     )
-    plot(allocation_chart(shown, "", center=center, labels=False))
+    chart_col, legend_col = st.columns([1, 1.2], vertical_alignment="center")
+    with chart_col:
+        plot(allocation_chart(shown, "", center=center, labels=False))
     colours = COMPOSITION
     rows = "".join(
         f'<div><i style="display:inline-block;width:9px;height:9px;border-radius:2px;'
@@ -563,7 +565,7 @@ def render_allocation(weights: pd.Series, groups: Mapping[str, str]) -> None:
         f'<div style="text-align:right;font-weight:600">{v:.2%}</div>'
         for i, (k, v) in enumerate(shown.items())
     )
-    st.markdown(
+    legend_col.markdown(
         f'<div class="gpl-kv" style="grid-template-columns:75% 25%">{rows}</div>',
         unsafe_allow_html=True,
     )
@@ -915,8 +917,8 @@ def render_rebalance(
                 "_index": st.column_config.TextColumn("Ticker", width=82),
                 "Action": st.column_config.TextColumn(width=55),
                 "Current": st.column_config.NumberColumn("Current %", format="%.2f", width=72),
-                "Amount (USD)": st.column_config.NumberColumn(format="localized", width=100),
-                "After (USD)": st.column_config.NumberColumn(format="localized", width=100),
+                "Amount (USD)": st.column_config.NumberColumn(format="localized", width=96),
+                "After (USD)": st.column_config.NumberColumn(format="localized", width=92),
                 TARGET_COL: st.column_config.NumberColumn(
                     "Target %",
                     format="%.2f",
