@@ -14,19 +14,20 @@ calculation and makes every recommendation; the AI only fills forms and explains
 
 ## Screenshots
 
-All three come from the app's demo client (seed 2, taken before the 8 Nov 2026 demo update, so
-seed 2 now gives a different client): a fictional client, marked DEMO DATA everywhere.
+All three come from the app with **▶ Try a demo client** (seed 2, 8 Nov 2026): a fictional
+client whose portfolio fits their IPS, marked DEMO DATA everywhere.
 
 **Build a portfolio for me:** a plain-English summary first (what we did, what we found, what we
 recommend and why, what changes), then current against recommended on four measures, and each
-candidate's status with a one-line reason.
+candidate's status with a one-line reason. Here no build beats 60/40 reliably, so the rule's
+fallback, Diversified (IPS), is shown as the next best option, not as a forecast.
 
 ![Build mode: recommendation and walk-forward results against the benchmark](docs/screenshots/build-result.png)
 
-**Improve my current portfolio:** the current portfolio breaks the IPS concentration limit, so the
-rule recommends the best method that passes every rule. By default the move stays within the 30%
-turnover limit; the adviser can choose a full restructure instead, shown with its turnover and
-estimated cost.
+**Improve my current portfolio:** Max Sharpe beat the current portfolio's walk-forward Sharpe
+ratio after costs by 0.19 (0.52 against 0.33), with lower volatility and a shallower largest
+fall, so the rule recommends it. The move stays within the 30% turnover limit; the adviser can
+choose a full restructure instead, shown with its turnover and estimated cost.
 
 ![Improve mode: recommendation box and walk-forward results after costs](docs/screenshots/optimise-recommendation.png)
 

@@ -69,8 +69,8 @@ it switched to build + explain mode, which has been used since:
   in cash-like holdings (`client.cash_like_holdings`: the "Cash & short-term" group, config
   `cash_like`, or volatility <= 3%). They are a hard optimiser set and checked on the trade list.
 - **UI:** light private-bank theme (`.streamlit/config.toml`) and one plotly template
-  (`gpl_light`); show figures with `formatting.plot` (theme=None). Six-step workflow with a stepper
-  and sticky header (`app/layout.py`). Benchmarks are grey dashed reference series. No sidebar:
+  (`gpl_light`); show figures with `formatting.plot` (theme=None). Six-step workflow: the step cards
+  are the navigation (the top-level tab row is hidden), with a sticky header (`app/layout.py`). Benchmarks are grey dashed reference series. No sidebar:
   settings live in the top-bar popover.
 
 ## Code style

@@ -727,3 +727,20 @@ days; the work itself was done in a series of sessions.
 - **Learned:** a demo is a claim about the product; if it breaks its own rules, the product
   looks broken. Test the generator against the rules, not against itself.
 - **Status:** 1025 tests: 1024 pass locally with my key (including 4 live API tests); the real-install test runs in CI.
+
+## 2026-11-08 — Step cards are the navigation; README screenshots re-shot
+- **Checked first:** the AI intake was already gone and *▶ Try a demo client* was the primary
+  button with the welcome banner. The step cards were still display-only above a duplicate row
+  of six tabs.
+- **Built by Claude Code:** each step card now opens its step (a full-size button over the card
+  sets the step, as the Next buttons already did); the top-level tab row is hidden, so the cards
+  are the only step navigation. Optimise and Report & trades got page titles, since the tab
+  label used to name them. Checked in headless Chrome with real mouse clicks: no tab row
+  visible, the active card and the page content follow each click.
+- **Screenshots** re-shot from the new demo client, seed 2: Build (no build beats 60/40 reliably;
+  Diversified (IPS) is the next best fallback), Improve (Max Sharpe, Sharpe 0.52 against 0.33,
+  within the 30% turnover limit) and page 3 of the client report PDF.
+- **Noticed, not changed:** the report's swap note says "sell IEF" while the turnover-limited
+  move only trims IEF (7.31% to 4.97%); the wording should say the full sale happens in the full
+  restructure.
+- **Status:** 1025 tests: 1024 pass locally; the real-install test runs in CI.
