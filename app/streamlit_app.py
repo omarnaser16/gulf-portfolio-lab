@@ -393,7 +393,7 @@ with head_demo:
         "fill_demo",
         width="stretch",
         help="Fills every field with a random, realistic GCC client and a 5-10 holding "
-        "portfolio of real tickers (no AI), then opens the analysis. Marked DEMO DATA "
+        "portfolio of real tickers (no AI), then opens step 1 (Client). Marked DEMO DATA "
         "everywhere; the seed in the header reproduces it (⚙ Settings › Demo seed).",
     )
 head_title.markdown("### Gulf Portfolio Lab")
@@ -485,8 +485,15 @@ with head_settings.popover("⚙", width="stretch", help="Settings"):
         "De-risk when P(stressed) ≥", 0.2, 0.9, float(R["threshold"]), 0.05, disabled=not use_regime
     )
 
+SCROLL_TOP_JS = """<script>
+const doc = window.parent.document;
+window.parent.scrollTo(0, 0);
+doc.querySelectorAll('[data-testid="stMain"], [data-testid="stAppViewContainer"], section.main')
+  .forEach(e => e.scrollTo({top: 0}));
+</script>"""
 if st.session_state.pop("demo_toast", False):
     st.toast(client_ui.DEMO_TOAST, icon="✅")
+    st.iframe(SCROLL_TOP_JS, height=1)  # our own constant script: back to the top of step 1
 if st.session_state.get(client_ui.CLIENT) is None:  # first visit: point at the demo
     with st.container(border=True, key="welcome"):
         st.markdown(client_ui.WELCOME)

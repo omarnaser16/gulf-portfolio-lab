@@ -59,7 +59,9 @@ from gpl.report import ips_pdf
 
 CLIENT, VERSION = "client", "client_v"
 DEMO_BUTTON = "▶ Try a demo client"
-DEMO_TOAST = "Demo client loaded. Walk through steps 1–6, or open Optimise to see a recommendation."
+DEMO_TOAST = (
+    "Demo client loaded. Review the client and IPS, then use Next to walk through each step."
+)
 WELCOME = (
     "**Gulf Portfolio Lab** turns a GCC client's facts into an Investment Policy Statement, "
     "checks their portfolio against it and finds a suitable improvement, with every figure "
@@ -120,7 +122,7 @@ def _load_json() -> None:
 
 
 def fill_demo(seed: int | None = None) -> None:
-    """Callback: a seeded demo client and portfolio (no AI), then open the Analyse step.
+    """Callback: a seeded demo client and portfolio (no AI), then open step 1 (Client).
 
     ``seed`` None takes the one typed in ⚙ Settings › Demo seed, else a new random one; the
     seed is shown in the header so the same demo can be reproduced.
@@ -136,8 +138,8 @@ def fill_demo(seed: int | None = None) -> None:
     st.session_state["demo_tickers"] = sorted(h["ticker"] for h in demo.holdings)
     for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails", "ctx_key"):
         st.session_state.pop(key, None)
-    st.session_state["main_tab"] = "3 Analyse"
-    st.session_state["demo_toast"] = True  # shown once, on the next run
+    st.session_state["main_tab"] = "1 Client"  # start at the beginning; Next walks the steps
+    st.session_state["demo_toast"] = True  # shown once, with a scroll to the top
 
 
 def _new_client() -> None:

@@ -1440,24 +1440,38 @@ def test_demo_button_loads_a_client_with_a_toast(app: AppTest) -> None:
     assert not app.exception, app.exception
     assert app.session_state["client"]["demo"] is True
     assert [t.value for t in app.toast] == [
-        "Demo client loaded. Walk through steps 1–6, or open Optimise to see a recommendation."
+        "Demo client loaded. Review the client and IPS, then use Next to walk through each step."
     ]
     assert not any(b.key == "welcome_demo" for b in app.button)
+    # opens step 1 (Client), not further on; later steps are already computed in this run
+    assert app.session_state["main_tab"] == "1 Client"
     html = " ".join(m.value for m in app.markdown)  # chips and cards updated in this same run
     assert "DEMO DATA · seed" in html and "<b>Analyse</b><small>analysis ready</small>" in html
-    assert re.search(r'class="gpl-step done active">.{0,80}<b>Analyse</b>', html)
+    assert re.search(r'class="gpl-step done active">.{0,80}<b>Client</b>', html)
+    assert len(app.get("iframe")) == 1  # the one-time scroll to the top
     app.run()
-    assert not app.toast  # shown once
+    assert not app.toast and not app.get("iframe")  # shown once
+    # Next walks the steps in order, from Client to Report & trades
+    steps = ["1 Client", "2 Portfolio", "3 Analyse", "4 Optimise", "5 Suitability",
+             "6 Report & trades"]  # fmt: skip
+    for i in range(5):
+        app.button(key=f"next_{i}").click().run()
+        assert not app.exception, app.exception
+        assert app.session_state["main_tab"] == steps[i + 1]
+        html = " ".join(m.value for m in app.markdown)
+        title = steps[i + 1].split(" ", 1)[1].replace("&", "&amp;")
+        assert re.search(rf'active">.{{0,80}}<b>{re.escape(title)}</b>', html), title
+    assert not any(b.key == "next_5" for b in app.button)  # the last step has no Next
 
 
-def test_fill_demo_client_fills_everything_and_opens_the_analysis(app: AppTest) -> None:
+def test_fill_demo_client_fills_everything_and_opens_the_client_step(app: AppTest) -> None:
     from gpl.demo import demo_client
 
     app.number_input(key="demo_seed_input").set_value(7)
     app.button(key="fill_demo_seed").click().run()
     assert not app.exception, app.exception
     demo = demo_client(7)
-    assert app.session_state["main_tab"] == "3 Analyse"
+    assert app.session_state["main_tab"] == "1 Client"
     assert app.session_state["ws_rows"] == demo.holdings and app.session_state["ws_mode"] == (
         "USD amount"
     )
