@@ -5,7 +5,7 @@ belongs to (the ``show_chart`` tool has no numeric fields). ``chart_data`` compu
 by calling the finance engine on the analyst's context; ``build_chart`` turns that data, and
 nothing else, into a figure or table; ``chart_summary`` gives the model formatted figures it
 may quote. The current portfolio is the user's holdings; the proposed one is the latest
-what-if or Optimise recommendation, if any; the benchmark is the one chosen in the app.
+Optimise recommendation, if any; the benchmark is the one chosen in the app.
 """
 
 from dataclasses import dataclass, field
@@ -137,7 +137,7 @@ def chart_data(ctx, chart: str) -> ChartData:
     if not ctx.user_portfolio:
         raise ValueError("no portfolio entered on the Portfolio tab")
     ports = _portfolios(ctx)
-    notes = [] if ctx.proposed else ["No proposed portfolio yet (no what-if or Optimise run)."]
+    notes = [] if ctx.proposed else ["No proposed portfolio yet (Optimise has not run)."]
     current = ports[CURRENT]
 
     if chart == "weights_current_vs_proposed":

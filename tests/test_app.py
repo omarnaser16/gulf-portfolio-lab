@@ -5,7 +5,6 @@ import re
 import sys
 import zlib
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -135,8 +134,6 @@ def test_app_renders_every_tab(app: AppTest) -> None:
         "Optimise",
         "Frontier",
         "Strategy backtests",
-        "Trades & report",
-        "AI analyst",
     }
     # static tables: data notes, my holdings, my comparison, benchmark comparison, diagnosis
     # by holding, diagnosis vs benchmark, assets, strategies, regime folds, domicile check,
@@ -398,13 +395,17 @@ def test_regime_caption_states_history_and_relative_definition(app: AppTest) -> 
 # ---------------------------------------------------------------------------------- Analyst
 
 
-def test_analyst_without_key_explains_setup(app: AppTest) -> None:
-    assert any("No API key found" in i.value for i in app.info)
+def test_no_chat_or_free_text_ai_anywhere(app: AppTest) -> None:
+    # the AI never reads text from the user: no chat box, no "describe it" box, no analyst tab
+    assert not app.get("chat_input")
+    assert not any(t.key in ("ws_goals", "about_me") for t in app.text_area)
+    keys = {b.key for b in app.button}
+    assert not keys & {"ask_analyst", "ws_interpret", "write_portfolio_memo", "stress_memo"}
+    assert "AI analyst" not in [t.label for t in app.tabs]
 
 
-@pytest.fixture
-def analyst_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[AppTest, FakeClient]:
-    client = FakeClient(
+def test_explain_this_recommendation_writes_an_audited_memo(optimise_app) -> None:
+    at, client = optimise_app(
         [
             response([tool_use("t1", "get_universe", {})], "tool_use", (800, 40)),
             response(
@@ -412,43 +413,22 @@ def analyst_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[AppTes
                 "end_turn",
                 (1200, 400),
             ),
-            response([text("A more conservative choice is risk parity.")], "end_turn", (300, 60)),
         ]
     )
-    monkeypatch.setattr(yf, "download", synthetic_download)
-    monkeypatch.setattr(yf, "Ticker", FakeTicker)
-    monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(agent, "has_credentials", lambda: True)
-    monkeypatch.setattr(agent, "make_client", lambda: client)
-    st.cache_data.clear()
-    at = AppTest.from_file(APP, default_timeout=180)
-    at.run()
-    return at, client
-
-
-def test_analyst_writes_an_audited_memo(analyst_app) -> None:
-    at, client = analyst_app
-    at.selectbox(key="profile_example").set_value("Dubai, moderate, 10 years").run()
-    at.button(key="write_portfolio_memo").click().run()
+    at.button(key="ws_run_opt").click().run()
+    assert client.requests == []  # the recommendation never needs the AI
+    assert at.button(key="ws_opt_memo").label == "Explain this recommendation (AI)"
+    at.button(key="ws_opt_memo").click().run()
     assert not at.exception, at.exception
     assert any("Moderate investor" in m.value for m in at.markdown)
     assert any("not investment advice" in m.value.lower() for m in at.markdown)
     assert any("`12.34%`" in w.value for w in at.warning)  # invented number flagged
-    assert any("1 tool calls" in c.value and "about $" in c.value for c in at.caption)
     assert any("Audit trail: 1 tool calls" in e.label for e in at.expander)
     request = client.requests[0]
     assert request["model"] == "claude-haiku-5-5"
-    assert "Dubai" in request["messages"][0]["content"]
-
-
-def test_analyst_follow_up_continues_the_conversation(analyst_app) -> None:
-    at, client = analyst_app
-    at.button(key="write_portfolio_memo").click().run()
-    at.chat_input(key="follow_up").set_value("What if I were more conservative?").run()
-    assert not at.exception, at.exception
-    assert any("risk parity" in m.value for m in at.markdown)
-    roles = [m["role"] for m in client.requests[-1]["messages"]]
-    assert roles[-1] == "user" and roles.count("user") == 3  # review, tool results, follow-up
+    # the only request: fixed text written by the app, nothing typed by the user
+    assert request["messages"][0]["content"].startswith("Write a short plain-English memo")
+    assert at.session_state["ws_opt"]["memo"]["role"] == "assistant"  # goes into the report
 
 
 # --------------------------------------------------------------------- any asset, data period
@@ -699,36 +679,7 @@ def test_monte_carlo_offers_my_portfolio(app: AppTest) -> None:
     )
 
 
-def test_analyst_writes_a_memo_about_my_portfolio(analyst_app) -> None:
-    at, client = analyst_app
-    at.button(key="write_portfolio_memo").click().run()
-    assert not at.exception, at.exception
-    question = client.requests[0]["messages"][0]["content"]
-    assert question.startswith("Please review my portfolio (SPY 50.00%, AGG 30.00%")
-    tools = {t["name"]: t for t in client.requests[0]["tools"]}
-    assert (
-        "My portfolio"
-        in tools["backtest_strategies"]["input_schema"]["properties"]["strategies"]["items"]["enum"]
-    )
-
-
 # ---------------------------------------------------------------------------------- Optimise
-
-GOALS_TEXT = "make it safer, at least 15% GCC, no single asset over 45%"
-
-
-def _spec_call(**overrides) -> SimpleNamespace:
-    draft = {
-        "goal": "reduce_risk",
-        "max_weight_pct": 45,
-        "asset_limits": [],
-        "group_limits": [{"group": "GCC", "min_pct": 15, "max_pct": None}],
-        "max_volatility_pct": None,
-        "min_return_pct": None,
-        "unmapped_requests": [],
-        "summary": "Reduce risk; at least 15% GCC; max 45% per asset.",
-    }
-    return tool_use("s1", "propose_spec", {**draft, **overrides})
 
 
 @pytest.fixture
@@ -816,35 +767,21 @@ def test_target_goal_needs_its_number(optimise_app) -> None:
     assert _candidates(at) is not None
 
 
-def test_ai_fills_goal_and_limits_for_the_user_to_confirm(optimise_app) -> None:
-    at, client = optimise_app([response([_spec_call(min_return_pct=7)], "tool_use")])
-    at.text_area(key="ws_goals").set_value(GOALS_TEXT)
-    at.button(key="ws_interpret").click().run()
-    assert not at.exception, at.exception
-    assert any("The AI understood" in i.value for i in at.info)
-    assert any("not in your text" in w.value and "7%" in w.value for w in at.warning)
-    assert at.slider(key="max_weight").value == pytest.approx(0.45)  # the AI's per-asset cap
-    plan = next(m.value for m in at.markdown if m.value.startswith("**Goal:**"))
-    assert "Reduce risk" in plan and _limits(at)["Group GCC"] == ("at least 15.00%", "Form")
-    assert _candidates(at) is None  # nothing runs until the user presses Run
-    at.button(key="ws_run_opt").click().run()
-    weights = _latest_weights(at).drop("Current")
-    assert (weights["KSA"].map(lambda v: float(v.rstrip("%"))) >= 15.0 - 1e-6).all()
-    assert [r["tools"][0]["name"] for r in client.requests] == ["propose_spec"]
-
-
 def test_impossible_limits_are_explained_without_weights(optimise_app) -> None:
-    impossible = _spec_call(
-        max_weight_pct=20, group_limits=[{"group": "GCC", "min_pct": 90, "max_pct": None}]
-    )
-    at, _ = optimise_app([response([impossible], "tool_use")])
-    at.text_area(key="ws_goals").set_value("at least 90% GCC, no asset over 20%")
-    at.button(key="ws_interpret").click().run()
+    at, _ = optimise_app([])
+    at.session_state["ws_draft"] = {
+        "goal": "max_risk_adjusted", "max_weight_pct": None, "asset_limits": [],
+        "group_limits": [{"group": "GCC", "min_pct": 90.0, "max_pct": None}],
+        "max_volatility_pct": None, "min_return_pct": None,
+    }  # fmt: skip
+    at.session_state["ws_draft_v"] = 7
+    at.run()
+    at.slider(key="max_weight").set_value(0.20).run()
     at.button(key="ws_run_opt").click().run()
     assert not at.exception, at.exception
     warnings = " ".join(w.value for w in at.warning)
     assert "can't meet your limits" in warnings and "Group 'GCC' needs at least 90.00%" in warnings
-    assert any("Keep your current portfolio" in m.value for m in at.markdown)  # summary card
+    assert any("Keep your current portfolio" in m.value for m in at.markdown)
     assert _latest_weights(at) is None  # no method ran, so no weights are shown
 
 
@@ -863,13 +800,6 @@ def test_memo_explains_the_stored_recommendation(optimise_app) -> None:
     tool_result = client.requests[1]["messages"][-1]["content"][0]
     assert '"recommendation"' in tool_result["content"]
     assert any("The rule picked a method" in m.value for m in at.markdown)
-
-
-def test_interpret_with_empty_goals_explains(optimise_app) -> None:
-    at, client = optimise_app([])
-    at.button(key="ws_interpret").click().run()
-    assert any("Describe your goals first" in w.value for w in at.warning)
-    assert client.requests == []
 
 
 def test_changing_the_goal_hides_stale_results(optimise_app) -> None:
@@ -915,38 +845,12 @@ def test_kpi_cards_with_deltas_vs_the_benchmark(app: AppTest) -> None:
 # ------------------------------------------------------------- Analyst: charts, what-if, stress
 
 
-@pytest.fixture
-def chart_app(monkeypatch, tmp_path):
-    def make(script: list) -> tuple[AppTest, FakeClient]:
-        client = FakeClient(script)
-        monkeypatch.setattr(yf, "download", synthetic_download)
-        monkeypatch.setattr(yf, "Ticker", FakeTicker)
-        monkeypatch.setattr(gpl.data, "DEFAULT_CACHE_DIR", tmp_path)
-        monkeypatch.setattr(agent, "has_credentials", lambda: True)
-        monkeypatch.setattr(agent, "make_client", lambda: client)
-        st.cache_data.clear()
-        at = AppTest.from_file(APP, default_timeout=240)
-        at.run()
-        return at, client
-
-    return make
-
-
 def _titles(at: AppTest) -> list[str]:
     return [json.loads(c.proto.spec)["layout"]["title"]["text"] for c in at.get("plotly_chart")]
 
 
-def test_analyst_page_shows_its_context_and_no_second_kpi_row(app: AppTest) -> None:
-    # each element appears once: the KPI cards live on Analyse, not on the AI analyst page
-    assert [m.label for m in app.metric].count("Return (CAGR)") == 1
-    context = next(m.value for m in app.markdown if "<div>Holdings</div>" in m.value)
-    assert ">4</div>" in context.replace(" · ", "</div>") or ">4 · " in context
-    assert "60/40 (SPY/AGG)" in context and "not run yet" in context
-    assert app.button(key="analyst_to_analyse").label == "See the figures on Analyse"
-
-
-def test_memo_sections_are_paired_with_charts_built_by_code(chart_app) -> None:
-    at, client = chart_app(
+def test_memo_sections_are_paired_with_charts_built_by_code(optimise_app) -> None:
+    at, client = optimise_app(
         [
             response(
                 [
@@ -961,7 +865,8 @@ def test_memo_sections_are_paired_with_charts_built_by_code(chart_app) -> None:
             response([text("### Risk\nSPY dominates.\n\n### Stress\nCOVID hurt.")], "end_turn"),
         ]
     )
-    at.button(key="write_portfolio_memo").click().run()
+    at.button(key="ws_run_opt").click().run()
+    at.button(key="ws_opt_memo").click().run()
     assert not at.exception, at.exception
     titles = _titles(at)
     risk_i = titles.index("Share of money vs share of risk (current)")
@@ -971,41 +876,6 @@ def test_memo_sections_are_paired_with_charts_built_by_code(chart_app) -> None:
     assert any(m.startswith("### Risk") for m in md) and any(m.startswith("### Stress") for m in md)
 
 
-def test_what_if_follow_up_updates_the_charts(chart_app) -> None:
-    at, client = chart_app(
-        [
-            response([text("### Summary\nA balanced portfolio.")], "end_turn"),
-            response(
-                [
-                    tool_use(
-                        "w1",
-                        "what_if_portfolio",
-                        {"changes": [{"ticker": "SPY", "weight_pct": 30}]},
-                    ),
-                    tool_use(
-                        "c1",
-                        "show_chart",
-                        {"chart": "weights_current_vs_proposed", "section": "What changes"},
-                    ),
-                ],
-                "tool_use",
-            ),
-            response([text("### What changes\nLess SPY.")], "end_turn"),
-        ]
-    )
-    at.button(key="write_portfolio_memo").click().run()
-    at.chat_input(key="follow_up").set_value("What if I cut SPY to 30%?").run()
-    assert not at.exception, at.exception
-    specs = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
-    weights_fig = next(
-        f for f in specs if f["layout"]["title"]["text"] == "Current vs proposed weights"
-    )
-    what_if = next(t for t in weights_fig["data"] if t["name"] == "What-if")
-    values = dict(zip(what_if["y"], _decode(what_if["x"]), strict=True))
-    assert values["SPY"] == pytest.approx(0.30)
-    assert values["AGG"] == pytest.approx(0.42)  # 30/50 of the remaining 70%
-
-
 def _decode(values) -> list[float]:
     """Plotly sends numeric arrays as base64 typed arrays ({"dtype", "bdata"})."""
     import base64
@@ -1013,20 +883,6 @@ def _decode(values) -> list[float]:
     if isinstance(values, dict):
         return list(np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"]))
     return list(values)
-
-
-def test_stress_test_button(chart_app) -> None:
-    at, client = chart_app(
-        [
-            response([tool_use("s1", "stress_test", {})], "tool_use"),
-            response([text("### Stress\nSee the episodes.")], "end_turn"),
-        ]
-    )
-    at.button(key="stress_memo").click().run()
-    assert not at.exception, at.exception
-    assert client.requests[0]["messages"][0]["content"].startswith("Stress test my portfolio")
-    result = client.requests[1]["messages"][-1]["content"][0]["content"]
-    assert "COVID crash" in result and "2020-02-19 to 2020-03-23" in result
 
 
 def test_memo_sections_pairing_and_disclaimer_last() -> None:
@@ -1434,9 +1290,6 @@ def test_workflow_stepper_header_next_and_ask_the_analyst(app: AppTest) -> None:
     assert app.session_state["main_tab"] == "1 Client"
     app.button(key="next_0").click().run()
     assert app.session_state["main_tab"] == "2 Portfolio"
-    app.button(key="ask_analyst").click().run()
-    assert app.session_state["main_tab"] == "6 Report & trades"
-    assert app.session_state["report_tab"] == "AI analyst"
     app.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
     app.button(key="client_load_example").click().run()
     html = " ".join(m.value for m in app.markdown)
@@ -1495,12 +1348,7 @@ def test_demo_button_loads_a_client_with_a_toast(app: AppTest) -> None:
         html = " ".join(m.value for m in app.markdown)
         title = steps[i + 1].split(" ", 1)[1].replace("&", "&amp;")
         assert re.search(rf'active">.{{0,600}}?<b>{re.escape(title)}</b>', html), title
-    # on the last step, Next opens its second tab, the AI analyst, and Back returns
-    app.button(key="next_5").click().run()
-    assert app.session_state["report_tab"] == "AI analyst"
-    assert app.button(key="back_5").label == "← Back to trades & report"
-    app.button(key="back_5").click().run()
-    assert app.session_state["report_tab"] == "Trades & report"
+    assert not any(b.key == "next_5" for b in app.button)  # the last step has no Next
 
 
 def test_fill_demo_client_fills_everything_and_opens_the_client_step(app: AppTest) -> None:
@@ -1532,12 +1380,10 @@ def test_fill_demo_client_fills_everything_and_opens_the_client_step(app: AppTes
 def test_selected_tab_survives_a_holdings_change(app: AppTest) -> None:
     assert app.session_state["main_tab"] == "1 Client"
     app.session_state["main_tab"] = "6 Report & trades"
-    app.session_state["report_tab"] = "Trades & report"
     app.run()
     _set_holdings(app, [{"ticker": "SPY", "group": "Global equity", "value": 100.0}])
     assert not app.exception, app.exception
     assert app.session_state["main_tab"] == "6 Report & trades"
-    assert app.session_state["report_tab"] == "Trades & report"
 
 
 def test_client_facts_fill_the_client_tab_and_constrain_optimise(optimise_app) -> None:

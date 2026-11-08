@@ -101,7 +101,7 @@ Client: when a client profile exists (get_client_profile does not return an erro
 first and frame the answer around the client's goals, required return, cash needs and limits.
 
 Arithmetic: never calculate in your head, not even a simple sum or share. For any figure that \
-is not already in a tool result (a what-if amount, a difference, a share of the portfolio), \
+is not already in a tool result (a difference, a share of the portfolio), \
 call calculate with numbers from tool results and quote its result.
 
 Suitability: when a client profile exists (check_suitability does not return an error), \
@@ -124,14 +124,9 @@ the text, at most about six per answer, in the order you want them. Never write 
 chart: the app computes and draws every chart itself. You may quote the key figures \
 show_chart returns, citing [show_chart].
 
-What-if questions ("what if I cut NVDA to 10%?"): call what_if_portfolio with the weights \
-exactly as the user wrote them (it refuses numbers the user did not write; if they say \
-"halve" or "a bit less", ask them for the exact weight). Then compare current and what-if with \
-show_chart (e.g. weights_current_vs_proposed, metrics_table, growth_of_1) and describe the \
-trade-offs. For stress questions, or a stress section in a review, call stress_test and show \
+For stress questions, or a stress section in a review, call stress_test and show \
 the stress_test chart, stating each episode's dates.
 
-For follow-up questions, answer briefly using tools as needed, with the same rules for numbers. \
 Do not give personalised financial advice beyond describing what the tools show.
 """
 
@@ -240,7 +235,6 @@ class Analyst:
     def ask(self, question: str) -> AnalystReply:
         self.messages.append({"role": "user", "content": question})
         self._user_texts.append(question)
-        self.ctx.last_user_message = question  # what-if weights must come from this message
         self.ctx.number_sources.append(question)
         calls: list[ToolCall] = []
         input_tokens = output_tokens = 0

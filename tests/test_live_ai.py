@@ -21,30 +21,6 @@ def setup():
     return agent.make_client(), cfg["agent"]["model"], cfg
 
 
-def test_strict_tool_sets_compile_with_the_full_universe(setup) -> None:
-    """propose_spec and the analyst's tools stay strict; check they fit the grammar limit."""
-    from gpl.agent.spec import spec_tool
-    from gpl.data import load_investable
-
-    client, model, cfg = setup
-    tickers = list(load_investable())  # 62 securities: the largest realistic tool enums
-    tools = [spec_tool(tickers, list(cfg["groups"]))]
-    reply = client.messages.create(
-        model=model, max_tokens=16, tools=tools, messages=[{"role": "user", "content": "hi"}]
-    )
-    assert reply.stop_reason in ("end_turn", "max_tokens", "tool_use")
-
-
-def test_spec_from_goals(setup) -> None:
-    from gpl.agent.spec import propose_spec
-
-    client, model, _ = setup
-    proposal = propose_spec(
-        client, model, "make it safer, at least 20% GCC", {"SPY": "Global equity", "KSA": "GCC"}
-    )
-    assert proposal.draft["goal"] == "reduce_risk"
-
-
 def test_analyst_tools_compile_with_a_large_universe(setup, ctx) -> None:
     from dataclasses import replace
 

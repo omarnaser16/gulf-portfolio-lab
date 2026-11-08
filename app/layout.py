@@ -27,8 +27,6 @@ STEPS = [
     "5 Suitability",
     "6 Report & trades",
 ]
-REPORT_KEY = "report_tab"
-REPORT_TABS = ["Trades & report", "AI analyst"]
 DISCLAIMER = (
     "Educational project, not investment advice. Past performance does not predict future results."
 )
@@ -51,11 +49,9 @@ class HeaderInfo:
     seed: int | None = None  # the demo's seed, to reproduce it
 
 
-def go_to(step: str, report_tab: str | None = None) -> None:
-    """Callback: open ``step`` (and a Report & trades sub-tab)."""
+def go_to(step: str) -> None:
+    """Callback: open ``step``."""
     st.session_state[STEP_KEY] = step
-    if report_tab:
-        st.session_state[REPORT_KEY] = report_tab
 
 
 # ---------------------------------------------------------------------------------- HTML bits
@@ -200,14 +196,8 @@ def meta(text: str, help: str | None = None, container=None) -> None:
     )
 
 
-def step_footer(
-    step: str, status: StepStatus, back: tuple[str, str, str | None] | None = None
-) -> None:
-    """The sticky bar: the step's status and the disclaimer; Back and Next buttons.
-
-    ``back``: (label, step, report tab) to override the Back button, e.g. from the AI analyst
-    back to Trades & report (then there is no Next button).
-    """
+def step_footer(step: str, status: StepStatus) -> None:
+    """The sticky bar: the step's status and the disclaimer; Back and Next buttons."""
     index = STEPS.index(step)
     with st.container(key=f"footer_{index}"):
         left, mid, right = st.columns([5, 1.1, 1.6], vertical_alignment="center")
@@ -221,28 +211,6 @@ def step_footer(
             f'<div class="gpl-foot">{line}<small>{escape(DISCLAIMER)}</small></div>',
             unsafe_allow_html=True,
         )
-        if back is not None:
-            right.button(
-                back[0], key=f"back_{index}", on_click=go_to, args=back[1:], width="stretch"
-            )
-            return
-        if index == len(STEPS) - 1:  # Trades & report: on to the AI analyst tab
-            mid.button(
-                "← Back",
-                key=f"back_{index}",
-                on_click=go_to,
-                args=(STEPS[index - 1],),
-                width="stretch",
-            )
-            right.button(
-                f"Next: {REPORT_TABS[1]} →",
-                key=f"next_{index}",
-                on_click=go_to,
-                args=(step, REPORT_TABS[1]),
-                type="primary",
-                width="stretch",
-            )
-            return
         if index > 0:
             mid.button(
                 "← Back",
@@ -279,16 +247,18 @@ APP_CSS = f"""
 html, body, [data-testid="stAppViewContainer"] {{
   font-family: {t.FONT_STACK}; font-variant-numeric: tabular-nums; color: var(--gpl-text);
 }}
-[data-testid="stHeader"] {{ background: transparent; height: 0; }}
+/* Streamlit's own top bar (toolbar, and on Cloud its menu) is fixed over the first 3.75rem:
+   our header starts below it and sticks below it, so nothing of ours sits under its buttons */
+[data-testid="stHeader"] {{ background: var(--gpl-bg); }}
 .block-container, [data-testid="stMainBlockContainer"] {{
-  max-width: {t.MAX_WIDTH_PX + 2 * 3 * t.SPACE_PX}px; padding-top: 0 !important;
+  max-width: {t.MAX_WIDTH_PX + 2 * 3 * t.SPACE_PX}px; padding-top: 3.75rem !important;
   padding-bottom: {14 * t.SPACE_PX}px !important;
 }}
 h1, h2, h3, h4 {{ color: var(--gpl-text) !important; letter-spacing: -0.01em; }}
 
 /* ---- header band (full-bleed brand blue, sticky) */
 .st-key-gpl_header {{
-  position: sticky; top: 0; z-index: 990; background: var(--gpl-brand);
+  position: sticky; top: 3.75rem; z-index: 990; background: var(--gpl-brand);
   box-shadow: 0 0 0 100vmax var(--gpl-brand); clip-path: inset(0 -100vmax);
   padding: {t.space(1.5)} 0 {t.space(2.5)} 0; margin-bottom: {t.space(2)};
 }}
@@ -305,6 +275,7 @@ h1, h2, h3, h4 {{ color: var(--gpl-text) !important; letter-spacing: -0.01em; }}
 .st-key-gpl_header .st-key-fill_demo button p {{ color: var(--gpl-brand-btn) !important; }}
 .st-key-gpl_header [data-baseweb="select"] > div {{ background: #fff; }}
 .gpl-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: {t.space(0.5)}; }}
+.gpl-brandmark, .gpl-chips, .gpl-step, .gpl-kpis, .gpl-summary {{ pointer-events: none; }}
 .gpl-chip {{ font-size: 0.76rem; padding: 2px 9px; border-radius: 999px; background: #fff;
   color: var(--gpl-muted); white-space: nowrap; }}
 .gpl-chip b {{ color: var(--gpl-text); font-weight: 600; }}

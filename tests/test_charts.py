@@ -139,31 +139,6 @@ def test_unknown_chart_is_rejected(cctx) -> None:
 # ------------------------------------------------------------------------------ what-if
 
 
-def test_what_if_uses_the_users_numbers_and_sets_the_proposed_portfolio(cctx) -> None:
-    cctx.last_user_message = "What if I cut SPY to 20%?"
-    out = execute_tool(
-        cctx, "what_if_portfolio", {"changes": [{"ticker": "SPY", "weight_pct": 20}]}
-    )
-    # AGG, GLD, KSA share the other 80% in their 30:10:10 ratio -> 48%, 16%, 16%
-    assert (
-        out["weights"]["AGG"]["what_if"] == "48.00%"
-        and out["weights"]["SPY"]["change"] == "-30.00 pp"
-    )
-    assert cctx.proposed["weights"]["GLD"] == pytest.approx(0.16)
-    fig = build_chart(chart_data(cctx, "weights_current_vs_proposed"))
-    what_if = next(t for t in fig.data if t.name == "What-if")
-    assert dict(zip(what_if.y, what_if.x, strict=True))["SPY"] == pytest.approx(0.20)
-    assert "Current vs benchmark" in out["key_figures_after_costs"]  # the table has both
-    assert "What-if vs benchmark" in out["key_figures_after_costs"]
-
-
-def test_what_if_refuses_weights_the_user_did_not_write(cctx) -> None:
-    cctx.last_user_message = "What if I halve SPY?"
-    with pytest.raises(ToolError, match="not in the user's message: 25%"):
-        execute_tool(cctx, "what_if_portfolio", {"changes": [{"ticker": "SPY", "weight_pct": 25}]})
-    assert cctx.proposed is None
-
-
 # ---------------------------------------------------------------------------- suitability
 
 
@@ -184,10 +159,12 @@ def test_suitability_tool_wraps_the_checker(cctx) -> None:
     }  # band 2: vol 9%, DD 15%
     cctx.ips = build_ips(ClientProfile(horizon_years=5, answers=answers, sharia_only=True), CFG)
     cctx.attributes = CFG["security_attributes"]
-    cctx.last_user_message = "what if I cut SPY to 20%"
-    execute_tool(cctx, "what_if_portfolio", {"changes": [{"ticker": "SPY", "weight_pct": 20}]})
+    from gpl.scenarios import apply_what_if
+
+    proposed = apply_what_if(pd.Series(CURRENT), {"SPY": 0.20})  # e.g. an Optimise result
+    cctx.proposed = {"name": "Proposed", "weights": proposed.to_dict(), "source": "test"}
     out = execute_tool(cctx, "check_suitability", {})
-    assert set(out["portfolios"]) == {"Current", "What-if"}
+    assert set(out["portfolios"]) == {"Current", "Proposed"}
     direct = check_suitability(
         pd.Series(CURRENT),
         cctx.all_returns,

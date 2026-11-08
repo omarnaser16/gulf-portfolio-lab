@@ -9,10 +9,7 @@ from gpl import backtest as bt
 from gpl.agent.spec import (
     describe_goal,
     describe_limits,
-    numbers_not_in_goals,
-    propose_spec,
     spec_from_draft,
-    spec_tool,
 )
 from gpl.agent.tools import (
     AnalystContext,
@@ -25,8 +22,7 @@ from gpl.data import BenchmarkData
 from gpl.metrics import beta
 from gpl.optimise import OptimisationSpec
 from gpl.recommend import CANDIDATES, KEEP
-from gpl.recommend import GOALS as RECOMMEND_GOALS
-from test_agent import CFG, FakeClient, response, text, tool_use
+from test_agent import CFG
 
 LIMIT_FIELDS = ("max_weight", "asset_bounds", "groups", "group_bounds", "max_volatility")
 
@@ -45,19 +41,6 @@ DRAFT = {
 
 
 # ------------------------------------------------------------------------------ the spec tool
-
-
-def test_spec_tool_has_no_place_for_weights_or_methods() -> None:
-    schema = spec_tool(list(GROUPS), ["GCC", "Bonds"])["input_schema"]
-    assert "weights" not in str(schema).lower().replace("max_weight_pct", "")
-    assert schema["properties"]["goal"]["enum"] == list(RECOMMEND_GOALS)
-    assert not {"objective", "method"} & set(schema["properties"])
-    assert schema["additionalProperties"] is False and set(schema["required"]) == set(
-        schema["properties"]
-    )
-    assert schema["properties"]["asset_limits"]["items"]["properties"]["ticker"]["enum"] == list(
-        GROUPS
-    )
 
 
 def test_spec_from_draft_converts_percent_to_fractions() -> None:
@@ -87,12 +70,6 @@ def test_spec_from_draft_rejects_unknown_assets_and_missing_targets() -> None:
         spec_from_draft({**DRAFT, "goal": "target_return"}, GROUPS)
 
 
-def test_numbers_not_in_goals_flags_invented_limits() -> None:
-    assert numbers_not_in_goals(DRAFT, GOALS) == []
-    invented = {**DRAFT, "min_return_pct": 7}
-    assert numbers_not_in_goals(invented, GOALS) == ["7%"]
-
-
 def test_describe_limits() -> None:
     lines = describe_limits(spec_from_draft(DRAFT, GROUPS)[1])
     assert "No single asset above 25.00%" in lines and "Group GCC: at least 20.00%" in lines
@@ -100,27 +77,6 @@ def test_describe_limits() -> None:
 
 
 # --------------------------------------------------------------------------- propose_spec
-
-
-def test_propose_spec_returns_the_tool_input_and_checks_numbers() -> None:
-    client = FakeClient(
-        [response([tool_use("s1", "propose_spec", {**DRAFT, "min_return_pct": 7})], "tool_use")]
-    )
-    proposal = propose_spec(client, "claude-haiku-5-5", GOALS, GROUPS)
-    assert proposal.draft["max_volatility_pct"] == 12
-    assert proposal.numbers_not_in_goals == ["7%"]  # the model added a limit nobody asked for
-    request = client.requests[0]
-    assert [t["name"] for t in request["tools"]] == ["propose_spec"]
-    assert (
-        "never calculate" in request["system"]
-        and "SPY (Global equity)" in request["messages"][0]["content"]
-    )
-
-
-def test_propose_spec_without_a_tool_call_is_an_error() -> None:
-    client = FakeClient([response([text("Here are some weights: SPY 40%...")], "end_turn")])
-    with pytest.raises(ValueError, match="did not return a specification"):
-        propose_spec(client, "m", GOALS, GROUPS)
 
 
 # ------------------------------------------------------------------------ optimisation report
@@ -327,13 +283,3 @@ def test_active_limits_name_their_source() -> None:
     }
     assert by["Cash need (BIL)"]["value"] == "at least 20.00%"
     assert active_limits(OptimisationSpec(), None, OptimisationSpec()) == []
-
-
-def test_turnover_and_tracking_error_limits_are_checked_against_the_text() -> None:
-    from gpl.agent.spec import numbers_not_in_goals, spec_tool
-
-    props = spec_tool(["SPY"], ["Global equity"])["input_schema"]["properties"]
-    assert "max_turnover_pct" in props and "tracking_error_max_pct" in props
-    draft = {"max_turnover_pct": 20, "tracking_error_max_pct": 3}
-    assert numbers_not_in_goals(draft, "trade at most 20%, tracking error under 3%") == []
-    assert numbers_not_in_goals(draft, "trade at most 20%") == ["3%"]

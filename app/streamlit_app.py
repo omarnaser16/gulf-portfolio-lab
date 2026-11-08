@@ -30,7 +30,6 @@ from gpl.agent.charts import build_chart, chart_data
 from gpl.agent.spec import (
     active_limits,
     describe_goal,
-    propose_spec,
     spec_from_draft,
 )
 from gpl.agent.tools import (
@@ -383,8 +382,8 @@ st.set_page_config(
 )
 st.markdown(APP_CSS, unsafe_allow_html=True)
 header = st.container(key="gpl_header")
-head_title, head_bench, head_actions, head_demo, head_settings = header.columns(
-    [3.3, 3.0, 1.75, 1.95, 0.55], vertical_alignment="center"
+head_title, head_bench, head_demo, head_settings = header.columns(
+    [4.4, 3.2, 2.0, 0.55], vertical_alignment="center"
 )
 head_chips = header.container()
 with head_demo:
@@ -425,15 +424,6 @@ chips_slot = head_chips.empty()
 layout.render_header(chips_slot, header_info())
 step_slots = layout.render_stepper(
     st.session_state.get("step_statuses"), st.session_state.get(layout.STEP_KEY)
-)
-head_actions.button(
-    "Ask the analyst",
-    icon=":material/chat_bubble:",
-    key="ask_analyst",
-    on_click=layout.go_to,
-    args=(layout.STEPS[-1], "AI analyst"),
-    width="stretch",
-    help="Open the AI analyst (Report & trades step) with this client and portfolio.",
 )
 with head_settings.popover("", icon=":material/settings:", width="stretch", help="Settings"):
     period = st.radio(
@@ -813,45 +803,12 @@ def _limits_rows(table: pd.DataFrame, key_name: str) -> list[dict]:
     return rows
 
 
-def _interpret(holding_groups: dict[str, str]) -> None:
-    """Callback: the AI turns the typed goals into a draft (goal, target, limits).
-
-    Runs before the widgets are drawn, so it may also set the per-asset cap slider.
-    """
-    goals = st.session_state.get("ws_goals", "")
-    st.session_state.pop("ws_interpret_error", None)
-    if not goals.strip():
-        st.session_state.ws_interpret_error = (
-            "Describe your goals first, e.g. 'make it safer, at least 20% GCC'."
-        )
-        return
-    try:
-        proposal = propose_spec(agent.make_client(), A["model"], goals, holding_groups)
-    except (ValueError, anthropic.APIError) as e:
-        st.session_state.ws_interpret_error = friendly_error(e, "reading your goals")
-        return
-    st.session_state.ws_draft = proposal.draft
-    st.session_state.ws_proposal = proposal
-    st.session_state.ws_draft_v = time_key()
-    cap = proposal.draft.get("max_weight_pct")
-    if cap is not None:
-        st.session_state["max_weight"] = min(max(float(cap) / 100, 0.10), 1.0)
-    turnover_cap = proposal.draft.get("max_turnover_pct")
-    if turnover_cap is not None:
-        st.session_state["opt_turnover"] = min(max(float(turnover_cap), 5.0), 200.0)
-    te_cap = proposal.draft.get("tracking_error_max_pct")
-    if te_cap is not None:
-        st.session_state["build_te"] = min(max(float(te_cap), 0.5), 20.0)
-    st.session_state.pop("ws_opt", None)
-
-
 def _goal_changed(v: int) -> None:
     """Callback: a new goal starts from blank limits, so an old target (e.g. 8% target
     volatility) never carries over as a cap. The client's IPS limits stay (separate toggle)."""
     goal = st.session_state.get(f"ws_goal_{v}")
     st.session_state.ws_draft = {**BLANK_DRAFT, "goal": goal}
     st.session_state.ws_draft_v = time_key()
-    st.session_state.pop("ws_proposal", None)
 
 
 def _clear_limits() -> None:
@@ -860,7 +817,6 @@ def _clear_limits() -> None:
     st.session_state.ws_draft = {**BLANK_DRAFT, "goal": goal}
     st.session_state.ws_draft_v = time_key()
     st.session_state["max_weight"] = 1.0
-    st.session_state.pop("ws_proposal", None)
 
 
 def _limit_box(
@@ -938,39 +894,8 @@ def _diagnosis_section(ctx: AnalystContext) -> None:
 
 
 def _goal_section(holding_groups: dict[str, str], ai_ok: bool) -> tuple | None:
-    """Goal, target and limits (typed or interpreted by the AI); returns (goal, limits, target)."""
+    """Goal, target and limits chosen by the adviser; returns (goal, limits, target)."""
     st.markdown('<div class="gpl-section">Goal and limits</div>', unsafe_allow_html=True)
-    with st.expander("Describe it in plain English (optional)", expanded=False):
-        st.text_area(
-            "Goals in plain English",
-            key="ws_goals",
-            placeholder="e.g. make it safer, at least 20% GCC, no single asset over 25%",
-            help="The AI only fills in the goal and limits below for you to check; it never "
-            "chooses weights or methods.",
-        )
-        st.button(
-            "Interpret with AI",
-            key="ws_interpret",
-            type="primary",
-            on_click=_interpret,
-            args=(holding_groups,),
-            disabled=not ai_ok,
-            help=None if ai_ok else "Needs an API key (see Report & trades › AI analyst).",
-        )
-        if st.session_state.get("ws_interpret_error"):
-            st.warning(st.session_state.ws_interpret_error)
-        proposal = st.session_state.get("ws_proposal")
-        if proposal:
-            if proposal.summary:
-                st.info(f"**The AI understood:** {proposal.summary}")
-            for request in proposal.unmapped:
-                st.warning(f"Not included (can't be expressed as a limit): “{request}”")
-            if proposal.numbers_not_in_goals:
-                st.warning(
-                    "These numbers are not in your text, please check them: "
-                    + ", ".join(proposal.numbers_not_in_goals)
-                )
-
     draft = st.session_state.setdefault("ws_draft", initial_draft())
     v = st.session_state.setdefault("ws_draft_v", 0)
 
@@ -1438,6 +1363,11 @@ def initial_draft() -> dict:
 
 
 IMPROVE_MOVE = "improve_move"
+MEMO_QUESTION = (  # the only request the app sends to the AI: fixed text, no user input
+    "Write a short plain-English memo (under 250 words) for the client explaining the Optimise "
+    "recommendation: what the rule chose and why it fits the goal, the main trade-offs, and how "
+    "much to trust historical, walk-forward results. Use only figures from the tools."
+)
 FULL_MOVE = "Full restructure to target"
 
 
@@ -1769,9 +1699,20 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         on_click=layout.go_to,
         args=(layout.STEPS[4],),
     )
-    memo_clicked = ai_ok and line[2].button(
-        "Explain the recommendation (AI memo)", key="ws_opt_memo", type="tertiary"
-    )
+    memo_clicked = False
+    if ai_ok:
+        memo_clicked = line[2].button(
+            "Explain this recommendation (AI)",
+            key="ws_opt_memo",
+            type="tertiary",
+            help="A short plain-English memo written by the AI from the tool results (every "
+            "number comes from a tool). It is added to the client report.",
+        )
+    else:
+        line[2].caption(
+            "An AI explanation is available when an API key is set (`ANTHROPIC_API_KEY`); the "
+            "recommendation itself never depends on it."
+        )
     st.caption(f"The rule for this goal: {rec['rule']}")
 
     # details, collapsed
@@ -1886,18 +1827,20 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             effort=A["effort"],
             max_tool_rounds=A["max_tool_rounds"],
         )
-        result["memo"] = ask_analyst(
-            memo_analyst,
-            "Please explain the diagnosis of my portfolio and the recommendation from the "
-            "Optimise section: why this method fits my goal, the trade-offs, and how much to "
-            "trust the results.",
-        )
+        with st.spinner("Writing the explanation from the tool results…"):
+            result["memo"] = ask_analyst(memo_analyst, MEMO_QUESTION)
     memo = result.get("memo")
     if memo:
         if memo["role"] == "error":
-            st.error(memo["text"])
+            st.warning(memo["text"])
         else:
-            with st.chat_message("assistant"):
+            with st.container(border=True, key="memo_card"):
+                st.markdown(
+                    '<div class="gpl-section">AI explanation</div>',
+                    unsafe_allow_html=True,
+                    help="Written by the AI from the app's own tool results (every figure cites "
+                    "its tool; figures no tool returned are flagged). Added to the client report.",
+                )
                 render_reply(memo["reply"])
 
 
@@ -2316,30 +2259,15 @@ with step_optimise:
         OPTIMISE_TABS, key="optimise_tab", on_change="rerun"
     )
 with step_report:
-    report_head = st.container()
-    with report_head:
-        _proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
-        _who6 = ((client_ui.current_profile() or ClientProfile()).name or "").split(" ")[0]
-        if st.session_state.get(layout.REPORT_KEY) == layout.REPORT_TABS[1]:
-            layout.page_header(
-                "AI analyst",
-                f"Ask about {_who6 + chr(39) + 's' if _who6 else 'your'} portfolio. Every "
-                "number comes from the app's own tools.",
-                help="The analyst calls this dashboard's own functions as tools and writes a memo "
-                "with charts. It never calculates: every number must come from a tool and cite "
-                "it (others are flagged), and every chart is drawn by code from the finance "
-                "engine. Not investment advice.",
-            )
-        else:
-            layout.page_header(
-                "Report & trades",
-                "Check the trades to reach "
-                + (_proposed["name"] if _proposed else "the targets")
-                + ", then download the client report.",
-                help="Decision support for a licensed adviser: check taxes and liquidity before "
-                "trading.",
-            )
-    sec_rebal, tab_agent = st.tabs(layout.REPORT_TABS, key=layout.REPORT_KEY, on_change="rerun")
+    _proposed = (st.session_state.get("ctx") and st.session_state.ctx.proposed) or None
+    layout.page_header(
+        "Report & trades",
+        "Check the trades to reach "
+        + (_proposed["name"] if _proposed else "the recommendation")
+        + ", then download the client report.",
+        help="Decision support for a licensed adviser: check taxes and liquidity before trading.",
+    )
+    sec_rebal = st.container()
 
 with tab_client:
     client_ui.render_client_tab(
@@ -3058,21 +2986,6 @@ with tab_regime:
         "percentile' (no model). Always-calm = never flag stress."
     )
 
-EXAMPLE_PROFILES = {
-    "Dubai, moderate, 10 years": "I'm 35, based in Dubai, investing in USD for 10 years with "
-    "moderate risk tolerance. I'd like to end with at least 1.5x my money.",
-    "Riyadh, conservative, 5 years": "I'm 58 and live in Riyadh. I want to preserve capital over "
-    "5 years with low risk; avoiding big drawdowns matters more than return.",
-    "Doha, aggressive, 20 years": "I'm 27 in Doha, saving for 20 years, comfortable with large "
-    "swings. I'd like to reach 3x my money.",
-}
-
-
-def _use_example() -> None:
-    choice = st.session_state.get("profile_example")
-    if choice in EXAMPLE_PROFILES:
-        st.session_state.about_me = EXAMPLE_PROFILES[choice]
-
 
 def current_ports() -> dict[str, pd.Series]:
     """Today's weights and, after Optimise, the proposed portfolio."""
@@ -3084,16 +2997,12 @@ def current_ports() -> dict[str, pd.Series]:
 
 
 def latest_memo() -> tuple[str | None, list[str]]:
-    """The memo for the report: the Optimise memo if one was written (it explains the
-    recommendation the report shows), else the latest analyst reply. Text and flagged figures.
-    """
+    """The AI's explanation of the Optimise recommendation, for the report (text and any
+    flagged figures); None until "Explain this recommendation (AI)" has been pressed."""
     opt = st.session_state.get("ws_opt") or {}
     memo = opt.get("memo")
     if memo and memo.get("role") == "assistant":
         return memo["reply"].text, memo["reply"].unverified
-    for turn in reversed(st.session_state.get("chat", [])):
-        if turn.get("role") == "assistant":
-            return turn["reply"].text, turn["reply"].unverified
     return None, []
 
 
@@ -3329,142 +3238,6 @@ def render_report_button() -> None:
             )
 
 
-with tab_agent:
-    chat_col, side_col = st.columns([1.75, 1], gap="medium")
-    chat_card = chat_col.container(border=True, key="chat_card")
-    key_ok = agent.has_credentials()
-    if universe_issue:
-        chat_card.info(universe_issue)
-    elif not key_ok:
-        chat_card.info(
-            "No API key found. Locally, put `ANTHROPIC_API_KEY=...` in `.env` at the project "
-            "root. On Streamlit Community Cloud, add it under *App settings → Secrets*."
-        )
-    if key_ok and not universe_issue:
-        if st.session_state.get("analyst_key") != settings_key:
-            st.session_state.analyst = agent.Analyst(
-                shared_context(),
-                agent.make_client(),
-                model=A["model"],
-                max_tokens=A["max_tokens"],
-                effort=A["effort"],
-                max_tool_rounds=A["max_tool_rounds"],
-            )
-            st.session_state.analyst_key = settings_key
-            st.session_state.chat = []
-        shared_context()  # keep the benchmark and groups current for the tools
-    ready = key_ok and not universe_issue
-    with side_col.container(border=True, key="memo_card"):
-        st.markdown('<div class="gpl-section">Start a memo</div>', unsafe_allow_html=True)
-        actions = {
-            "review": st.button(
-                "Review my portfolio",
-                key="write_portfolio_memo",
-                disabled=not (ready and portfolio_ok),
-                width="stretch",
-            ),
-            "optimise": st.button(
-                "Explain the Optimise recommendation",
-                key="explain_optimise",
-                disabled=not (ready and shared_context().optimisation),
-                help=None
-                if shared_context().optimisation
-                else "Run the candidate methods on step 4 (Optimise) first.",
-                width="stretch",
-            ),
-            "stress": st.button(
-                "Stress test my portfolio",
-                key="stress_memo",
-                disabled=not (ready and portfolio_ok),
-                width="stretch",
-            ),
-        }
-        new_chat = st.button(
-            "New conversation", key="new_conversation", type="tertiary", disabled=not ready
-        )
-    with side_col.container(border=True, key="context_card"):
-        st.markdown('<div class="gpl-section">Context the analyst sees</div>',
-                    unsafe_allow_html=True)  # fmt: skip
-        proposed_now = (shared_context().proposed or {}).get("name") if ready else None
-        value_now = portfolio_value()
-        st.markdown(
-            '<div class="gpl-kv" style="grid-template-columns:45% 55%">'
-            f"<div>Holdings</div><div style='text-align:right'>{len(my_weights)}"
-            + (f" · USD {value_now:,.0f}" if value_now else "")
-            + f"</div><div>Benchmark</div><div style='text-align:right'>{escape(bench_name)}</div>"
-            f"<div>Recommendation</div><div style='text-align:right'>"
-            f"{escape(proposed_now or 'not run yet')}</div></div>",
-            unsafe_allow_html=True,
-        )
-        st.button(
-            "See the figures on Analyse",
-            key="analyst_to_analyse",
-            type="tertiary",
-            on_click=layout.go_to,
-            args=(layout.STEPS[2],),
-        )
-    with side_col.expander(
-        "**About me (optional)** &nbsp; :gray[Age, horizon, risk tolerance, goal]"
-    ):
-        st.selectbox(
-            "Fill from an example",
-            ["—", *EXAMPLE_PROFILES],
-            key="profile_example",
-            on_change=_use_example,
-        )
-        st.text_area("About me", key="about_me", height=90)
-    if ready:
-        about = st.session_state.get("about_me", "").strip()
-        holdings_text = ", ".join(f"{t} {pct(v)}" for t, v in my_weights.items())
-        if new_chat:
-            st.session_state.analyst_key = None
-            if (shared_context().proposed or {}).get("name") == "What-if":
-                shared_context().proposed = None
-            st.rerun()
-        questions = {
-            "review": f"Please review my portfolio ({holdings_text}) against the benchmark, "
-            "including where its risk comes from and a stress-test section."
-            + (f" About me: {about}" if about else ""),
-            "optimise": "Please explain the diagnosis of my portfolio and the recommendation "
-            "from the Optimise section: why this method fits my goal, the trade-offs, and how "
-            "much to trust the results.",
-            "stress": "Stress test my portfolio against the benchmark in the historical "
-            "episodes, with their dates, and explain what drove the results.",
-        }
-
-        def ask(question: str) -> None:
-            st.session_state.chat.append({"role": "user", "text": question})
-            st.session_state.chat.append(ask_analyst(st.session_state.analyst, question))
-
-        for name, pressed in actions.items():
-            if pressed:
-                ask(questions[name])
-                st.rerun()
-
-        with chat_card:
-            if not st.session_state.chat:
-                st.caption(
-                    f"The analyst ({A['model']}) calls this dashboard's own functions as tools on "
-                    "your holdings, the ⚙ Settings and the benchmark, and writes a memo with "
-                    "charts. Start a memo on the right, or ask a question below."
-                )
-            for n, turn in enumerate(st.session_state.chat):
-                if turn["role"] == "user":
-                    st.chat_message("user").markdown(turn["text"])
-                elif turn["role"] == "error":
-                    st.error(turn["text"])
-                else:
-                    with st.chat_message("assistant"):
-                        render_reply(turn["reply"], key=f"chat_{n}")
-            follow_up = st.chat_input(
-                "Ask a follow-up, e.g. 'What if I cut SPY to 30%?' or 'How did I do in 2022?'",
-                key="follow_up",
-            )
-            st.caption("What-ifs here never change the recommendation or the client report.")
-        if follow_up:
-            ask(follow_up)
-            st.rerun()
-
 with step_suitability:
     suit_counts = layout.page_header(
         "Suitability",
@@ -3553,14 +3326,7 @@ for container, step, status in zip(
     strict=True,
 ):
     with container:
-        on_ai = step == layout.STEPS[-1] and (
-            st.session_state.get(layout.REPORT_KEY) == layout.REPORT_TABS[1]
-        )
-        layout.step_footer(
-            step,
-            status,
-            ("← Back to trades & report", step, layout.REPORT_TABS[0]) if on_ai else None,
-        )
+        layout.step_footer(step, status)
 st.session_state["step_statuses"] = statuses  # the next run draws the cards with these first
 layout.update_stepper(step_slots, statuses, st.session_state.get(layout.STEP_KEY))
 layout.render_header(chips_slot, header_info())
