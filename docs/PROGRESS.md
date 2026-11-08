@@ -698,3 +698,32 @@ days; the work itself was done in a series of sessions.
   code instead. Model output varies run to run, so a live test needs repeating before trusting
   it (the first run passed by luck).
 - **Status:** 989 tests: 988 pass locally with my key (including 6 live API tests), the real-install test runs in CI; CI skips the live ones.
+
+## 2026-11-08 — AI intake removed; demo client front and centre and realistic
+- **Decided:** remove the AI client intake entirely (the box, its button, `agent/profile.py` and
+  its tests): it was the riskiest AI piece for the least gain. Optimise's plain-English goals and
+  the analyst stay. Make the demo impossible to miss, and make every demo client realistic.
+- **Built by Claude Code:**
+  - *▶ Try a demo client* is now the primary button in the header (brand blue, larger). On a
+    first visit a welcome banner says what the tool does, with a big demo button and an "or start
+    a blank client" link; the empty Client tab shows the same button first. After it runs, a toast
+    says "Demo client loaded. Walk through steps 1–6, or open Optimise to see a recommendation."
+  - The demo portfolio now follows the client's own computed risk score and IPS: 5-10 tickers
+    from the verified investable universe (SGOV, which wasn't in it, is gone), an equity share
+    that fits the score, nothing above the per-holding cap, the client's own market first among
+    GCC holdings, a region minimum only when a holding covers it, cash needs due within 36 months
+    in cash-like funds, KWD holdings kept small (the IPS caps non-pegged currencies at 20%), and
+    screened compliant funds only for Sharia clients (no GLD: its Sharia status is unknown). The
+    loss tolerance now matches the score. Sharia demo clients are growth investors only: with one
+    sukuk fund and no Sharia cash fund, a cautious Sharia portfolio can't meet the cap.
+  - A test checks 50 random seeds against every weight-based rule. The same checks failed 49 of
+    50 old demo clients (SGOV, holdings above the cap, loss tolerance not matching the score).
+- **Checked on real prices** (31 Dec 2019 – 3 Nov 2026, seeds 0-199): all 200 within their
+  volatility limit; 186 of 200 within their drawdown limit, the other 14 over by 0.6 pp on
+  average (2.1 pp at most), mostly score-1 clients whose 10% limit is tight against COVID. To
+  get there I made the cautious mixes hold more cash and kept TLT for growth clients only.
+- **Not done:** the README screenshots are from seed 2 before this change; seed 2 is now a
+  different client, so they need re-shooting when the screens next change.
+- **Learned:** a demo is a claim about the product; if it breaks its own rules, the product
+  looks broken. Test the generator against the rules, not against itself.
+- **Status:** 1025 tests: 1024 pass locally with my key (including 4 live API tests); the real-install test runs in CI.

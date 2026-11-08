@@ -31,7 +31,7 @@ Do not enter real client data in the public demo.
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
 | **AI analyst** | Claude (Haiku 5.5 by default) with seventeen tools wrapping the engine, including the client's IPS and a `calculate` tool so arithmetic is done in code; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
 | **Adviser workflow** | Full fact-find (nine sections, completeness bar), risk questionnaire, IPS (PDF, DRAFT until the fact-find is complete) feeding the optimiser, ten suitability rules including knowledge & experience, fund-domicile check, drift monitor and trade list, client report (PDF). |
-| **Dashboard** | Light, private-bank-style Streamlit app in six steps (1 Client, 2 Portfolio, 3 Analyse, 4 Optimise, 5 Suitability, 6 Report & trades) with a stepper showing each step's status, a sticky header (client, risk score, portfolio value, IPS status, benchmark, *Fill demo client*, *Ask the analyst*, ⚙ Settings) and a *Next* button per step. The holdings drive every step; Analyse holds the benchmark comparison, assets, Monte Carlo and regime views; Optimise holds the frontier and strategy backtests; step 6 holds trades, reports and the AI analyst. Latest data by default, or the fixed sample that reproduces the results below. |
+| **Dashboard** | Light, private-bank-style Streamlit app in six steps (1 Client, 2 Portfolio, 3 Analyse, 4 Optimise, 5 Suitability, 6 Report & trades) with a stepper showing each step's status, a sticky header (client, risk score, portfolio value, IPS status, benchmark, *▶ Try a demo client*, *Ask the analyst*, ⚙ Settings) and a *Next* button per step. The holdings drive every step; Analyse holds the benchmark comparison, assets, Monte Carlo and regime views; Optimise holds the frontier and strategy backtests; step 6 holds trades, reports and the AI analyst. Latest data by default, or the fixed sample that reproduces the results below. |
 
 
 ## For a wealth manager: plan, execute, review
@@ -42,7 +42,7 @@ and explains results.
 
 | Step | In the tool |
 |---|---|
-| Discovery and risk profiling | *1 Client*: a full fact-find in nine sections (client & household, KYC/AML, financial situation, objectives & goals, risk profile, knowledge & experience, constraints & preferences, estate & succession, service & review) with a completeness bar, consistency warnings and a next-review date; profile, classification and regulator (DFSA, FSRA, CMA…), a seven-question risk questionnaire scored by a tested rule (risk score = the lower of capacity and willingness; a gap of two or more is flagged), "describe the client in plain English" for the AI to fill the facts (never the questionnaire): name, age, dated cash needs (the AI copies "Oct 2028" or "in 18 months"; code dates it, so Oct 2028 is 24 months away), tax notes, region minimums, and the regulator from the booking jurisdiction by a fixed rule (Abu Dhabi/ADGM → FSRA, DIFC → DFSA, onshore UAE → SCA, Saudi → CMA, QFC → QFCRA). Profiles save and load as JSON. One portfolio value is used everywhere: the total of USD holdings, or entered once (no default). |
+| Discovery and risk profiling | *1 Client*: a full fact-find in nine sections (client & household, KYC/AML, financial situation, objectives & goals, risk profile, knowledge & experience, constraints & preferences, estate & succession, service & review) with a completeness bar, consistency warnings and a next-review date; profile, classification and regulator (DFSA, FSRA, CMA…), a seven-question risk questionnaire scored by a tested rule (risk score = the lower of capacity and willingness; a gap of two or more is flagged), dated cash needs (Oct 2028 is 24 months away), and the regulator from the booking jurisdiction by a fixed rule (Abu Dhabi/ADGM → FSRA, DIFC → DFSA, onshore UAE → SCA, Saudi → CMA, QFC → QFCRA). Profiles save and load as JSON. One portfolio value is used everywhere: the total of USD holdings, or entered once (no default). |
 | Investment Policy Statement | RRTTLLU (Return, Risk, Time horizon, Taxes, Liquidity, Legal, Unique) generated from the profile, with limits from the risk band (e.g. band 3: volatility 12%, drawdown 20%) or adviser overrides; exported as a signable PDF. |
 | Strategic allocation | *Optimise* uses the IPS limits automatically (volatility cap, max weight, GCC minimum, region minimums such as Saudi ≥ 10%, excluded holdings at 0%), stricter of IPS and form. Cash needs due within 36 months are a hard minimum on cash-like holdings (cash, short-term bonds, sukuk); with none held the app offers to add BIL. |
 | Suitability | Ten rules for the current and proposed portfolios: volatility, max drawdown, worst stress episode, concentration, home-market bias, region minimums, liquidity, exclusions (Sharia, sectors), currency, and knowledge & experience (complex products the client has not used are flagged for review). Each is pass, fail or review, with a reason written from the numbers; in Optimise, Analyst, the memo and the report. **Optimise only recommends portfolios that pass every rule**; if none does, it shows the closest with each breach (e.g. "Volatility: 13.10%, 1.10 pp beyond the 12.00% limit") and says so if the current portfolio fails too. Identical methods are shown once. |
@@ -337,17 +337,29 @@ key figures the AI may quote. Tests check every chart type against an independen
 and that the AI's text cannot change a chart. `what_if_portfolio` refuses any weight that isn't
 in the user's own message ("halve NVDA" gets a question back, not a computed 10%).
 
-**Notes to the client form.** One model call fills `propose_profile` with facts the adviser
-wrote. It has no fields for the risk questionnaire, scores or limits. With about 40 fields its
-schema is too large for the API's strict mode (a live 400, "The compiled grammar is too large",
-on 8 Nov 2026), so the tool is not strict and `profile.clean_draft` enforces the schema in code
-before the form changes: numbers must be numbers within a sensible range, choices must be the
-form's options, and any extra field (a risk score, say) is dropped and reported to the adviser.
-Numbers not in the notes are flagged as before. The other AI tools stay strict and fit the
-grammar with all 62 securities in their lists (checked live); if one ever doesn't, the call is
-retried once without strict mode (`agent/api.py`). API failures are shown in plain words; live
-smoke tests (`pytest -m live`, skipped without a key) call the real API with a short and a long
-note.
+**The client form has no AI.** The adviser fills the fact-find, or *▶ Try a demo client* fills
+it from seeded code. An AI intake that copied facts from notes was removed on 8 Nov 2026: it
+added risk (a schema too large for the API's strict mode, so its output had to be policed field
+by field) for little gain over typing the facts in. The remaining AI tools stay strict and fit
+the grammar with all 62 securities in their lists (checked live by `pytest -m live`, skipped
+without a key); if one ever doesn't, the call is retried once without strict mode
+(`agent/api.py`). API failures are shown in plain words.
+
+**Demo clients.** `gpl/demo.py` builds a random but consistent GCC client from a seed: age,
+date of birth, retirement and horizon agree; goals fall within the horizon; the portfolio is at
+most the investable assets, which are at most the net worth. The portfolio follows the client's
+own computed risk score and IPS by construction: 5-10 tickers from the verified investable
+universe, an equity share that fits the score (e.g. 10-30% for score 1, 70-95% for score 5), no
+holding above the score's cap, GCC holdings meeting any home-market minimum, a region minimum only
+when a holding in that market covers it, cash needs due within 36 months held in cash-like
+funds, and screened compliant funds only for a Sharia client. The universe has one sukuk fund and
+no Sharia cash fund, so a cautious Sharia portfolio can't meet the cap (the Riyadh example shows
+this); Sharia demo clients are therefore growth investors (score 4 or 5). A test checks 50 random
+seeds against every weight-based rule. Volatility and drawdown need prices: measured on Yahoo
+prices from 31 Dec 2019 to 3 Nov 2026 for seeds 0-199, every demo portfolio was within its
+volatility limit and 186 of 200 within their drawdown limit; the other 14 exceed it by 0.6
+percentage points on average (2.1 at most), mostly score-1 clients whose 10% limit is tight
+against the COVID crash. Suitability shows such a breach like any other.
 
 **Goals to a recommendation.** A separate, single model call fills one strict tool,
 `propose_spec`, whose schema is the spec: one of five goals, a target if the goal needs one, a
@@ -383,7 +395,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 989 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
+**Testing.** 1025 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.

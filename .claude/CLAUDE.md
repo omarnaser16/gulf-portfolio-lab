@@ -108,9 +108,8 @@ streamlit run app/streamlit_app.py
   `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the
   engine. What-if weights must appear in the user's own message; the other holdings are scaled
   pro-rata.
-- **Adviser workflow:** the AI only fills the client form's facts from the adviser's notes
-  (never the risk questionnaire, scores or limits; its tool is too large for strict mode, so
-  `profile.clean_draft` validates every field in code); the risk score, IPS limits, suitability,
+- **Adviser workflow:** the AI never fills the client form or the risk questionnaire (the
+  adviser does, or the seeded demo in `demo.py`, whose portfolio follows its IPS); the risk score, IPS limits, suitability,
   drift trades and domicile figures come from tested rules (`client.py`, `suitability.py`,
   `scenarios.py`, `domicile.py`). Everything is decision support for a licensed adviser;
   domicile output is labelled "information, not tax advice".

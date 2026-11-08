@@ -14,8 +14,8 @@ calculation and makes every recommendation; the AI only fills forms and explains
 
 ## Screenshots
 
-All three come from the app with **🎲 Fill demo client** (seed 2): a fictional client, marked
-DEMO DATA everywhere.
+All three come from the app's demo client (seed 2, taken before the 8 Nov 2026 demo update, so
+seed 2 now gives a different client): a fictional client, marked DEMO DATA everywhere.
 
 **Build a portfolio for me:** a plain-English summary first (what we did, what we found, what we
 recommend and why, what changes), then current against recommended on four measures, and each
@@ -121,8 +121,9 @@ Every limitation, in detail: [docs/METHODOLOGY.md](docs/METHODOLOGY.md#limitatio
 
 The LLM (Claude, via the Anthropic API) never calculates, chooses weights or picks the
 recommendation:
-- **Forms only:** it copies facts into forms through tool schemas with no weight, score or
-  method fields; code checks every field (type, range, allowed values) before a form changes.
+- **Goals only:** it turns plain-English goals into a goal and limits through a strict tool
+  with no weight, score or method field; the adviser confirms them. It never fills the client
+  form or the risk questionnaire.
 - **Tools for figures:** it explains results by calling 17 tools that wrap the engine.
 - **Checked by code:** every figure in its memo is compared with the tool outputs. See
   [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -182,7 +183,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 989 tests, no network needed (live AI tests skip without a key)
+pytest -q                       # 1025 tests, no network needed (live AI tests skip without a key)
 streamlit run app/streamlit_app.py
 ```
 
@@ -213,7 +214,7 @@ src/gpl/factfind.py            fact-find sections, completeness, required return
 src/gpl/suitability.py         ten pass/fail/review rules against the IPS
 src/gpl/scenarios.py           what-ifs, stress episodes, exposures, drift and trade list
 src/gpl/domicile.py            US-situs check, illustrative US estate tax, UCITS alternatives
-src/gpl/demo.py                seeded demo client and portfolio (no AI)
+src/gpl/demo.py                seeded demo client and portfolio that fits its IPS (no AI)
 src/gpl/report.py              IPS and client report PDFs
 src/gpl/montecarlo.py          simulations, goal probability, path drawdowns
 src/gpl/regime.py              the ML regime model: labels, features, models, walk-forward

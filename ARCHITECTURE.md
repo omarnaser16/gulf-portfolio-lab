@@ -16,7 +16,7 @@ flowchart TB
         YF["Yahoo Finance prices<br/>(yfinance, cached parquet)"]
         CFG["config/*.yaml<br/>universe, pegs, costs, limits"]
         ADV["Adviser: client form,<br/>risk questionnaire, holdings"]
-        NOTES["Adviser's plain-English notes<br/>and goals"]
+        NOTES["Adviser's plain-English<br/>goals"]
     end
 
     subgraph PY["Python calculations: deterministic, tested (pytest)"]
@@ -37,7 +37,6 @@ flowchart TB
     end
 
     subgraph AI["AI agent: Claude via Anthropic API"]
-        PROF["propose_profile<br/>notes → client facts"]
         SPEC["propose_spec<br/>goals → goal + limits"]
         ANA["Analyst memo loop<br/>17 tools that wrap the engine"]
     end
@@ -62,8 +61,7 @@ flowchart TB
     SUIT --> REC
     REG -. "stress probability<br/>(regime-aware backtest, Regime view)" .-> BT
 
-    NOTES --> PROF & SPEC
-    PROF --> G2 --> CLI
+    NOTES --> SPEC
     SPEC --> G1
     SPEC --> G2
     G2 -- "adviser confirms" --> OPT
@@ -127,11 +125,10 @@ VIX features.
 
 ## The AI agent
 
-The LLM is called in three places, each with a narrow job.
+The LLM is called in two places, each with a narrow job. The client form is filled by the adviser (or *▶ Try a demo client*, seeded code with no AI); the AI never touches it.
 
 | Call | It does | It cannot |
 |---|---|---|
-| `agent/profile.py` `propose_profile` | Copies facts from the adviser's notes into the client form (name, age, dated cash needs, tax notes, region minimums). | Fill in the risk questionnaire, scores or IPS limits. Any number not in the notes is flagged, and code (not the AI) turns "in 18 months" into a date. Its tool is not strict (too large for strict mode's grammar), so `clean_draft` checks every field's type, range and allowed values in code first. |
 | `agent/spec.py` `propose_spec` | Turns plain-English goals into one of five goals, a target and limits, as written. | Choose weights or a method: the strict schema has no such fields. The adviser confirms the spec before anything runs. |
 | `agent/analyst.py` `Analyst` | Writes the memo: decides which of the 17 tools to call, which charts to show (from a fixed list) and how to explain the results. | Calculate, change a chart's data, or recommend anything the rule did not choose. |
 
@@ -163,7 +160,7 @@ The LLM is called in three places, each with a narrow job.
 | Choose weights or an optimisation method | `propose_spec` has a strict schema with no weight or method fields, and the user confirms the spec. |
 | Choose the recommendation | `recommend.py` applies a fixed, tested rule; the agent can only read it with `get_optimisation_result`. |
 | Call a failing portfolio suitable | Only portfolios that pass every suitability rule can be recommended; otherwise `closest_fails` shows each breach. |
-| Set the risk score or IPS limits | `client.py` scores the questionnaire and sets the limits; `propose_profile`'s schema excludes them, and `clean_draft` drops any field the form doesn't have before it is applied. |
+| Set the risk score or IPS limits | `client.py` scores the questionnaire and sets the limits; no AI tool can write to the client form. |
 | Invent chart data | `agent/charts.py` computes each chart from the engine, and tests check that the AI's text cannot change one. |
 | Promise returns | The prompt forbids it; results are labelled historical, and code appends the "not investment advice" disclaimer. |
 
