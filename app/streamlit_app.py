@@ -133,6 +133,7 @@ from gpl.suitability import (
     rationale,
     suitability_table,
 )
+from gpl.summary import GLOSSARY, kpi_comparison, result_summary, window_note
 
 CFG = load_universe()
 COST_BY_SUFFIX = CFG.get("trading_costs", {}).get("by_suffix", {})  # market rates, bps
@@ -547,7 +548,9 @@ def render_data_notes(history: pd.DataFrame) -> None:
 short = data.history[data.history["too_short"] & data.history.index.isin(universe)]
 with st.expander(
     "Data notes: start dates, currencies and trading calendars",
-    expanded=bool(data.mixed_calendars or len(short)),
+    # open when there is something to read, but not straight after Fill demo client
+    expanded=bool(data.mixed_calendars or len(short))
+    and sorted(universe) != st.session_state.get("demo_tickers"),
 ):
     render_data_notes(data.history)
     if data.mixed_calendars:
@@ -1389,10 +1392,140 @@ def _apply_improve_move() -> None:
     }
 
 
+def run_with_progress(title: str, work):
+    """Run ``work(progress)`` inside a status box with live steps and a progress bar.
+
+    ``progress(share, text)`` moves the bar and shows the step (e.g. "2/4 Building …").
+    """
+    with st.status(f"{title} This takes about a minute.", expanded=True) as box:
+        bar = st.progress(0.0, text="Starting…")
+
+        def progress(share: float, text: str) -> None:
+            bar.progress(min(max(share, 0.0), 1.0), text=text)
+
+        out = work(progress)
+        bar.progress(1.0, text="Done.")
+        box.update(label="Done: the summary is below.", state="complete", expanded=False)
+    st.session_state["scroll_to_result"] = True
+    return out
+
+
+def proposal_label(choice: str, status: str) -> str:
+    """How the proposed portfolio is named elsewhere (trades, report, Analyst page)."""
+    word = {"closest_fails": "closest, fails the IPS", "next_best": "next best option"}
+    return f"{choice} ({word.get(status, 'recommended')})"
+
+
+SCROLL_JS = """<script>
+const doc = window.parent.document;
+let tries = 0;
+const go = () => {
+  const el = doc.querySelector('.st-key-result_summary');
+  if (el) { el.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+  else if (tries++ < 40) { setTimeout(go, 150); }
+};
+go();
+</script>"""
+
+
+def _period_words(backtest_period: str) -> str:
+    """'2022-01-04 to 2026-11-05' -> '4 Jan 2022 – 5 Nov 2026'."""
+    start, _, end = backtest_period.partition(" to ")
+    return period_label(pd.DatetimeIndex([start, end]))
+
+
+def _summary_card(result: dict, latest: pd.DataFrame) -> None:
+    """The plain-English summary and current vs recommended, before any table."""
+    report = result["report"]
+    rec = report["recommendation"]
+    choice = rec["choice"]
+    proposed = latest.loc[choice] if choice in latest.index and choice != KEEP else None
+    summary = result_summary(
+        report,
+        latest.loc["Current"][latest.loc["Current"] > 1e-9].to_dict(),
+        None if proposed is None else proposed[proposed > 1e-9].to_dict(),
+    )
+    with st.container(border=True, key="result_summary"):
+        st.markdown("#### Summary")
+        st.markdown("**What we did**\n" + "\n".join(f"- {line}" for line in summary.did))
+        st.markdown(f"**What we found:** {summary.found}")
+        st.markdown(f"**What we recommend and why:** {summary.recommend}")
+        st.markdown(f"**What changes:** {summary.changes}")
+        if report.get("move_from_current_turnover") and proposed is not None:
+            st.caption(
+                "After today's move, the quarterly turnover limit applies: expected trading is "
+                "the 'Turnover / yr' figure in the table below."
+            )
+    shown = choice if proposed is not None else "Current"
+    left, right = st.columns([3, 2])
+    with left:
+        if proposed is not None:
+            pair = latest.loc[["Current", choice]]
+            pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
+            st.markdown(f"**Weights: current vs {choice}**")
+            plot(
+                paired_bars_chart(pair.loc["Current"], pair.loc[choice], ("Current", choice), ""),
+                width="stretch",
+            )
+        else:
+            st.markdown("**No change:** the advice is to keep the current portfolio.")
+    with right:
+        st.markdown(f"**{'Current vs ' + choice if proposed is not None else 'Current'}**")
+        st.caption(f"Walk-forward after costs, {_period_words(report['backtest_period'])}.")
+        cards = kpi_comparison(report, shown)
+        tips = {
+            "Return (CAGR)": "Average yearly growth over the test, after costs.",
+            "Volatility": "How much returns swing in a year; lower is calmer.",
+            "Sharpe ratio": GLOSSARY["Sharpe ratio"],
+            "Max drawdown": "The largest fall from a peak during the test.",
+        }
+        cols = st.columns(2)
+        for i, k in enumerate(cards):
+            cols[i % 2].metric(
+                k["label"],
+                k["proposed"],
+                None if proposed is None else k["change"],
+                delta_color="inverse" if k["label"] == "Volatility" else "normal",
+                help=tips[k["label"]],
+            )
+
+
+def _status_table(report: dict) -> None:
+    """Every candidate with a simple status and one reason; the full table is for analysts."""
+    status = report.get("candidate_status", {})
+    if not status:
+        return
+    rows = report["walk_forward_after_costs"]
+    table = pd.DataFrame(
+        {
+            name: {
+                "Status": status[name]["status"],
+                "Why": status[name]["why"],
+                "Sharpe": rows[name].get("sharpe", "–"),
+                "Volatility": rows[name].get("annual_volatility", "–"),
+                "Max drawdown": rows[name].get("max_drawdown", "–"),
+                "Turnover / yr": rows[name].get("turnover_per_year", "–"),
+            }
+            for name in rows
+            if name in status
+        }
+    ).T
+    head, tip = st.columns([4, 1])
+    head.markdown(f"**The candidates ({_period_words(report['backtest_period'])})**")
+    with tip.popover("How to read this"):
+        for term, text in GLOSSARY.items():
+            st.markdown(f"**{term}:** {text}")
+    st.table(table)
+
+
 def _results_section(result: dict, ai_ok: bool) -> None:
     report, run = result["report"], result["run"]
     rec = report["recommendation"]
     st.markdown("**4. Recommendation**")
+    latest = optimise_weights(result)
+    _summary_card(result, latest)
+    if st.session_state.pop("scroll_to_result", False):
+        st.iframe(SCROLL_JS, height=1)  # our own constant script, not user content
     reasons = "\n".join(f"- {r}" for r in rec["reasons"])
     gate = report.get("suitability_gate")
     if rec["status"] == "closest_fails":
@@ -1427,6 +1560,10 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             + "."
         )
     st.caption(f"The rule for this goal: {rec['rule']}")
+    _status_table(report)
+    build = report.get("mode") == "build"
+    where = "build" if build else "improve"
+    st.caption(window_note(where, _period_words(report["backtest_period"])))
 
     rows = pd.DataFrame(report["walk_forward_after_costs"]).T
     columns = dict(CANDIDATE_TABLE_COLUMNS)
@@ -1436,10 +1573,10 @@ def _results_section(result: dict, ai_ok: bool) -> None:
     rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
     mark = "≈ " if rec["status"] == "closest_fails" else "★ "  # ≈: closest, still fails
     rows.index = [(mark if n == rec["choice"] else "") + n for n in rows.index]
-    st.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
-    st.table(rows)
-    build = report.get("mode") == "build"
-    st.caption(
+    full = st.expander("Full results (for analysts)")
+    full.markdown(f"**Walk-forward results after costs ({report['backtest_period']})**")
+    full.table(rows)
+    full.caption(
         (
             "Each candidate re-chooses its securities and weights every quarter from the data "
             "available then (risk from all history so far, returns from the last year), within "
@@ -1487,7 +1624,6 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         st.markdown(f"🔁 **Swap ({swap['kind']})**: {swap['why']}")
     for idea in report.get("domicile_suggestions_information_not_tax_advice", []):
         st.caption(f"🏛 **Domicile (information, not tax advice):** {idea['why']}")
-    latest = optimise_weights(result)
     if report.get("mode") == "improve":
         st.caption(
             f"Turnover limit {report['max_turnover']} of the portfolio: each month's move, and "
@@ -1507,20 +1643,8 @@ def _results_section(result: dict, ai_ok: bool) -> None:
                 "list and the client report.",
             )
     if len(latest) > 1:
-        st.markdown("**Latest weights of each method** (what it would hold now)")
-        st.table(latest.map(pct))
-        if rec["choice"] != KEEP:
-            pair = latest.loc[["Current", rec["choice"]]]
-            pair = pair.loc[:, (pair > 1e-9).any()]  # only what either portfolio holds
-            plot(
-                paired_bars_chart(
-                    pair.loc["Current"],
-                    pair.loc[rec["choice"]],
-                    ("Current", rec["choice"]),
-                    f"Current vs {rec['choice']}",
-                ),
-                width="stretch",
-            )
+        full.markdown("**Latest weights of each method** (what it would hold now)")
+        full.table(latest.map(pct))
     plot(equity_chart(run.equity, "Growth of $1, walk-forward after costs", reference="Benchmark"))
     if "Benchmark" in run.equity and rec["choice"] in run.equity:
         daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()
@@ -1590,7 +1714,7 @@ def render_build(ctx, ai_ok: bool) -> None:
         )
     elif not POLICY and POLICY_WHY:
         st.caption(f"No IPS-fitting policy benchmark for this client: {POLICY_WHY}")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     te = c1.number_input(
         "Tracking-error limit (% a year)",
         0.5,
@@ -1601,7 +1725,17 @@ def render_build(ctx, ai_ok: bool) -> None:
         help="How far the portfolio may stray from the benchmark: the annualised volatility of "
         "its return minus the benchmark's.",
     )
-    c2.caption(
+    turn = c2.number_input(
+        "Turnover limit per quarter (%)",
+        5.0,
+        200.0,
+        float(LAB.get("build_max_turnover", 0.25) * 100),
+        5.0,
+        key="build_turnover",
+        help="Buys plus sells at each quarterly rebalance, as a share of the portfolio, after "
+        "the first build. 25% a quarter is at most 1.0x the portfolio traded a year.",
+    )
+    c3.caption(
         f"At most {pct(max_weight)} in one holding (slider above); the client's IPS limits "
         "apply on top. Tilts: low volatility and momentum are scored from prices; quality "
         "uses quality-factor ETFs."
@@ -1613,29 +1747,43 @@ def render_build(ctx, ai_ok: bool) -> None:
         n_max=int(hi),
         min_weight=float(LAB.get("build_min_weight", 0.02)),
         tilt_min=float(LAB.get("tilt_min", 0.25)),
+        max_turnover=turn / 100,
     )
     limits = OptimisationSpec(max_weight=max_weight)
     profile = client_ui.current_profile()
     client_key = None if profile is None else json.dumps(profile.to_dict(), sort_keys=True)
-    run_key = ("build", settings_key, bench_name, te, max_weight, client_key, portfolio_value())
+    run_key = (
+        "build", settings_key, bench_name, te, turn, max_weight, client_key, portfolio_value()
+    )  # fmt: skip
     if st.button("Build the candidate portfolios", key="ws_run_build", type="primary"):
-        with st.spinner("Loading the universe, then choosing securities month by month…"):
+        uni = None
+
+        def work(progress):
+            nonlocal uni
+            progress(0.02, f"1/4 Screening {len(UNIVERSE_TAGS)} securities against the IPS")
             uni = universe_data(True)
-            try:
-                report, run = run_build(
-                    ctx, uni, limits, my_weights, settings,
-                    bench_choices.get(bench_name, {}).get("weights", {}),
-                )  # fmt: skip
-            except ToolError as e:
-                st.error(str(e))
-                return
+            progress(
+                0.10,
+                f"1/4 Screened {len(UNIVERSE_TAGS)} securities against the IPS: "
+                f"{len(uni.eligible)} eligible",
+            )
+            return run_build(
+                ctx, uni, limits, my_weights, settings,
+                bench_choices.get(bench_name, {}).get("weights", {}), progress=progress,
+            )  # fmt: skip
+
+        try:
+            report, run = run_with_progress("Building the candidate portfolios.", work)
+        except ToolError as e:
+            st.error(str(e))
+            return
         ctx.optimisation = report
         choice = run.recommendation.choice
         if choice in run.latest_weights.index:
             w = run.latest_weights.loc[choice]
             fails = run.recommendation.status == "closest_fails"
             ctx.proposed = {
-                "name": f"{choice} ({'closest, fails the IPS' if fails else 'recommended'})",
+                "name": proposal_label(choice, run.recommendation.status),
                 "weights": w[w > 0].to_dict(),
                 "source": "Build (closest; fails the IPS)" if fails else "Build recommendation",
             }
@@ -1733,9 +1881,13 @@ def render_optimise() -> None:
     )  # fmt: skip
     if st.button("Run the candidate methods", key="ws_run_opt", type="primary"):
         st.session_state.pop(IMPROVE_MOVE, None)  # a new run starts on the default move
-        with st.spinner("Re-optimising each method month by month and backtesting…"):
+        uni = None
+
+        def work(progress):
+            nonlocal uni
+            progress(0.02, "1/4 Loading prices for your holdings and the swap universe")
             uni = universe_data(True) if use_swaps else None
-            report, run = run_candidates(
+            return run_candidates(
                 ctx,
                 goal,
                 limits,
@@ -1744,14 +1896,17 @@ def render_optimise() -> None:
                 max_turnover=max_turnover / 100,
                 universe=uni,
                 max_swaps=int(max_swaps),
+                progress=progress,
             )
+
+        report, run = run_with_progress("Testing the candidate methods.", work)
         ctx.optimisation = report
         choice = run.recommendation.choice
         if choice != KEEP:  # charts on the Analyst page compare current with this
             w = run.latest_weights.loc[choice]
             fails = run.recommendation.status == "closest_fails"
             ctx.proposed = {
-                "name": f"{choice} ({'closest, fails the IPS' if fails else 'recommended'})",
+                "name": proposal_label(choice, run.recommendation.status),
                 "weights": w[w > 0].to_dict(),
                 "source": "Optimise (closest; fails the IPS)"
                 if fails
@@ -1996,7 +2151,7 @@ def render_portfolio_kpis() -> None:
         st.caption(
             f"**Backtest period {kpi.attrs['period']}.** Return, volatility, Sharpe and max "
             "drawdown: your current weights rebalanced monthly after costs; deltas against "
-            f"{bench_name}."
+            f"{bench_name}. " + window_note("analyse", kpi.attrs["period"])
         )
 
 

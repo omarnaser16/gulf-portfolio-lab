@@ -7,12 +7,21 @@ import pandas as pd
 import streamlit as st
 from pandas.io.formats.style import Styler
 
-PCT = "{:.2%}"
+from gpl.metrics import no_negative_zero
 
 
 def pct(x: float) -> str:
-    """Fraction -> percentage string with exactly two decimals, e.g. 0.09 -> '9.00%'."""
-    return PCT.format(x)
+    """Fraction -> percentage string with exactly two decimals, e.g. 0.09 -> '9.00%'.
+    A value that rounds to zero shows as '0.00%', never '-0.00%'."""
+    return f"{no_negative_zero(x, 4):.2%}"
+
+
+def two_dp(x: float) -> str:
+    """Two decimals, e.g. a Sharpe ratio; '0.00', never '-0.00'."""
+    return f"{no_negative_zero(x, 2):.2f}"
+
+
+PCT = pct  # callable format, used by pandas Styler
 
 
 def metric_columns(var_level: float) -> dict[str, tuple[str, str]]:
@@ -22,8 +31,8 @@ def metric_columns(var_level: float) -> dict[str, tuple[str, str]]:
         "ann_return": ("Return (ann.)", PCT),
         "cagr": ("CAGR", PCT),
         "ann_vol": ("Volatility (ann.)", PCT),
-        "sharpe": ("Sharpe", "{:.2f}"),
-        "sortino": ("Sortino", "{:.2f}"),
+        "sharpe": ("Sharpe", two_dp),
+        "sortino": ("Sortino", two_dp),
         "max_drawdown": ("Max drawdown", PCT),
         "annual_turnover": ("Turnover / yr", "{:.2f}×"),
         "hist_var": (f"VaR {level} (historical)", PCT),

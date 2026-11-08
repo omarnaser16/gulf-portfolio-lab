@@ -111,6 +111,15 @@ def step_footer(step: str, status: StepStatus) -> None:
 # Sticky header, chips and stepper. Colours come from the theme tokens in formatting.py.
 LAYOUT_CSS = """
 <style>
+/* the result summary: scrolled into view below the sticky header, with a brief highlight */
+.st-key-result_summary {
+  scroll-margin-top: 6rem; border-radius: 0.6rem;
+  animation: gpl-highlight 2.4s ease-out 1;
+}
+@keyframes gpl-highlight {
+  0% { box-shadow: 0 0 0 4px rgba(176, 141, 87, 0.75); background: rgba(176, 141, 87, 0.12); }
+  100% { box-shadow: 0 0 0 0 rgba(176, 141, 87, 0); background: transparent; }
+}
 .st-key-gpl_header {
   position: sticky; top: 0; z-index: 990; padding: 0.35rem 0 0.25rem 0;
   background: var(--gpl-bg); border-bottom: 1px solid var(--gpl-border);

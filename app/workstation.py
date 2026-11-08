@@ -26,6 +26,7 @@ from gpl.metrics import (
     beta,
     calmar_ratio,
     correlation_to_rest,
+    no_negative_zero,
     summary_table,
     trailing_return,
 )
@@ -87,8 +88,10 @@ def _value_entered(key: str) -> None:
 
 def value_input(container, key_prefix: str, label: str = "Portfolio value (USD)") -> None:
     """The portfolio value input; every copy of it edits the same value."""
-    key = f"{key_prefix}_{st.session_state.get(PF_VERSION, 0)}"
     usd = st.session_state.get(MODE) == USD
+    key = f"{key_prefix}_{st.session_state.get(PF_VERSION, 0)}"
+    if usd:  # the total follows every holdings edit: a new key shows the new total
+        key += f"_{round((portfolio_value() or 0) * 100)}"
     container.number_input(
         label,
         min_value=0.0,
@@ -621,7 +624,7 @@ def render_kpis(
 
     # deltas are vs the benchmark (named in the caption below the cards); kept short so they fit
     def pp(x: float) -> str:
-        return f"{x * 100:+.2f} pp"
+        return f"{no_negative_zero(x * 100, 2):+.2f} pp"
 
     sharpe_delta = kpi.loc["sharpe", "delta"]
     cols[1].metric("Return (CAGR)", pct(kpi.loc["cagr", "portfolio"]), pp(kpi.loc["cagr", "delta"]))
@@ -634,7 +637,7 @@ def render_kpis(
     cols[3].metric(
         "Sharpe",
         f"{kpi.loc['sharpe', 'portfolio']:.2f}",
-        None if pd.isna(sharpe_delta) or is_cash else f"{sharpe_delta:+.2f}",
+        None if pd.isna(sharpe_delta) or is_cash else f"{no_negative_zero(sharpe_delta, 2):+.2f}",
     )
     cols[4].metric(
         "Max drawdown",
@@ -753,7 +756,7 @@ def render_rebalance(
         {
             "Current": d["current"].map(pct),
             "Target": d["target"].map(pct),
-            "Drift": d["drift"].map(lambda x: f"{x * 100:+.2f} pp"),
+            "Drift": d["drift"].map(lambda x: f"{no_negative_zero(x * 100, 2):+.2f} pp"),
             "Outside band": d["outside_band"].map({True: "⚠️ yes", False: "no"}),
         },
         index=d.index,

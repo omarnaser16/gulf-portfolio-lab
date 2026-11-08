@@ -72,3 +72,16 @@ def test_usage_stats_are_off() -> None:
 
     config = tomllib.loads((Path(__file__).parents[1] / ".streamlit" / "config.toml").read_text())
     assert config["browser"]["gatherUsageStats"] is False
+
+
+def test_tiny_negatives_never_show_as_minus_zero() -> None:
+    from formatting import two_dp
+    from gpl.agent.tools import num, pp_change
+    from gpl.agent.tools import pct as tool_pct
+    from gpl.metrics import no_negative_zero
+
+    assert pct(-1e-9) == "0.00%" and tool_pct(-0.00004) == "0.00%"
+    assert pct(-0.00005) == "-0.01%"  # a real (rounded) loss still shows its sign
+    assert num(-0.001) == "0.00" and two_dp(-0.004) == "0.00"
+    assert pp_change(-1e-7) == "+0.00 pp" and pp_change(-0.05) == "-5.00 pp"
+    assert no_negative_zero(float("nan"), 2) != no_negative_zero(float("nan"), 2)  # NaN stays

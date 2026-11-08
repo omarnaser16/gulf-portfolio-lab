@@ -128,6 +128,7 @@ def fill_demo(seed: int | None = None) -> None:
     _set_profile(demo.profile)
     st.session_state.pop(EXAMPLE, None)
     st.session_state["demo_seed"] = seed
+    st.session_state["demo_tickers"] = sorted(h["ticker"] for h in demo.holdings)
     for key in ("ws_opt", "client_report", "client_report_flags", "suit_fails", "ctx_key"):
         st.session_state.pop(key, None)
     st.session_state["main_tab"] = "3 Analyse"

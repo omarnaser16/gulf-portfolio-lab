@@ -1273,8 +1273,19 @@ def test_one_portfolio_value_everywhere(app: AppTest) -> None:
     assert not app.exception, app.exception
     v = app.session_state[ws.PF_VERSION]
     for key in ("pf_value_holdings", "pf_value_client", "pf_value_rebalance"):
-        assert app.number_input(key=f"{key}_{v}").value == 1_000_000.0
+        # USD amounts: the key carries the total (in cents), so the box follows every edit
+        assert app.number_input(key=f"{key}_{v}_100000000").value == 1_000_000.0
     assert _metric(app, "Portfolio value") == "$1.00m"
+    # editing a USD amount updates the (read-only) value box at once
+    rows = [dict(r) for r in app.session_state[ws.ROWS]]
+    rows[0]["value"] += 50_000.0
+    app.session_state[ws.ROWS] = rows
+    app.run()
+    assert app.number_input(key=f"pf_value_holdings_{v}_105000000").value == 1_050_000.0
+    assert _metric(app, "Portfolio value") == "$1.05m"
+    rows[0]["value"] -= 50_000.0
+    app.session_state[ws.ROWS] = rows
+    app.run()
     reasons = " ".join(m.value for m in app.markdown)
     assert "the client needs USD 100,000 held now" in reasons  # suitability uses the value
     # the example's portfolio arrives as USD amounts of that value
@@ -1413,6 +1424,8 @@ def test_fill_demo_client_fills_everything_and_opens_the_analysis(app: AppTest) 
     html = " ".join(m.value for m in app.markdown)
     assert "DEMO DATA · seed 7" in html and "<b>IPS</b> Ready" in html
     assert any("DEMO DATA" in i.value for i in app.info)  # the Client step says so too
+    notes = next(e for e in app.expander if e.label.startswith("Data notes"))
+    assert notes.proto.expanded is False  # kept collapsed after Fill demo client
     final = next(d for d in app.get("download_button") if d.proto.label == "Download IPS (PDF)")
     assert not final.proto.disabled  # every required field is filled
     # the random button gives a new seed each time, shown in the header
@@ -1598,10 +1611,25 @@ def test_build_mode_screens_builds_and_recommends_by_rule(optimise_app) -> None:
     shown = " ".join(b.value for b in [*at.success, *at.info, *at.warning])
     assert rec["choice"] in shown
     if rec["status"] in ("recommended", "next_best"):  # keep: nothing to buy
-        securities = next(t.value for t in at.table if "Why" in t.value.columns)
+        securities = next(t.value for t in at.table if "Asset class" in t.value.columns)
         assert set(securities.index) == set(report["securities_chosen"])
     assert any(e.label.startswith("Universe after the IPS screen") for e in at.expander)
     assert "survivorship" in " ".join(i.value for i in at.info)
+    # plain-English summary card before any table, written by code from the report
+    text = " ".join(m.value for m in at.markdown)
+    for part in ("#### Summary", "**What we did**", "**What we found:**",
+                 "**What we recommend and why:**", "**What changes:**"):  # fmt: skip
+        assert part in text, part
+    assert "Screened " in text and " eligible." in text
+    # simple status table first; the technical table sits in an expander for analysts
+    status = next(t.value for t in at.table if "Status" in t.value.columns)
+    assert set(status.index) == set(report["walk_forward_after_costs"])
+    assert status.loc["Benchmark", "Status"] == "— Reference"
+    assert any(e.label == "Full results (for analysts)" for e in at.expander)
+    labels = {m.label for m in at.metric}
+    assert {"Return (CAGR)", "Volatility", "Sharpe ratio", "Max drawdown"} <= labels
+    assert any("each uses its own dates" in c.value for c in at.caption)  # the window note
+    assert report["turnover_limit_per_rebalance"].startswith("25.00% a quarter")
     gate = report["suitability_gate"]
     assert "Current" in gate["failed_rules"]
     table = next(t.value for t in at.table if "Exclusions" in t.value.index)
