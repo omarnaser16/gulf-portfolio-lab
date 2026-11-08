@@ -184,7 +184,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 1025 tests, no network needed (live AI tests skip without a key)
+pytest -q                       # 1026 tests, no network needed (live AI tests skip without a key)
 streamlit run app/streamlit_app.py
 ```
 

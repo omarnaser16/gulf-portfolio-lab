@@ -744,3 +744,35 @@ days; the work itself was done in a series of sessions.
   move only trims IEF (7.31% to 4.97%); the wording should say the full sale happens in the full
   restructure.
 - **Status:** 1025 tests: 1024 pass locally; the real-install test runs in CI.
+
+## 2026-11-08 — Swap notes say what the recommendation actually does
+- **Problem:** the client report said "sell IEF … keep AGG" while the recommended Max Sharpe
+  move only trimmed IEF (7.31% to 4.97%). The note came from the "Re-weight + swaps" candidate's
+  rule and was printed as an instruction whatever the recommendation was.
+- **Built by Claude Code:** the swap rule's reason now says what the rule found ("so the swap rule
+  sells IEF and keeps AGG"), and `construct.swap_outcome` adds one sentence from the actual
+  weights: another method doesn't make the swap (and holds IEF at 4.97%), the turnover limit
+  allows only a trim (a full restructure would sell it all), the move sells or buys it, or the
+  advice is to keep. The PDF heading is "Swap ideas" instead of "Changes to your holdings".
+  Tests cover every case, including seed 2's; the README report screenshot is re-shot.
+- **Learned:** a sentence printed next to a table must agree with the table; when two parts of
+  the engine (the swap rule, the recommendation) can disagree, say which one is speaking.
+
+## 2026-11-08 — Step cards and header update in the same render; tidier first screen
+- **Problem (live app):** clicking a step card changed the page first and moved the highlight only
+  later, so it looked laggy. The callbacks already set the step before the rerun; the cause was
+  that the cards and header chips were drawn at the end of the script, after every step's content.
+- **Built by Claude Code:** the cards and chips are drawn at the top of each run from state the
+  callbacks have already set (the step, the client), then their text is refreshed in place at the
+  end with this run's statuses. The Next buttons and *▶ Try a demo client* get the same benefit
+  (they were callbacks already). Measured in headless Chrome, sampling every 50 ms: before, the
+  page changed first and the card 1.0-4.6 s later, and the chips still read "none loaded" 7 s
+  after loading the demo; now the card and chips change at about 0.15 s and the page about 0.15 s
+  after that.
+- **First screen:** the demo button appears twice (header and welcome banner), not three times;
+  the empty Client tab points to it. With nothing loaded, steps 2-6 say "not started" instead of
+  "4 holdings" and "analysis ready" (from the starter example). The banner goes as soon as a
+  client is loaded.
+- **Learned:** in Streamlit what is drawn last updates last; anything that reflects a click
+  belongs at the top of the script.
+- **Status:** 1026 tests: 1025 pass locally; the real-install test runs in CI.
