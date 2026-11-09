@@ -26,8 +26,10 @@ fallback, Diversified (IPS), is shown as the next best option, not as a forecast
 
 **Improve my current portfolio:** Max Sharpe beat the current portfolio's walk-forward Sharpe
 ratio after costs by 0.19 (0.52 against 0.33), with lower volatility and a shallower largest
-fall, so the rule recommends it. The move stays within the 30% turnover limit; the adviser can
-choose a full restructure instead, shown with its turnover and estimated cost.
+fall, so the rule picks it. But the full Max Sharpe portfolio fails the client's IPS over the
+full history (volatility, maximum drawdown and the worst stress episode), so it is not
+labelled recommended: only the closest compliant move towards it, within the 30% turnover
+limit, is suggested, and the page says why.
 
 ![Improve mode: recommendation box and walk-forward results after costs](docs/screenshots/optimise-recommendation.png)
 
@@ -186,7 +188,7 @@ git clone https://github.com/omarnaser16/gulf-portfolio-lab.git && cd gulf-portf
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env            # then add your ANTHROPIC_API_KEY (only needed for the AI features)
-pytest -q                       # 1030 tests, no network needed (live AI tests skip without a key)
+pytest -q                       # 1043 tests, no network needed (live AI tests skip without a key)
 streamlit run app/streamlit_app.py
 ```
 
@@ -226,7 +228,8 @@ src/gpl/agent/                 tools.py (16 tools wrapping gpl), analyst.py (too
                                check), spec.py (the Optimise form -> limits, no AI), charts.py
                                (charts built from engine data)
 app/                           Streamlit app: streamlit_app.py, layout.py (six steps, header),
-                               client_ui.py, workstation.py, inputs.py, formatting.py
+                               client_ui.py, workstation.py, inputs.py, formatting.py,
+                               freshness.py (fresh modules after a deploy)
 .streamlit/config.toml         light theme
 scripts/verify_universe.py     checks every universe ticker on Yahoo Finance
 tests/                         pytest suite (run by .github/workflows/tests.yml)

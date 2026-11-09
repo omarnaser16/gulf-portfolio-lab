@@ -110,7 +110,10 @@ streamlit run app/streamlit_app.py
   least 0.05, `min_sharpe_gain`); the AI only explains the rule's choice and trade-offs, and
   never presents results as guaranteed or higher future returns. With a client IPS, only
   portfolios that pass every suitability rule can be recommended; otherwise the closest is shown
-  with its breaches (`closest_fails`), never as suitable.
+  with its breaches (`closest_fails`), never as suitable. "Recommended" also needs the method's
+  walk-forward volatility and drawdown within the IPS limits and its full target to pass the IPS
+  over the full history; otherwise only the closest compliant move is suggested
+  (`compliant_move`), with the reasons.
 - **Charts come only from tool data.** The AI chooses chart type, order and section via
   `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the
   engine.

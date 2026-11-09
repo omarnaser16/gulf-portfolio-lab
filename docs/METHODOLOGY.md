@@ -242,7 +242,15 @@ example; afterwards, 0 of 39. A regression test pins it.
   both ways: unless the goal is a lower-risk one, a candidate is *too cautious for this client* if
   its return is below the IPS required return or, for risk scores 4-5, its volatility is under half
   the IPS cap (`too_cautious_vol_share`), so a growth client is never steered into a timid
-  portfolio. The result shows one sentence (switch, with return and volatility before and after, or
+  portfolio. Under the two lower-risk goals that test is skipped on purpose, so a pick whose
+  return is below the IPS required return carries a warning instead. *Recommended* needs two IPS
+  checks to pass: the method's walk-forward volatility and drawdown within the IPS limits, and its
+  full target passing every IPS rule over the full history (as well as today's turnover-limited
+  move). If either fails, only the closest compliant move towards it is suggested, labelled
+  *compliant move only*, with the rules the full move breaks. (Added 9 Nov 2026: on demo seed 2,
+  Max Sharpe had been labelled recommended because today's 30% step passed the IPS, although the
+  full Max Sharpe target fails volatility, drawdown and worst stress episode over the full
+  history.) The result shows one sentence (switch, with return and volatility before and after, or
   keep), a risk-vs-return chart, growth of $1 (current, benchmark and recommended; the rest in the
   legend), drawdowns and each candidate's status. (5) An optional AI memo explains it. Results are historical and risk-adjusted, never presented as higher returns to come.
 - **Latest or reproducible.** The dashboard opens on the latest data ("Data as of …" at the top). The
@@ -388,7 +396,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 1030 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
+**Testing.** 1043 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.

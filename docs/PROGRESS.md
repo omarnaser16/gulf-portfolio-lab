@@ -861,12 +861,29 @@ days; the work itself was done in a series of sessions.
   that step, whenever it changes. The QA now checks the page content as well as the card.
   It also found chart labels sitting on neighbouring dots and table text cut off at 1280 px;
   both fixed and re-shot.
-- **Concepts:** suitability works both ways (too risky *and* too cautious for the client);
-  walk-forward vs full-history checks can disagree. On seed 2 the AI memo itself flagged that
-  Max Sharpe passes the IPS in the walk-forward test but a full move to it fails volatility,
-  drawdown and stress over the full history, so the app offers the closest compliant move.
-- **Open questions:** should the recommendation require passing both the walk-forward and the
-  full-history IPS checks? The "Manage app" badge only exists on Streamlit Cloud, so its
-  clearance is checked by padding, not seen.
-- **Next step:** check the deployed app after the push.
-- **Status:** 1030 tests: 1029 pass locally; the real-install test runs in CI.
+- **Concepts:** suitability works both ways (too risky *and* too cautious for the client).
+  A recommendation can pass the IPS for today's limited step and still fail it as a full
+  portfolio.
+- **Correction (same day):** I first wrote that on seed 2 Max Sharpe "passes the IPS in the
+  walk-forward test but fails over the full history". That was the AI memo's misreading, and I
+  repeated it. Both checks use the full history: today's 30% step towards Max Sharpe passes,
+  the full Max Sharpe target fails (volatility, drawdown, worst stress episode). Nothing
+  checked the walk-forward figures against the IPS at all.
+- **Decided:** "recommended" now needs the method's walk-forward volatility and drawdown within
+  the IPS limits *and* its full target passing the IPS over the full history. Otherwise it
+  says *compliant move only*: the closest compliant move is suggested, with the rules the full
+  move breaks. Seed 2 changes from "Switch to Max Sharpe" to "Move part-way towards Max
+  Sharpe"; seed 92713 is unchanged. Under the two lower-risk goals a pick below the required
+  return now carries a warning (seed 2, Lower risk: Min variance 2.60% against 6.49% needed).
+  The memo prompt now says which check is which.
+- **Open questions:** the "Manage app" badge only exists on Streamlit Cloud, so its clearance
+  is checked by padding, not seen. QA screenshots compressed to 256-colour PNGs; the old
+  full-size ones are still in git history.
+- **Live site down, found by the live check:** after today's earlier push the deployed app
+  showed `ImportError` on `from formatting import money`. Likely cause: Cloud updates the files
+  under the running process, but the modules it already imported, and the `gpl` copy that
+  `requirements.txt` installs, stay old. New `app/freshness.py` puts the checkout's `src/`
+  first and reloads project modules when a file is newer than the process. The
+  `requirements.txt` comment changed too, to force a clean reinstall.
+- **Next step:** real-click check of the header and step cards on the live site.
+- **Status:** 1043 tests: 1042 pass locally; the real-install test runs in CI.

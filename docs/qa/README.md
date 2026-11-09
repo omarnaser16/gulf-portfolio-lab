@@ -1,4 +1,4 @@
-# QA evidence: final polish (9 Nov 2026)
+# QA evidence: final polish (9 Nov 2026, updated the same day)
 
 How it was checked:
 - **Setup:** headless Chrome, driven over the DevTools protocol, against the app started with
@@ -7,8 +7,10 @@ How it was checked:
   on-screen centre. Before each click, `document.elementFromPoint` at that point must be the
   control itself. After each click, the expected effect must appear: a dropdown opens, the step
   card *and* the page content change, the demo loads.
-- **Logs:** `qa-log-clicks-goals-seed2-widths.json` (96 checks, 96 passed) and
-  `qa-log-seed2-final.json` (the seed-2 run repeated on the final code).
+- **Logs:** `qa-log-clicks-goals-seed2-widths.json` (96 checks, 96 passed);
+  `qa-log-seed2-final.json` (seed 2 and all six goals, re-run after the two-check rule);
+  `qa-log-lower-risk-seed2.json` (both lower-risk goals on seed 2); `qa-log-live-site.json`
+  (header and step cards on the deployed site).
 - **Not checked:** the "Manage app" badge only exists on Streamlit Cloud, so its clearance is
   checked by padding, not seen.
 
@@ -26,6 +28,8 @@ How it was checked:
 | C10 Swaps vs Min variance (seed 92713) | Explained, tested | `C8-goal-lower-risk.png` | No swap fired, so it matched Min variance; now shown once, with a note. |
 | C11 Results order | Yes | `C11-results-seed2.png`, `C11-results-seed2-1280x800.png` | |
 | C12 Keep is not an error | Yes | `C8-goal-beat-the-benchmark.png` | |
+| Both IPS checks for "recommended" | Yes | `C11-results-seed2.png`, `B5-memo-in-client-report.txt` | Seed 2 now reads "Move part-way towards Max Sharpe": the full target fails volatility, max drawdown and worst stress episode over the full history. The memo and PDF headline say the same. |
+| Lower-risk return warning | Yes | `C9-seed2-goal-lower-risk.png` | Seed 2, Lower risk: Min variance returned 2.60% a year, below the 6.49% needed. Seed 92713 has no required return, so no warning. |
 | D13 Report & trades states | Yes | `D13-report-before-optimise.png`, `D13-report-after-optimise-*.png` | |
 | D14 One formatter, no "USD -0", typo | Yes | `D14-report-card-seed2.png` | Unit tests for `money()`. |
 | E15 No truncated button labels | Yes | `E16-holdings-*.png` | |

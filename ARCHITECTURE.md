@@ -155,7 +155,7 @@ the limits are set by the adviser (or *▶ Try a demo client*, seeded code with 
 | Choose weights, an optimisation method or the goal | The adviser chooses the goal and limits in the form; no tool has a weight, method or goal field. |
 | Read user text | The app sends one fixed request (`MEMO_QUESTION`); there is no chat or free-text input. |
 | Choose the recommendation | `recommend.py` applies a fixed, tested rule; the agent can only read it with `get_optimisation_result`. |
-| Call a failing portfolio suitable | Only portfolios that pass every suitability rule can be recommended; otherwise `closest_fails` shows each breach. |
+| Call a failing portfolio suitable | Only portfolios that pass every suitability rule can be recommended; otherwise `closest_fails` shows each breach. A method whose walk-forward risk or full target fails the IPS gets `compliant_move`: only the closest compliant move is suggested. |
 | Set the risk score or IPS limits | `client.py` scores the questionnaire and sets the limits; no AI tool can write to the client form. |
 | Invent chart data | `agent/charts.py` computes each chart from the engine, and tests check that the AI's text cannot change one. |
 | Promise returns | The prompt forbids it; results are labelled historical, and code appends the "not investment advice" disclaimer. |

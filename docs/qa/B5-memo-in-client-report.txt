@@ -1,17 +1,15 @@
 Your adviser's commentary
-What the Optimise step recommends
-Your current risk: EEM and URTH make up 30% of your money but 62.74% of your risk. EEM alone is 57.50% of
-risk from a 26.47% weight.
-The choice: The rule picked Max Sharpe, the method with the highest after-cost Sharpe in walk-forward tests, provided it beat your current portfolio by at least 0.05. Max Sharpe scored 0.52 against 0.33 for your current portfolio. It passes every rule in your Investment Policy Statement (IPS). Your goals need a 6.49% a year return. Max Sharpe's walk-forward return was 6.67% a year, against 5.04% for your current portfolio. This is a historical result, not a forecast.
-The recommended weights: URTH rises from 3.53% to 11.98%, BIL from 13.00% to 18.43%. AGG falls from 22.69% to 15.45%, GLD from 10.00% to 6.81%.
-Trade-offs:
-• Trading is much heavier: 2.16× turnover a year, against 0.26× now.
-• Risk falls: walk-forward maximum drawdown was -12.64%, against -15.65% now.
-• The 60/40 benchmark earned more in the same tests: 9.43% a year, Sharpe 0.64.
-• The full move to Max Sharpe's target weights would fail your IPS on volatility, drawdown and worst stress. Only
-the turnover-limited weights above pass. Your adviser should confirm this.
-How much to trust it: Treat these as a backtest, not a promise. Max Sharpe and Target volatility held up out of sample. Min variance, Risk parity and Max diversification did not. Picking the best of several methods on the same history is itself a mild form of hindsight. Expected returns are historical averages, which are noisy.
-Decision support for your licensed adviser, not personal advice.
+What the rule chose
+The rule picked Max Sharpe, but only as a compliant move. The full Max Sharpe portfolio fails your limits over the full history on volatility, maximum drawdown and worst stress episode, so only the closest step towards it is suggested. That step passes every IPS rule. The rule required the highest walk-forward Sharpe after costs, at least 0.05 above your current portfolio's.
+Why it fits your goal
+Your goals need a return of 6.49% a year. Max Sharpe's walk-forward CAGR was 6.67%, against 5.04% for your current portfolio. Its volatility was 8.33% (current 8.59%) and its maximum drawdown was -12.64% (current -15.65%). Min variance, Risk parity and Max diversification returned less than the 6.49% your goals need.
+Trade-offs
+• Trading is heavier: 2.16× turnover a year, against 0.26× for your current portfolio.
+• Its historical CAGR was still below the benchmark's 9.43%, and its Sharpe of 0.52 was below the benchmark's
+0.64.
+How much to trust these results
+These are walk-forward results from 2017 to 2026, re-optimised monthly after costs. They describe history and are not a forecast or a promise of higher returns. Max Sharpe's Sharpe fell from 0.71 in-sample to 0.52 out-of-sample, so the result depends on the period. Expected returns are noisy historical averages, and choosing the best of several methods on the same data adds mild hindsight.
+Decision support for your licensed adviser, not a recommendation to trade.
 Portfolio review Layla Haddad 2026-11-09 · page 6
 Decision support for a licensed adviser. Not investment, tax or legal advice. Figures are historical and come from tested code; they are not forecasts. Demo tool: do not enter real client data in the public version.
  Ticker Weight Value (USD) US-situs Irish-domiciled alternative

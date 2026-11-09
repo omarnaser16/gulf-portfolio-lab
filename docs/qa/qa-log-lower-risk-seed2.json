@@ -1,0 +1,185 @@
+[
+ {
+  "item": "⚙ settings (lr2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (lr2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (lr2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step 4 Optimise (lr2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (lr2 first run)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   679
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Edit & re-run (Lower risk:)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   720,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal dropdown (Lower risk:)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Lower risk:",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   495
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Lower risk:)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   640
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Lower risk: fall less in bad markets; the return may drop",
+  "ok": true,
+  "answer": "Switch to Min variance: return 5.04% to 2.60%, volatility 8.59% to 3.91%.",
+  "size": "1440x900",
+  "evidence": "C9-seed2-goal-lower-risk.png"
+ },
+ {
+  "item": "Goal dropdown (Lower risk, keep)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Lower risk, keep",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   535
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Lower risk, keep)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   640
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Lower risk, keep today's return: less volatility, giving up at most a quarter point of return a year",
+  "ok": true,
+  "answer": "Move part-way towards Max Sharpe (within the 30.00% turnover limit): the full Max Sharpe portfolio isn't recommended because the full portfolio fails the IPS over the full history (Volatility, Max drawdown, Worst stress episode).",
+  "size": "1440x900",
+  "evidence": "C9-seed2-goal-lower-risk-keep.png"
+ },
+ {
+  "item": "Step 6 Report & trades after Optimise (seed 92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": "D13-report-after-lr2.png"
+ }
+]
