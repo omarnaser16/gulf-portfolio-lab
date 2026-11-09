@@ -1,3 +1,5 @@
 # Streamlit Community Cloud installs from this file. "." installs this project (src/gpl)
 # with the dependencies declared in pyproject.toml, so there is one source of truth.
+# The app itself imports gpl from the checkout's src/ first (app/freshness.py), so a push
+# that changes only code is picked up without reinstalling.
 .

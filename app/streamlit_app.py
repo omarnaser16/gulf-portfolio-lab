@@ -6,6 +6,12 @@ inputs, calls the engine, and draws the results. Run with::
     streamlit run app/streamlit_app.py
 """
 
+import freshness
+
+# before the app's own imports: load the code on disk, not modules a long-running process
+# cached before a push (see app/freshness.py)
+freshness.ensure_fresh()
+
 import json
 import os
 from datetime import date

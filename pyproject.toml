@@ -48,5 +48,8 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "NPY"]
 
+[tool.ruff.lint.per-file-ignores]
+"app/streamlit_app.py" = ["E402"]  # freshness.ensure_fresh() runs before the app's imports
+
 [tool.ruff.lint.isort]
 known-first-party = ["gpl", "formatting"]  # formatting = app/formatting.py
