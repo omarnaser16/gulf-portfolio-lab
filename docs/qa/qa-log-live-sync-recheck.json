@@ -1,0 +1,212 @@
+[
+ {
+  "item": "live site runs the new code (1280x800)",
+  "ok": true
+ },
+ {
+  "item": "header select width (1280x800)",
+  "ok": true,
+  "width": 355
+ },
+ {
+  "item": "⚙ settings (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   997,
+   433
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   980,
+   573
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   169,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: LIVE Client step, financial card (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Client: fact-find 100% complete\nEducational project, not inv",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800"
+ },
+ {
+  "item": "Step card 2 Portfolio (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   363,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: LIVE Portfolio step, data notes (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Portfolio: 6 holdings · USD 6,690,000\nEducational project, n",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800"
+ },
+ {
+  "item": "Step card 3 Analyse (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   546,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: LIVE Analyse step (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800"
+ },
+ {
+  "item": "Header benchmark select (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   708,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "LIVE-F3-header-benchmark-open-1280x800.png"
+ },
+ {
+  "item": "Analyse benchmark select (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   927,
+   335
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Pick the policy benchmark on Analyse (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   943,
+   380
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Policy chosen on Analyse shows in the header and the comparison (1280x800)",
+  "ok": true
+ },
+ {
+  "item": "header select shows the full policy name (1280x800)",
+  "ok": true,
+  "cut": []
+ },
+ {
+  "item": "Header back to 60/40 (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   708,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Pick 60/40 in the header (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   725,
+   153
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "60/40 chosen in the header shows on Analyse (1280x800)",
+  "ok": true
+ }
+]

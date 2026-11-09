@@ -905,4 +905,9 @@ days; the work itself was done in a series of sessions.
 - **Concept:** a centred flex child that is wider than its box overflows on both sides, so the
   left of the text disappears; left-aligned, it can only overflow to the right, and it wraps
   first if it may shrink.
+- **Live check:** after the redeploy, real clicks at 1280, 1440 and 1920 px on the live site.
+  Choosing the policy benchmark on Analyse changes the header and the comparison, and the
+  other way round. It found the long benchmark name cut off in the header at 1280 px; the
+  column is wider now. (My first sync check read the wrong element and reported 6 false
+  failures; the screenshots and a fixed re-check show the sync works.)
 - **Status:** 1047 tests: 1046 pass locally; the real-install test runs in CI.

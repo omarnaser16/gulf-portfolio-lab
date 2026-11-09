@@ -57,6 +57,18 @@ width test; it isn't text and is ignored.
 | F3 Benchmark selector | Yes | `F3-header-benchmark-open-*`, `F3-analyse-benchmark-policy-*`, `F3-analyse-*` | Labelled "Benchmark" in the header, and again on Analyse beside the comparison; one setting (an app test changes each and checks the other). The policy benchmark is listed whenever the client's IPS allows one; otherwise the Analyse copy says why it is missing. |
 | F4 Footer text clipped on the left | Fixed (not reproduced) | footers in `F2-*`, `F3-*` | Not reproduced in headless Chrome at any width or zoom (900 to 1920 px, zoom 1.1 to 1.5) locally, nor in the earlier live screenshots at 1280 and 1440. Likely cause: the text sits in a centring flex wrapper, so a column narrower than its text overflows on *both* sides. The text column now shrinks and wraps, left-aligned, so it can only grow downwards. |
 
+**Live site** (https://gulf-portfolio-lab.streamlit.app, after the redeploy; every live page
+had the new "Benchmark" label): at 1280, 1440 and 1920 px, real clicks open the header and
+Analyse benchmark selectors, pick the policy benchmark on Analyse, then pick 60/40 in the
+header. No card, table or footer text is cut (`LIVE-F*`, `qa-log-live-final-fixes.json`:
+51 of 57). The 6 failures were my check, not the app: it read the select's text, but the
+chosen value sits in the select's `<input>`. The screenshots (`LIVE-F3-policy-chosen-*`) show
+the header, guidance line and KPI deltas following the Analyse choice. With the check fixed,
+1280 px passed 19 of 19, both directions included (`qa-log-live-sync-recheck.json`).
+The first live run also found the long "Policy benchmark (fits the IPS)" cut off in the
+header select at 1280 px; the header's benchmark column is now wider (355 px at 1280) and the
+re-run found nothing cut.
+
 Found by this QA and fixed:
 - **Step navigation.** Right after a demo client loaded, a step-card click could light the card
   but leave the old page showing. The step is now app state, and the hidden tabs are rebuilt
