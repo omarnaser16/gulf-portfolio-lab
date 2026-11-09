@@ -160,6 +160,76 @@ def equity_chart(
     return _base_layout(fig, title, "Wealth (nominal USD)", ".2f")
 
 
+# label side -> (xanchor, yanchor, x shift px, y shift px) for a dot's label annotation
+_LABEL_SIDES = {
+    "top": ("center", "bottom", 0, 9),
+    "bottom": ("center", "top", 0, -9),
+    "right": ("left", "middle", 10, 0),
+    "left": ("right", "middle", -10, 0),
+    "top right": ("left", "bottom", 6, 6),
+    "top left": ("right", "bottom", -6, 6),
+    "bottom right": ("left", "top", 6, -6),
+    "bottom left": ("right", "top", -6, -6),
+}
+# assumed plot area in pixels (the narrowest card it is shown in) and 11 px label text
+_PLOT_W, _PLOT_H, _CHAR_W, _LINE_H, _DOT_R = 420, 310, 6.2, 14, 8
+
+
+def label_boxes(
+    points: pd.DataFrame, sides: dict[str, str], xrange: tuple, yrange: tuple
+) -> dict[str, tuple[float, float, float, float]]:
+    """Each label's box (x0, x1, y0, y1) in data units, for the given sides."""
+    px = (xrange[1] - xrange[0]) / _PLOT_W  # data units per pixel
+    py = (yrange[1] - yrange[0]) / _PLOT_H
+    boxes = {}
+    for name, side in sides.items():
+        x, y = float(points.at[name, "volatility"]), float(points.at[name, "cagr"])
+        xanchor, yanchor, dx, dy = _LABEL_SIDES[side]
+        w, h = len(name) * _CHAR_W * px, _LINE_H * py
+        left = x + dx * px - {"left": 0, "center": w / 2, "right": w}[xanchor]
+        bottom = y + dy * py - {"bottom": 0, "middle": h / 2, "top": h}[yanchor]
+        boxes[name] = (left, left + w, bottom, bottom + h)
+    return boxes
+
+
+def place_labels(points: pd.DataFrame, xrange: tuple, yrange: tuple) -> dict[str, str]:
+    """A side for each dot's label that covers no other dot, no earlier label and stays inside
+    the axes; if none is free, the side with the fewest clashes.
+
+    Greedy, from the most crowded dot outwards; label sizes are estimated from the axis scale.
+    """
+    px = (xrange[1] - xrange[0]) / _PLOT_W
+    py = (yrange[1] - yrange[0]) / _PLOT_H
+    rx, ry = _DOT_R * px, _DOT_R * py
+    dots = {str(n): (float(r["volatility"]), float(r["cagr"])) for n, r in points.iterrows()}
+
+    def crowding(name: str) -> int:
+        x, y = dots[name]
+        return sum(abs(x - a) < 40 * px and abs(y - b) < 30 * py for a, b in dots.values())
+
+    placed: dict[str, tuple[float, float, float, float]] = {}
+    sides: dict[str, str] = {}
+    for name in sorted(dots, key=crowding, reverse=True):
+        best, best_clash = "top", None
+        for side in _LABEL_SIDES:
+            x0, x1, y0, y1 = label_boxes(points.rename(index=str), {name: side}, xrange,
+                                         yrange)[name]  # fmt: skip
+            clash = sum(
+                x0 - rx < a < x1 + rx and y0 - ry < b < y1 + ry
+                for other, (a, b) in dots.items() if other != name
+            ) + sum(
+                x0 < q1 and q0 < x1 and y0 < r1 and r0 < y1
+                for q0, q1, r0, r1 in placed.values()
+            ) + (x0 < xrange[0] or x1 > xrange[1] or y0 < yrange[0] or y1 > yrange[1])  # fmt: skip
+            if best_clash is None or clash < best_clash:
+                best, best_clash = side, clash
+            if clash == 0:
+                break
+        sides[name] = best
+        placed[name] = label_boxes(points.rename(index=str), {name: best}, xrange, yrange)[name]
+    return sides
+
+
 def risk_return_chart(
     points: pd.DataFrame,
     highlight: str | None = None,
@@ -174,26 +244,12 @@ def risk_return_chart(
     """
     fig = go.Figure()
     xs, ys = points["volatility"].astype(float), points["cagr"].astype(float)
-    # label placement: a dot near another (a label's width on the x axis, about 18% of the axis
-    # span and at least 1.2 pp; a label's height on the y axis) takes the next free side, so
-    # labels don't sit on top of each other
-    near_x = max((xs.max() - xs.min() + 0.02) * 0.18, 0.012)
-    near_y = max((ys.max() - ys.min() + 0.01) * 0.12, 0.004)
-    sides = [
-        "top center",
-        "bottom center",
-        "middle right",
-        "middle left",
-        "top right",
-        "bottom left",
-    ]
-    placed: list[tuple[float, float, str]] = []
-    position: dict[str, str] = {}
-    for name in points.sort_values("volatility").index:
-        x, y = float(xs[name]), float(ys[name])
-        taken = {pos for (px, py, pos) in placed if abs(px - x) < near_x and abs(py - y) < near_y}
-        position[str(name)] = next((pos for pos in sides if pos not in taken), "top center")
-        placed.append((x, y, position[str(name)]))
+    # room around the dots so their labels are never clipped at the edges
+    xpad = max((xs.max() - xs.min()) * 0.15, 0.01)
+    ypad = max((ys.max() - ys.min()) * 0.15, 0.005)
+    xrange = (xs.min() - xpad, xs.max() + xpad)
+    yrange = (ys.min() - ypad, ys.max() + 2 * ypad)
+    sides = place_labels(points, xrange, yrange)
     for name, row in points.iterrows():
         name = str(name)
         if name == highlight:
@@ -208,20 +264,24 @@ def risk_return_chart(
             go.Scatter(
                 x=[float(row["volatility"])],
                 y=[float(row["cagr"])],
-                mode="markers+text",
+                mode="markers",
                 name=name,
-                text=[name],
-                textposition=position[name],
-                textfont={
-                    "size": 11,
-                    "color": TEXT_PRIMARY if name == highlight else TEXT_SECONDARY,
-                },
                 marker={"color": colour, "size": size, "symbol": symbol,
                         "line": {"color": SURFACE, "width": 1.5}},
                 hovertemplate=f"{name}<br>volatility %{{x:.2%}}<br>return %{{y:.2%}}"
                 "<extra></extra>",
                 showlegend=False,
             )
+        )  # fmt: skip
+    # labels are annotations, drawn above every dot, offset in pixels to the chosen side
+    for name, row in points.iterrows():
+        side = sides[str(name)]
+        xanchor, yanchor, dx, dy = _LABEL_SIDES[side]
+        fig.add_annotation(
+            x=float(row["volatility"]), y=float(row["cagr"]), text=str(name), name=str(name),
+            showarrow=False, xanchor=xanchor, yanchor=yanchor, xshift=dx, yshift=dy,
+            font={"size": 11,
+                  "color": TEXT_PRIMARY if str(name) == highlight else TEXT_SECONDARY},
         )  # fmt: skip
     fig.update_layout(
         template="gpl_light",
@@ -231,16 +291,12 @@ def risk_return_chart(
         margin={"l": 60, "r": 20, "t": 40 if title else 20, "b": 50},
         height=380,
     )
-    # room around the dots so their labels are never clipped at the edges
-    xpad = max((xs.max() - xs.min()) * 0.15, 0.01)
-    ypad = max((ys.max() - ys.min()) * 0.15, 0.005)
     fig.update_xaxes(
         title="Volatility (a year, lower is calmer)", tickformat=PCT, gridcolor=GRID,
-        range=[xs.min() - xpad, xs.max() + xpad],
+        range=list(xrange),
     )  # fmt: skip
     fig.update_yaxes(
-        title="Return (CAGR, a year)", tickformat=PCT, gridcolor=GRID,
-        range=[ys.min() - ypad, ys.max() + 2 * ypad],
+        title="Return (CAGR, a year)", tickformat=PCT, gridcolor=GRID, range=list(yrange),
     )  # fmt: skip
     return fig
 

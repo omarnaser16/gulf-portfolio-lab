@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from gpl import plots
 from gpl.plots import (
     SERIES_COLORS,
     allocation_chart,
@@ -204,13 +205,33 @@ def test_equity_chart_can_hide_series_in_the_legend() -> None:
     assert [t.visible for t in fig.data] == [True, True, "legendonly"]
 
 
-def test_risk_return_labels_of_nearby_dots_take_different_sides() -> None:
-    from gpl.plots import risk_return_chart
+def test_risk_return_labels_cover_no_dot_and_no_other_label() -> None:
+    from gpl.plots import label_boxes, risk_return_chart
 
+    # the seed-2 demo's crowded chart, where labels used to sit on neighbouring dots
     pts = pd.DataFrame(
-        {"volatility": [0.0833, 0.0902, 0.0859, 0.0863], "cagr": [0.0667, 0.0690, 0.0504, 0.0494]},
-        index=["Max Sharpe", "Target volatility", "Current", "Re-weight + swaps"],
-    )
-    by = {t.name: t.textposition for t in risk_return_chart(pts, "Max Sharpe").data}
-    assert by["Max Sharpe"] != by["Target volatility"]
-    assert by["Current"] != by["Re-weight + swaps"]
+        {
+            "volatility": [0.0833, 0.0902, 0.0859, 0.0863, 0.0391, 0.0524, 0.0468, 0.1128],
+            "cagr": [0.0667, 0.0690, 0.0504, 0.0494, 0.0260, 0.0437, 0.0391, 0.0943],
+        },
+        index=["Max Sharpe", "Target volatility", "Current", "Re-weight + swaps",
+               "Min variance", "Max diversification", "Risk parity", "Benchmark"],
+    )  # fmt: skip
+    fig = risk_return_chart(pts, "Max Sharpe")
+    sides = {}
+    for a in fig.layout.annotations:  # labels are annotations, drawn above every dot
+        sides[a.name] = next(
+            k for k, v in plots._LABEL_SIDES.items()
+            if (v[0], v[1], v[2], v[3]) == (a.xanchor, a.yanchor, a.xshift, a.yshift)
+        )  # fmt: skip
+    assert set(sides) == set(pts.index)
+    xr, yr = tuple(fig.layout.xaxis.range), tuple(fig.layout.yaxis.range)
+    boxes = label_boxes(pts, sides, xr, yr)
+    for name, (x0, x1, y0, y1) in boxes.items():
+        assert xr[0] <= x0 and x1 <= xr[1] and yr[0] <= y0 and y1 <= yr[1], name
+        for other, (vol, ret) in pts.iterrows():
+            if other != name:
+                assert not (x0 < vol < x1 and y0 < ret < y1), (name, other)
+        for other, (q0, q1, r0, r1) in boxes.items():
+            if other != name:
+                assert not (x0 < q1 and q0 < x1 and y0 < r1 and r0 < y1), (name, other)
