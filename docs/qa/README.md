@@ -42,6 +42,21 @@ How it was checked:
 | E19 Sticky bar | Yes | `E20-*` | |
 | E20 Three widths | Yes | `E20-*` (1280, 1440, 1920) | Optimise results seen at 1280 and 1440 only. |
 
+## Final fixes (same day): cards, data notes, benchmark, footer
+
+Checked at 1280×800, 1440×900 and 1920×1080 on seed 92713. A check flags any metric card,
+table cell, header or footer text whose content is wider than its box or beyond the screen
+(`qa-log-final-fixes.json`, 51 of 51 passed). The ⚙ icon's font ligature always trips the
+width test; it isn't text and is ignored.
+
+| Item | Fixed? | Evidence | Notes |
+|---|---|---|---|
+| F1 Client metric cards cut ("17,…", "Net worth (US…") | Yes | `F1-client-metrics-before-1280x800.png`, `F1-client-metrics-*` | 2 × 2 cards, compact values (`$17.95m`, `35.41%`, `4.0 months`), the exact amount in the (?) tooltip. Labels and values in *every* metric card now wrap instead of ending in "…"; KPI, Monte Carlo and Regime cards checked too. Percentages keep two decimals (project rule), so `35.41%`, not `35.4%`. |
+| F1 Thousands separators in money inputs | Caption under each | `F1-client-metrics-*` | Streamlit's number input only takes a numeric printf format (no `%,d`), so each money input shows its amount below it (`$7,393,000`). |
+| F2 Data notes names, date column | Yes | `F2-data-notes-*` | Name from the same source as the holdings table (the quote's name, else config, else the ticker); dates and day counts never wrap. |
+| F3 Benchmark selector | Yes | `F3-header-benchmark-open-*`, `F3-analyse-benchmark-policy-*`, `F3-analyse-*` | Labelled "Benchmark" in the header, and again on Analyse beside the comparison; one setting (an app test changes each and checks the other). The policy benchmark is listed whenever the client's IPS allows one; otherwise the Analyse copy says why it is missing. |
+| F4 Footer text clipped on the left | Fixed (not reproduced) | footers in `F2-*`, `F3-*` | Not reproduced in headless Chrome at any width or zoom (900 to 1920 px, zoom 1.1 to 1.5) locally, nor in the earlier live screenshots at 1280 and 1440. Likely cause: the text sits in a centring flex wrapper, so a column narrower than its text overflows on *both* sides. The text column now shrinks and wraps, left-aligned, so it can only grow downwards. |
+
 Found by this QA and fixed:
 - **Step navigation.** Right after a demo client loaded, a step-card click could light the card
   but leave the old page showing. The step is now app state, and the hidden tabs are rebuilt

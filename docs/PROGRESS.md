@@ -889,3 +889,20 @@ days; the work itself was done in a series of sessions.
   cards, 1440 and 1280 px, seeds 92713 and 2), with screenshots in docs/qa.
 - **Next step:** watch the next code-only push go live without a reboot (the freshness fix).
 - **Status:** 1043 tests: 1042 pass locally; the real-install test runs in CI.
+
+### 9 Nov 2026 (evening): last layout fixes before the CV
+- **Built (Claude Code, at my direction):** the Client step's four money cards were cut off
+  ("17,…"); they are now 2 × 2 with compact values ($17.95m), the exact amount in the tooltip,
+  and every metric card in the app wraps instead of cutting. Money inputs show their amount with
+  thousands separators underneath (Streamlit's number input can't show separators itself).
+  Data notes now name every ticker, and the date column doesn't wrap. The benchmark selector is
+  labelled "Benchmark" in the header, and the same setting can be changed on Analyse, next to
+  the comparison. The footer text column can now only wrap downwards, never overflow to the left.
+- **Checked:** headless Chrome at 1280, 1440 and 1920 px: no metric card, table cell or footer
+  text cut (51 of 51 checks), screenshots in docs/qa. I couldn't reproduce the footer clipping
+  I saw; the fix targets the likely cause (a centring wrapper), so I'll check it again on my
+  own screen.
+- **Concept:** a centred flex child that is wider than its box overflows on both sides, so the
+  left of the text disappears; left-aligned, it can only overflow to the right, and it wraps
+  first if it may shrink.
+- **Status:** 1047 tests: 1046 pass locally; the real-install test runs in CI.

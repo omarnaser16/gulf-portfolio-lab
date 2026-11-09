@@ -1,0 +1,686 @@
+[
+ {
+  "item": "⚙ settings (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   997,
+   433
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   980,
+   573
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   169,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Client step, financial card (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Client: fact-find 100% complete\nEducational project, not inv",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Step card 2 Portfolio (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   363,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Portfolio step, data notes (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Portfolio: 6 holdings · USD 6,690,000\nEducational project, n",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Step card 3 Analyse (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   546,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse step, KPI cards (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Monte Carlo (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   332,
+   400
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse › Monte Carlo metric cards, 10 visible (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Regime (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   561,
+   400
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse › Regime metric cards, 10 visible (1280x800)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 40,
+   "right": 718,
+   "barLeft": 0,
+   "barRight": 1280,
+   "sw": 678,
+   "cw": 678
+  },
+  "size": "1280x800",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Performance (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   139,
+   400
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Header benchmark select (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   772,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "F3-header-benchmark-open-after-1280x800.png"
+ },
+ {
+  "item": "Analyse benchmark select (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   927,
+   335
+  ],
+  "size": "1280x800",
+  "evidence": "F3-analyse-benchmark-open-after-1280x800.png"
+ },
+ {
+  "item": "Policy benchmark offered (1280x800)",
+  "ok": true,
+  "options": "Policy benchmark (fits the IPS)"
+ },
+ {
+  "item": "⚙ settings (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   249,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Client step, financial card (1440x900)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Client: fact-find 100% complete\nEducational project, not inv",
+   "left": 120,
+   "right": 850,
+   "barLeft": 0,
+   "barRight": 1440,
+   "sw": 730,
+   "cw": 730
+  },
+  "size": "1440x900",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Step card 2 Portfolio (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   443,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Portfolio step, data notes (1440x900)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Portfolio: 6 holdings · USD 6,690,000\nEducational project, n",
+   "left": 120,
+   "right": 850,
+   "barLeft": 0,
+   "barRight": 1440,
+   "sw": 730,
+   "cw": 730
+  },
+  "size": "1440x900",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Step card 3 Analyse (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   626,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse step, KPI cards (1440x900)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 120,
+   "right": 850,
+   "barLeft": 0,
+   "barRight": 1440,
+   "sw": 730,
+   "cw": 730
+  },
+  "size": "1440x900",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Monte Carlo (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   412,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse › Monte Carlo metric cards, 10 visible (1440x900)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 120,
+   "right": 850,
+   "barLeft": 0,
+   "barRight": 1440,
+   "sw": 730,
+   "cw": 730
+  },
+  "size": "1440x900",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Regime (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   641,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse › Regime metric cards, 10 visible (1440x900)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 120,
+   "right": 850,
+   "barLeft": 0,
+   "barRight": 1440,
+   "sw": 730,
+   "cw": 730
+  },
+  "size": "1440x900",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Performance (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   219,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Header benchmark select (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   852,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "F3-header-benchmark-open-after-1440x900.png"
+ },
+ {
+  "item": "Analyse benchmark select (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   1007,
+   335
+  ],
+  "size": "1440x900",
+  "evidence": "F3-analyse-benchmark-open-after-1440x900.png"
+ },
+ {
+  "item": "Policy benchmark offered (1440x900)",
+  "ok": true,
+  "options": "Policy benchmark (fits the IPS)"
+ },
+ {
+  "item": "⚙ settings (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1481,
+   108
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1645,
+   433
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1628,
+   573
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   489,
+   227
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Client step, financial card (1920x1080)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Client: fact-find 100% complete\nEducational project, not inv",
+   "left": 360,
+   "right": 1129,
+   "barLeft": 0,
+   "barRight": 1920,
+   "sw": 769,
+   "cw": 769
+  },
+  "size": "1920x1080",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Step card 2 Portfolio (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   683,
+   227
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Portfolio step, data notes (1920x1080)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Portfolio: 6 holdings · USD 6,690,000\nEducational project, n",
+   "left": 360,
+   "right": 1129,
+   "barLeft": 0,
+   "barRight": 1920,
+   "sw": 769,
+   "cw": 769
+  },
+  "size": "1920x1080",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Step card 3 Analyse (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   866,
+   227
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse step, KPI cards (1920x1080)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 360,
+   "right": 1129,
+   "barLeft": 0,
+   "barRight": 1920,
+   "sw": 769,
+   "cw": 769
+  },
+  "size": "1920x1080",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Monte Carlo (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   652,
+   540
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse › Monte Carlo metric cards, 10 visible (1920x1080)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 360,
+   "right": 1129,
+   "barLeft": 0,
+   "barRight": 1920,
+   "sw": 769,
+   "cw": 769
+  },
+  "size": "1920x1080",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Regime (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   881,
+   540
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "truncation check: Analyse › Regime metric cards, 10 visible (1920x1080)",
+  "ok": true,
+  "found": [],
+  "footer": {
+   "text": "Analyse: analysis ready\nEducational project, not investment ",
+   "left": 360,
+   "right": 1129,
+   "barLeft": 0,
+   "barRight": 1920,
+   "sw": 769,
+   "cw": 769
+  },
+  "size": "1920x1080",
+  "note": "the ⚙ icon's font ligature reports scrollWidth > clientWidth; not text, ignored"
+ },
+ {
+  "item": "Analyse sub-tab Performance (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   459,
+   540
+  ],
+  "size": "1920x1080",
+  "evidence": ""
+ },
+ {
+  "item": "Header benchmark select (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   1092,
+   108
+  ],
+  "size": "1920x1080",
+  "evidence": "F3-header-benchmark-open-after-1920x1080.png"
+ },
+ {
+  "item": "Analyse benchmark select (1920x1080)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   1247,
+   335
+  ],
+  "size": "1920x1080",
+  "evidence": "F3-analyse-benchmark-open-after-1920x1080.png"
+ },
+ {
+  "item": "Policy benchmark offered (1920x1080)",
+  "ok": true,
+  "options": "Policy benchmark (fits the IPS)"
+ }
+]
