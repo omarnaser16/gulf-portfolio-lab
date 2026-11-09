@@ -377,8 +377,8 @@ def render_holdings(
             on_change=_apply_edits,
             args=(key, [r["ticker"] for r in rows], mode_col),
             column_config={
-                "_index": st.column_config.TextColumn("Ticker", width=82),
-                "Name": st.column_config.TextColumn(width=280),
+                "_index": st.column_config.TextColumn("Ticker", width=76),
+                "Name": st.column_config.TextColumn(width=340),  # long fund names in full
                 "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=140),
                 mode_col: st.column_config.NumberColumn(
                     EDIT_LABEL[mode_col],
