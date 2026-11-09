@@ -378,7 +378,7 @@ def render_holdings(
             args=(key, [r["ticker"] for r in rows], mode_col),
             column_config={
                 "_index": st.column_config.TextColumn("Ticker", width=76),
-                "Name": st.column_config.TextColumn(width=340),  # long fund names in full
+                "Name": st.column_config.TextColumn(width=356),  # long fund names in full
                 "Group": st.column_config.SelectboxColumn(options=GROUPS, required=True, width=140),
                 mode_col: st.column_config.NumberColumn(
                     EDIT_LABEL[mode_col],
@@ -389,11 +389,11 @@ def render_holdings(
                 ),
                 "Weight": st.column_config.NumberColumn(format="%.2f%%", width=66),
                 "Remove": st.column_config.CheckboxColumn(
-                    "✕", width=34, help="Tick to remove this holding."
+                    "✕", width=50, help="Tick to remove this holding."
                 ),
-                "Price (local)": st.column_config.NumberColumn(format="%.2f", width=100),
+                "Price (local)": st.column_config.NumberColumn(format="%.2f", width=96),
                 "Ccy": st.column_config.TextColumn(width=50),
-                "Price (USD)": st.column_config.NumberColumn(format="%.2f", width=100),
+                "Price (USD)": st.column_config.NumberColumn(format="%.2f", width=96),
             },
             disabled=READ_ONLY_COLUMNS,
         )
