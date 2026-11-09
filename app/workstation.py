@@ -495,8 +495,10 @@ def set_holdings(rows: list[dict]) -> None:
 def answer_sentence(report: Mapping) -> str:
     """The Optimise result in one sentence, from the report's own walk-forward figures.
 
-    E.g. "Switch to Max Sharpe: return 5.04% to 6.67%, volatility 8.59% to 8.33%." or "Keep
-    your current portfolio: no method beat it after costs."
+    E.g. "Switch to Max Sharpe: return 5.04% to 6.67%, volatility 8.59% to 8.33%.", "Keep
+    your current portfolio: no method beat it after costs." or, when only the closest compliant
+    move is suggested, "Move part-way towards Max Sharpe (...): the full Max Sharpe portfolio
+    isn't recommended because ...".
     """
     rec = report["recommendation"]
     rows = report["walk_forward_after_costs"]
@@ -510,6 +512,15 @@ def answer_sentence(report: Mapping) -> str:
     if choice not in rows:  # keep
         return "Keep your current portfolio: no method beat it after costs."
     now, new = rows["Current"], rows[choice]
+    if status == "compliant_move":
+        limit = report.get("max_turnover")
+        return (
+            f"Move part-way towards {choice}"
+            + (f" (within the {limit} turnover limit)" if limit else "")
+            + f": the full {choice} portfolio isn't recommended because "
+            + "; ".join(rec.get("full_move_not_recommended_because", ["it fails the IPS"]))
+            + "."
+        )
     lead = "Next best: switch to" if status == "next_best" else "Switch to"
     return (
         f"{lead} {choice}: return {now['cagr']} to {new['cagr']}, volatility "

@@ -125,3 +125,24 @@ def test_improve_found_says_when_the_current_portfolio_breaks_the_ips() -> None:
     report["suitability_gate"]["current_passes_ips"] = True
     s = result_summary(report, {"SPY": 0.45, "AGG": 0.55}, {"SPY": 0.30, "AGG": 0.70})
     assert s.found.startswith("Target volatility did better")
+
+
+def test_compliant_move_says_the_full_move_is_not_recommended() -> None:
+    why = "the full portfolio fails the IPS over the full history (Volatility)"
+    report = {
+        "mode": "improve",
+        "goal": "Maximise risk-adjusted return (Sharpe)",
+        "max_turnover": "30.00%",
+        "walk_forward_after_costs": {"Current": {}, "Max Sharpe": {}, "Benchmark": {}},
+        "backtest_period": "2017-05-01 to 2026-11-05",
+        "recommendation": {"choice": "Max Sharpe", "status": "compliant_move",
+                           "reasons": ["Max Sharpe ranks first…"],
+                           "full_move_not_recommended_because": [why]},
+        "suitability_gate": {"current_passes_ips": True},
+    }  # fmt: skip
+    s = result_summary(report, {"SPY": 0.45, "AGG": 0.55}, {"SPY": 0.50, "AGG": 0.50})
+    assert s.found == (
+        "Max Sharpe did better under the rule for your goal, but the full move fails the IPS: "
+        f"{why}."
+    )
+    assert s.recommend.startswith("Move part-way towards Max Sharpe: the closest compliant move")

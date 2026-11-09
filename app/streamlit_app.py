@@ -1496,7 +1496,11 @@ def run_with_progress(title: str, work):
 
 def proposal_label(choice: str, status: str) -> str:
     """How the proposed portfolio is named elsewhere (trades, report, Analyst page)."""
-    word = {"closest_fails": "closest, fails the IPS", "next_best": "next best option"}
+    word = {
+        "closest_fails": "closest, fails the IPS",
+        "next_best": "next best option",
+        "compliant_move": "compliant move only",
+    }
     return f"{choice} ({word.get(status, 'recommended')})"
 
 
@@ -1706,6 +1710,8 @@ def _results_section(result: dict, ai_ok: bool) -> None:
             "cash-like holding) or review the IPS with the client."
         )
     _answer_card(report)
+    if rec.get("return_warning"):  # a lower-risk goal's pick misses the required return
+        st.warning(rec["return_warning"])
     if st.session_state.pop("scroll_to_result", False):
         st.iframe(SCROLL_JS, height=1)  # our own constant script, not user content
     build = report.get("mode") == "build"
@@ -1821,7 +1827,8 @@ def _results_section(result: dict, ai_ok: bool) -> None:
         columns["passes_ips"] = "Passes IPS?"
     rows = rows.reindex(columns=list(columns)).rename(columns=columns)
     rows = rows.astype(object).fillna("–")  # columns a row doesn't have (e.g. Benchmark)
-    mark = "≈ " if rec["status"] == "closest_fails" else "★ "  # ≈: closest, still fails
+    # ≈: closest, still fails; ◐: only the compliant move towards it is suggested
+    mark = {"closest_fails": "≈ ", "compliant_move": "◐ "}.get(rec["status"], "★ ")
     rows.index = [(mark if n == rec["choice"] else "") + n for n in rows.index]
     with st.expander(
         "**Summary: what we did, found, recommend and what changes** &nbsp; :gray[The full "
@@ -2104,6 +2111,11 @@ def _optimise_guidance() -> str:
         return f"Keep {whose} current portfolio: no method did enough better under the rule."
     if rec["status"] == "next_best":
         return f"No build beat {bench_name} reliably; {rec['choice']} is the next best option."
+    if rec["status"] == "compliant_move":
+        return (
+            f"Move part-way towards {rec['choice']}: the full move fails the IPS, so only the "
+            "closest compliant move is suggested."
+        )
     if mode == BUILD:
         return f"{rec['choice']} beat {bench_name} reliably after costs and fits the IPS."
     fits = " and fits the IPS" if client_ips() is not None else ""
@@ -3190,7 +3202,13 @@ def report_recommendation() -> tuple[dict | None, dict | None]:
             f"limit ({lim['turnover']} traded). A full restructure to the {rec['choice']} target "
             f"would trade {full['turnover']}"
             + (f" (estimated cost USD {cost})" if cost else "")
-            + "; your adviser can choose it instead."
+            + (
+                "; it is not recommended because "
+                + "; ".join(report["recommendation"].get("full_move_not_recommended_because", []))
+                + "."
+                if rec["status"] == "compliant_move"
+                else "; your adviser can choose it instead."
+            )
         )
     if rec["choice"] in run.equity and "Benchmark" in run.equity:
         daily = run.equity[[rec["choice"], "Benchmark"]].pct_change().dropna()

@@ -95,6 +95,16 @@ def test_answer_sentence_switch_keep_and_closest() -> None:
         "Keep your current portfolio: no method beat it after costs."
     )
     assert ws.answer_sentence(report("Max Sharpe", "next_best")).startswith("Next best: switch")
+    part = report("Max Sharpe", "compliant_move")
+    part["max_turnover"] = "30.00%"
+    part["recommendation"]["full_move_not_recommended_because"] = [
+        "the full portfolio fails the IPS over the full history (Volatility)"
+    ]
+    assert ws.answer_sentence(part) == (
+        "Move part-way towards Max Sharpe (within the 30.00% turnover limit): the full Max "
+        "Sharpe portfolio isn't recommended because the full portfolio fails the IPS over the "
+        "full history (Volatility)."
+    )
     assert ws.answer_sentence(report("Keep your current portfolio", "closest_fails")).startswith(
         "No portfolio meets every IPS rule: your current portfolio is the closest"
     )

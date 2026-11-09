@@ -215,6 +215,19 @@ def test_recommendation_and_trade_sections() -> None:
     }
     rec = recommendation_section(closest, latest)
     assert "not as a recommendation" in rec["headline"]
+    partway = {
+        **report,
+        "recommendation": {
+            **report["recommendation"],
+            "status": "compliant_move",
+            "full_move_not_recommended_because": ["the full portfolio fails the IPS (Volatility)"],
+        },
+    }
+    assert recommendation_section(partway, latest)["headline"] == (
+        "We suggest moving part-way towards the Min variance portfolio, as far as your "
+        "investment policy allows. A full move to Min variance is not recommended: the full "
+        "portfolio fails the IPS (Volatility)."
+    )
     assert rec["failed"] == ["Volatility: 13%, 1 pp beyond"]
     trades = pd.DataFrame(
         {

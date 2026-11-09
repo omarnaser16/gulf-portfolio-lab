@@ -161,6 +161,11 @@ def result_summary(
         )
     elif status == "recommended":
         found = f"{choice} did better than your current portfolio under the rule for your goal."
+    elif status == "compliant_move":
+        found = (
+            f"{choice} did better under the rule for your goal, but the full move fails the "
+            "IPS: " + "; ".join(rec.get("full_move_not_recommended_because", [])) + "."
+        )
     else:
         found = "None of the methods did enough better than your current portfolio."
 
@@ -174,6 +179,11 @@ def result_summary(
         recommend = "Keep your current portfolio. " + main_reason(reasons)
     elif status == "next_best":
         recommend = reasons[1] if len(reasons) > 1 else f"{choice} is the next best option."
+    elif status == "compliant_move":
+        recommend = (
+            f"Move part-way towards {choice}: the closest compliant move, which passes every "
+            "IPS rule. The full move is not recommended."
+        )
     else:
         recommend = f"Move to {choice}. " + (reasons[0] if reasons else "")
 

@@ -112,7 +112,11 @@ client's licensed adviser. Only portfolios that pass every IPS rule can be recom
 optimisation's recommendation status is "closest_fails", say plainly that no method meets the \
 IPS, name the closest portfolio and list each failed rule with the amount from the \
 suitability_gate, and never present it as suitable. If the current portfolio fails the IPS, say \
-so.
+so. If the status is "compliant_move", say that only the closest compliant move towards the \
+method is suggested, quote full_move_not_recommended_because, and never call the full \
+portfolio recommended. If the recommendation has a return_warning, state it. The IPS checks \
+in the report all use the full history: turnover_limited_move is today's step, \
+full_restructure_to_target is the method's full target; walk-forward results are separate.
 
 Fund domicile: for a non-US client, call check_domicile and include a short "### Fund \
 domicile" section: the US-situs share, the illustrative estate-tax figure and the Irish \

@@ -430,6 +430,13 @@ def recommendation_section(report: dict, latest: pd.DataFrame) -> dict:
         )
     elif keep:
         headline = "We recommend keeping your current portfolio."
+    elif rec["status"] == "compliant_move":
+        headline = (
+            f"We suggest moving part-way towards the {choice} portfolio, as far as your "
+            f"investment policy allows. A full move to {choice} is not recommended: "
+            + "; ".join(rec.get("full_move_not_recommended_because", ["it fails the IPS"]))
+            + "."
+        )
     else:
         headline = f"We recommend moving to the {choice} portfolio."
     rows = report["walk_forward_after_costs"]
