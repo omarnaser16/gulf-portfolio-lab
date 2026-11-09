@@ -824,3 +824,49 @@ days; the work itself was done in a series of sessions.
   one line; the sub-view pills sit under the page title, not to its right; the client report is
   two clicks (prepare, then download).
 - **Status:** 1034 tests; 1033 pass locally, the real-install test runs in CI.
+
+## 2026-11-09 — Final polish before my CV: clickable header, no chatbot, sensible Optimise
+- **Found:** on Streamlit Cloud the header buttons couldn't be clicked: Streamlit's own toolbar
+  (fixed over the top 60 px) sat on top of them. Reproduced locally with the toolbar shown; the
+  header now starts and sticks below it. QA found a second blocker: the "Demo client loaded"
+  toast covered the ⚙ button for a few seconds; toasts now appear bottom right.
+- **Decided:** this is not a chatbot. Removed the AI analyst tab (chat, follow-ups, About me),
+  the plain-English goals box and "Ask the analyst". The one AI feature left is *Explain this
+  recommendation (AI)*: one fixed request, no user text, a short memo that goes into the client
+  report; without an API key the app works and says so.
+- **Built by Claude Code:**
+  - Optimise: a goal dropdown with one-line explanations, starting from the risk score (1-2 lower
+    risk, 3 best risk-adjusted, 4-5 beat the benchmark); a new goal *lower risk, keep today's
+    return* (at most 0.25 pp a year less return); a plain explanation above a pink *Optimise
+    portfolio* button; turnover and swaps under Advanced settings.
+  - Suitability both ways: a candidate is *too cautious for this client* if its return is below
+    the IPS required return or, for risk scores 4-5, its volatility is under half the IPS cap,
+    unless the goal is a lower-risk one. On demo seed 92713 (5/5), "Beat the benchmark" no longer
+    drifts towards Min variance; choosing "Lower risk" still allows it.
+  - Swaps: "Re-weight + swaps" already followed the goal's own method; on seed 92713 with
+    "reduce risk" no swap ever fired, so it was Min variance twice. Now it's shown once, noted.
+  - Results: one sentence (switch with return and volatility before and after, or keep), a
+    risk-vs-return chart, growth of $1 with only current, benchmark and recommended visible, a
+    drawdown chart and each candidate with a badge and a reason.
+  - Report & trades: "No recommendation yet" before Optimise; "No trades needed" when kept; one
+    money formatter (no "USD -0"); readable tables with explicit widths and split prices.
+- **Checked (docs/qa/):** real mouse clicks at each control's centre with elementFromPoint
+  checks, at 1440×900 and 1280×800 on seeds 92713 and 2; every goal on seed 92713; the AI memo
+  (real API call) and its text in the downloaded client report; every step at 1280, 1440 and
+  1920 px.
+- **Found by the QA, fixed:** once, right after loading a demo client, clicking a step card lit
+  the card but left the page on the old step, and clicking it again did nothing. Streamlit only
+  sends a widget a new value on the run where it changed; if that run is cut short, the browser
+  never hears about it. The step is now our own state and the hidden tabs are rebuilt, open at
+  that step, whenever it changes. The QA now checks the page content as well as the card.
+  It also found chart labels sitting on neighbouring dots and table text cut off at 1280 px;
+  both fixed and re-shot.
+- **Concepts:** suitability works both ways (too risky *and* too cautious for the client);
+  walk-forward vs full-history checks can disagree. On seed 2 the AI memo itself flagged that
+  Max Sharpe passes the IPS in the walk-forward test but a full move to it fails volatility,
+  drawdown and stress over the full history, so the app offers the closest compliant move.
+- **Open questions:** should the recommendation require passing both the walk-forward and the
+  full-history IPS checks? The "Manage app" badge only exists on Streamlit Cloud, so its
+  clearance is checked by padding, not seen.
+- **Next step:** check the deployed app after the push.
+- **Status:** 1030 tests: 1029 pass locally; the real-install test runs in CI.

@@ -1,0 +1,135 @@
+[
+ {
+  "item": "⚙ settings (seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step 4 Optimise (seed 2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (seed 2, default goal)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   679
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise seed 2 (default goal)",
+  "ok": true,
+  "answer": "Switch to Max Sharpe: return 5.04% to 6.67%, volatility 8.59% to 8.33%.",
+  "evidence": "C11-results-seed2.png"
+ },
+ {
+  "item": "Explain this recommendation (AI)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   706,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "AI memo appears",
+  "ok": true,
+  "evidence": "B5-ai-memo.png"
+ },
+ {
+  "item": "Step 6 Report & trades after Optimise (seed 2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": "D13-report-after-optimise-seed2.png"
+ },
+ {
+  "item": "Prepare client report",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1102,
+   636
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Download client report",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1102,
+   630
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "memo first line",
+  "ok": true,
+  "note": "Your current risk: EEM and URTH make up 30% of your money but 62.74% of your risk. EEM alone is 57.50% of risk from a 26.47% weight [get_portfolio_diagnosis]."
+ }
+]

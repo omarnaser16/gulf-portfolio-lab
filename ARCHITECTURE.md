@@ -15,8 +15,7 @@ flowchart TB
     subgraph IN["Inputs"]
         YF["Yahoo Finance prices<br/>(yfinance, cached parquet)"]
         CFG["config/*.yaml<br/>universe, pegs, costs, limits"]
-        ADV["Adviser: client form,<br/>risk questionnaire, holdings"]
-        NOTES["Adviser's plain-English<br/>goals"]
+        ADV["Adviser: client form,<br/>risk questionnaire, holdings,<br/>Optimise goal (dropdown)"]
     end
 
     subgraph PY["Python calculations: deterministic, tested (pytest)"]
@@ -36,14 +35,12 @@ flowchart TB
         REG["regime.py<br/>logistic regression (default)<br/>or random forest; time-series CV,<br/>monthly walk-forward refits"]
     end
 
-    subgraph AI["AI agent: Claude via Anthropic API"]
-        SPEC["propose_spec<br/>goals → goal + limits"]
-        ANA["Analyst memo loop<br/>17 tools that wrap the engine"]
+    subgraph AI["AI: Claude via Anthropic API (optional)"]
+        ANA["Explain this recommendation<br/>one fixed request, 16 tools<br/>that wrap the engine"]
     end
 
     subgraph GUARD["Code-enforced guardrails"]
-        G1["Tool schemas with no weight,<br/>method or score fields;<br/>inputs checked in code"]
-        G2["Numbers not in the user's text<br/>are flagged before use"]
+        G1["No user text reaches the AI;<br/>tool schemas have no weight,<br/>method or score fields"]
         G3["calculate accepts only numbers<br/>already returned by tools"]
         G4["Every figure in the memo checked<br/>against tool outputs; disclaimer appended"]
     end
@@ -61,10 +58,7 @@ flowchart TB
     SUIT --> REC
     REG -. "stress probability<br/>(regime-aware backtest, Regime view)" .-> BT
 
-    NOTES --> SPEC
-    SPEC --> G1
-    SPEC --> G2
-    G2 -- "adviser confirms" --> OPT
+    ANA --> G1
     ANA <-- "tool calls / results" --> PY
     ANA --> G3
     ANA --> G4 --> REP
@@ -125,29 +119,30 @@ VIX features.
 
 ## The AI agent
 
-The LLM is called in two places, each with a narrow job. The client form is filled by the adviser (or *▶ Try a demo client*, seeded code with no AI); the AI never touches it.
+This is not a chatbot. The LLM is called in one place, with one fixed request: after Optimise
+has chosen a recommendation by its rule, the adviser can press **Explain this recommendation
+(AI)**. No text typed by a user is ever sent to it (there is no chat box or free-text field), and
+without an API key the app works fully and shows a note instead. The client form, the goal and
+the limits are set by the adviser (or *▶ Try a demo client*, seeded code with no AI).
 
 | Call | It does | It cannot |
 |---|---|---|
-| `agent/spec.py` `propose_spec` | Turns plain-English goals into one of five goals, a target and limits, as written. | Choose weights or a method: the strict schema has no such fields. The adviser confirms the spec before anything runs. |
-| `agent/analyst.py` `Analyst` | Writes the memo: decides which of the 17 tools to call, which charts to show (from a fixed list) and how to explain the results. | Calculate, change a chart's data, or recommend anything the rule did not choose. |
+| `agent/analyst.py` `Analyst` with `MEMO_QUESTION` | Writes a short memo explaining the rule's choice: decides which of the 16 tools to call, which charts to show (from a fixed list) and how to explain the results. The memo is added to the client report. | Calculate, change a chart's data, or recommend anything the rule did not choose. |
 
 ### What the agent is allowed to do
 
 - **Call tools that wrap the engine:**
   - data and metrics: `get_universe`, `get_asset_metrics`, `get_my_portfolio`;
   - analysis: `optimise_portfolio`, `backtest_strategies`, `simulate_future`,
-    `get_portfolio_diagnosis`, `get_optimisation_result`, `what_if_portfolio`, `stress_test`,
+    `get_portfolio_diagnosis`, `get_optimisation_result`, `stress_test`,
     `get_regime_view`;
   - adviser checks: `check_suitability`, `check_domicile`, `get_drift_and_trades`,
     `get_client_profile`;
   - output: `show_chart` and `calculate`.
 - **Choose a chart type and its section** with `show_chart`. The schema has no numeric fields,
   and code computes and draws the chart.
-- **Run a what-if** with `what_if_portfolio`, but only with weights the user wrote in their own
-  message. The other holdings are scaled pro-rata by code.
 - **Do arithmetic through `calculate`** (sums, differences, shares), on numbers already returned
-  by a tool or written by the user.
+  by a tool.
 - **Explain**: the rule's choice, its trade-offs, each swap's reason and each suitability result,
   in plain language, citing the tool behind every figure.
 
@@ -156,8 +151,9 @@ The LLM is called in two places, each with a narrow job. The client form is fill
 | Not allowed | Enforced by |
 |---|---|
 | Produce or estimate a number | `analyst.unverified_numbers` compares every decimal, percentage and multiple in the memo with the tool outputs, and flags any that don't match (a re-rounded "15.3%" for "15.27%" is flagged). |
-| Do arithmetic in its head | `tools.calculate` refuses any input that did not come from a tool result or the user's message. |
-| Choose weights or an optimisation method | `propose_spec` has a strict schema with no weight or method fields, and the user confirms the spec. |
+| Do arithmetic in its head | `tools.calculate` refuses any input that did not come from a tool result. |
+| Choose weights, an optimisation method or the goal | The adviser chooses the goal and limits in the form; no tool has a weight, method or goal field. |
+| Read user text | The app sends one fixed request (`MEMO_QUESTION`); there is no chat or free-text input. |
 | Choose the recommendation | `recommend.py` applies a fixed, tested rule; the agent can only read it with `get_optimisation_result`. |
 | Call a failing portfolio suitable | Only portfolios that pass every suitability rule can be recommended; otherwise `closest_fails` shows each breach. |
 | Set the risk score or IPS limits | `client.py` scores the questionnaire and sets the limits; no AI tool can write to the client form. |
@@ -172,11 +168,12 @@ Streamlit secrets and never committed.
 
 1. The adviser completes the fact-find. `client.py` scores the risk questionnaire and builds the
    IPS limits.
-2. The adviser picks a goal, or types one for `propose_spec` to transcribe, and confirms it.
+2. The adviser picks a goal from the dropdown (it starts from the client's risk score).
 3. `construct.py` and `optimise.py` build the candidates, and `backtest.py` re-estimates each one
    at every rebalance using past data only, after costs.
 4. `suitability.py` checks each candidate against the IPS, and `recommend.py` applies the fixed
    rule.
-5. The adviser can optionally ask the analyst to explain the result. It calls
+5. The adviser can optionally press *Explain this recommendation (AI)*. It calls
    `get_optimisation_result` and other tools, and code checks every figure in the memo.
-6. `report.py` writes the client report PDF from the rule's choice, never from a chat what-if.
+6. `report.py` writes the client report PDF from the rule's choice, with the memo if there is
+   one.

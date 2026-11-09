@@ -99,10 +99,12 @@ streamlit run app/streamlit_app.py
 - **The LLM never calculates numbers.** Every figure in a memo comes from a tool result, and the memo
   says which tool produced it. The system prompt requires this and code flags any figure no tool
   returned. Arithmetic goes through the `calculate` tool, which accepts only numbers already
-  returned by tools (or written by the user).
-- **The LLM never chooses weights or methods.** For optimisation it only transcribes the user's
-  goals into a spec (one of five goals, a target, limits; percentages as written) through a strict
-  tool with no weights or method field; the user confirms the spec before anything runs.
+  returned by tools.
+- **One AI feature, no chat.** The only call is *Explain this recommendation (AI)* on the
+  Optimise result: one fixed request (`MEMO_QUESTION`), no user text, no chat box or free-text
+  field anywhere; the memo goes into the client report. Without an API key the app works fully
+  and shows a note. The LLM never chooses weights, methods or the goal (the adviser picks the goal
+  from a dropdown).
 - **Recommendations are chosen by code.** `gpl/recommend.py` applies a fixed, tested rule per goal
   to walk-forward, after-cost results (where it compares Sharpe ratios, a change must gain at
   least 0.05, `min_sharpe_gain`); the AI only explains the rule's choice and trade-offs, and
@@ -111,8 +113,7 @@ streamlit run app/streamlit_app.py
   with its breaches (`closest_fails`), never as suitable.
 - **Charts come only from tool data.** The AI chooses chart type, order and section via
   `show_chart` (no numeric fields); `gpl/agent/charts.py` computes and draws every chart from the
-  engine. What-if weights must appear in the user's own message; the other holdings are scaled
-  pro-rata.
+  engine.
 - **Adviser workflow:** the AI never fills the client form or the risk questionnaire (the
   adviser does, or the seeded demo in `demo.py`, whose portfolio follows its IPS); the risk score, IPS limits, suitability,
   drift trades and domicile figures come from tested rules (`client.py`, `suitability.py`,

@@ -1,0 +1,1191 @@
+[
+ {
+  "item": "Try a demo client, header (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1100,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "A1-demo-loaded-1440x900.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   800,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "A1-benchmark-open-1440x900-seed92713.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "A1-settings-open-1440x900-seed92713.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   443,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   626,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   996,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   249,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step 6 Report & trades before Optimise",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": "D13-report-before-optimise.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   800,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "A1-benchmark-open-1440x900-seed2.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "A1-settings-open-1440x900-seed2.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   443,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   626,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   996,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   249,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Try a demo client, header (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1020,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "A1-demo-loaded-1280x800.png"
+ },
+ {
+  "item": "⚙ settings (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   997,
+   433
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   980,
+   573
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   720,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "A1-benchmark-open-1280x800-seed92713.png"
+ },
+ {
+  "item": "⚙ settings (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "A1-settings-open-1280x800-seed92713.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   363,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   546,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   732,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   916,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1100,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   169,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "⚙ settings (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   997,
+   433
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   980,
+   573
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   720,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "A1-benchmark-open-1280x800-seed2.png"
+ },
+ {
+  "item": "⚙ settings (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "A1-settings-open-1280x800-seed2.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   363,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   546,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   732,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   916,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1100,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   169,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "⚙ settings (goals)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (goals)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (goals)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step 4 Optimise (goals)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Beat the benchmark)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   679
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Beat the benchmark: beat the benchmark's return with less risk than it takes",
+  "ok": true,
+  "answer": "Keep your current portfolio: no method beat it after costs.",
+  "size": "1440x900",
+  "evidence": "C8-goal-beat-the-benchmark.png"
+ },
+ {
+  "item": "Edit & re-run (Best risk-adjusted return)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   720,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal dropdown (Best risk-adjusted return)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Best risk-adjusted return",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   575
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Best risk-adjusted return)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   641
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Best risk-adjusted return: the most return for each unit of risk",
+  "ok": true,
+  "answer": "Keep your current portfolio: no method beat it after costs.",
+  "size": "1440x900",
+  "evidence": "C8-goal-best-risk-adjusted-return.png"
+ },
+ {
+  "item": "Goal dropdown (Lower risk:)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Lower risk:",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   495
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Lower risk:)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   641
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Lower risk: fall less in bad markets; the return may drop",
+  "ok": true,
+  "answer": "Switch to Min variance: return 9.96% to 3.76%, volatility 12.08% to 4.03%.",
+  "size": "1440x900",
+  "evidence": "C8-goal-lower-risk.png"
+ },
+ {
+  "item": "Goal dropdown (Lower risk, keep)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Lower risk, keep",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   535
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Lower risk, keep)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   640
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Lower risk, keep today's return: less volatility, giving up at most a quarter point of return a year",
+  "ok": true,
+  "answer": "Keep your current portfolio: no method beat it after costs.",
+  "size": "1440x900",
+  "evidence": "C8-goal-lower-risk-keep.png"
+ },
+ {
+  "item": "Goal dropdown (Reach a target return)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Reach a target return",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   655
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Reach a target return)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   640
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Reach a target return: the least risk that still reached your target",
+  "ok": true,
+  "answer": "Keep your current portfolio: no method beat it after costs.",
+  "size": "1440x900",
+  "evidence": "C8-goal-reach-a-target-return.png"
+ },
+ {
+  "item": "Goal dropdown (Hit a target volatility)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   704,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Goal option Hit a target volatility",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stSelectboxVirtualDropdown",
+  "effect": true,
+  "at": [
+   720,
+   695
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (Hit a target volatility)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   640
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise with goal: Hit a target volatility: the most return at the risk you set",
+  "ok": true,
+  "answer": "Keep your current portfolio: no method beat it after costs.",
+  "size": "1440x900",
+  "evidence": "C8-goal-hit-a-target-volatility.png"
+ },
+ {
+  "item": "Step 6 Report & trades after Optimise (seed 92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": "D13-report-after-optimise-seed92713.png"
+ },
+ {
+  "item": "⚙ settings (seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step 4 Optimise (seed 2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise portfolio (seed 2, default goal)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   265,
+   679
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Optimise seed 2 (default goal)",
+  "ok": true,
+  "answer": "Switch to Max Sharpe: return 5.04% to 6.67%, volatility 8.59% to 8.33%.",
+  "evidence": "C11-results-seed2.png"
+ },
+ {
+  "item": "Explain this recommendation (AI)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   706,
+   450
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "AI memo appears",
+  "ok": true,
+  "evidence": "B5-ai-memo.png"
+ },
+ {
+  "item": "Step 6 Report & trades after Optimise (seed 2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": "D13-report-after-optimise-seed2.png"
+ },
+ {
+  "item": "Prepare client report",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1074,
+   636
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Download client report",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1074,
+   534
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "memo first line",
+  "ok": true,
+  "note": "What the rule chose. The tool recommended Max Sharpe. The rule is the highest walk-forward Sharpe ratio after costs, and at least 0.05 above your current portfolio's. Max Sharpe scored 0.52 against 0.33 for your current mix [get_optimisation_result]. At the recommended weights it passes every investment-policy rule [check_suitability]."
+ },
+ {
+  "item": "⚙ settings (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   249,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 2 (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   443,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   626,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   996,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 (widths)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ }
+]

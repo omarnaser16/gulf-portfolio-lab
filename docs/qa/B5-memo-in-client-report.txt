@@ -1,0 +1,41 @@
+Your adviser's commentary
+What the Optimise step recommends
+Your current risk: EEM and URTH make up 30% of your money but 62.74% of your risk. EEM alone is 57.50% of
+risk from a 26.47% weight.
+The choice: The rule picked Max Sharpe, the method with the highest after-cost Sharpe in walk-forward tests, provided it beat your current portfolio by at least 0.05. Max Sharpe scored 0.52 against 0.33 for your current portfolio. It passes every rule in your Investment Policy Statement (IPS). Your goals need a 6.49% a year return. Max Sharpe's walk-forward return was 6.67% a year, against 5.04% for your current portfolio. This is a historical result, not a forecast.
+The recommended weights: URTH rises from 3.53% to 11.98%, BIL from 13.00% to 18.43%. AGG falls from 22.69% to 15.45%, GLD from 10.00% to 6.81%.
+Trade-offs:
+• Trading is much heavier: 2.16× turnover a year, against 0.26× now.
+• Risk falls: walk-forward maximum drawdown was -12.64%, against -15.65% now.
+• The 60/40 benchmark earned more in the same tests: 9.43% a year, Sharpe 0.64.
+• The full move to Max Sharpe's target weights would fail your IPS on volatility, drawdown and worst stress. Only
+the turnover-limited weights above pass. Your adviser should confirm this.
+How much to trust it: Treat these as a backtest, not a promise. Max Sharpe and Target volatility held up out of sample. Min variance, Risk parity and Max diversification did not. Picking the best of several methods on the same history is itself a mild form of hindsight. Expected returns are historical averages, which are noisy.
+Decision support for your licensed adviser, not personal advice.
+Portfolio review Layla Haddad 2026-11-09 · page 6
+Decision support for a licensed adviser. Not investment, tax or legal advice. Figures are historical and come from tested code; they are not forecasts. Demo tool: do not enter real client data in the public version.
+ Ticker Weight Value (USD) US-situs Irish-domiciled alternative
+         DEMO DATA
+
+Sign-off
+Adviser
+Licence / registration no.
+Regulator
+Date
+L. Fischer
+DEMO-52451
+FSA (Oman, formerly CMA)
+09 November 2026
+By signing, the client confirms they have received and discussed this review; it does not oblige them to trade.
+Important information
+This report is decision support for a licensed adviser and does not constitute investment, tax or legal advice, an offer, or a recommendation to buy or sell any security on its own. Results are historical and risk-adjusted; they do not guarantee future returns. Data from Yahoo Finance; GCC currencies converted at their official USD pegs.
+• All figures are historical, in US dollars, and come from tested code. They are not forecasts: past performance does not predict future results.
+• Past performance shows how today's mix would have behaved (rebalanced monthly, after costs), not what you actually earned.
+• Stress tests hold today's mix through each past crisis.
+• The policy checks follow the rules in your Investment Policy Statement. 'Adviser to check' means the data
+cannot decide (for example, an unknown Sharia status).
+• The recommendation compares several standard portfolio methods on past data, each re-estimated at each
+rebalance using only information available at the time, after costs. It is risk-adjusted and historical, not a promise
+of higher returns.
+• The commentary was drafted with an AI assistant from the figures above and reviewed by your adviser; the AI
+did not calculate any figure or choose any weights.

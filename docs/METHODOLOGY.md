@@ -29,9 +29,9 @@ Do not enter real client data in the public demo.
 | **Backtester** | Monthly rebalancing on a trailing 252-day window, new weights from the **next** day, weight drift, costs on turnover by market (10 bps for US listings; judgement estimates of 30–40 bps for GCC exchanges, 15 bps for London). |
 | **Monte Carlo** | 21-day block bootstrap (default), daily bootstrap or GBM; goal probabilities, bad-case outcomes, drawdowns along the way, nominal or real (2.50% inflation). |
 | **Regime model** | Predicts whether next month will be stressed; logistic regression, time-series cross-validation with a 21-day gap, monthly walk-forward refits, compared with a simple volatility rule. |
-| **AI analyst** | Claude (Haiku 5.5 by default) with seventeen tools wrapping the engine, including the client's IPS and a `calculate` tool so arithmetic is done in code; portfolio reviews, stress tests, what-ifs and explanations of a recommendation, each memo section paired with charts the AI chooses but code builds, with audit trail and number check. It also turns plain-English goals into a goal and limits the user confirms; it never chooses weights or methods. |
+| **AI explanation** | Not a chatbot: one optional memo. After Optimise's rule has chosen, *Explain this recommendation (AI)* sends one fixed request (no user text) to Claude (Haiku 5.5 by default), which reads the results through sixteen tools wrapping the engine, including a `calculate` tool so arithmetic is done in code; memo sections are paired with charts the AI chooses but code builds, with an audit trail and a number check. The memo goes into the client report. Without an API key the app works fully. |
 | **Adviser workflow** | Full fact-find (nine sections, completeness bar), risk questionnaire, IPS (PDF, DRAFT until the fact-find is complete) feeding the optimiser, ten suitability rules including knowledge & experience, fund-domicile check, drift monitor and trade list, client report (PDF). |
-| **Dashboard** | Streamlit app in six steps (1 Client, 2 Portfolio, 3 Analyse, 4 Optimise, 5 Suitability, 6 Report & trades), redesigned on 8 Nov 2026 to the mockups in `docs/ui-target/redesign.pdf`: a blue header band (client, risk score, portfolio value, IPS status, benchmark, *Ask the analyst*, *Try a demo client*, ⚙ Settings), clickable step cards as the navigation, one guidance line per screen with the rest in (i) tooltips, summaries and KPI cards first with tables and technical detail in collapsed details, and a sticky Back/Next bar. Each element appears once in its natural step: the welcome screen and the fact-find card with one-line section summaries, risk score and IPS on Client; holdings and allocation on Portfolio; KPIs on Analyse (Performance, Benchmark, Monte Carlo, Assets, Regime in one row); a *Run with* bar, four-part summary, current vs recommended and candidates on Optimise (frontier and strategy backtests one click away); the rules table, rationale and fund domicile on Suitability; trades and the client report, with the AI analyst as a second tab, on step 6. Design tokens live once in `gpl/theme.py` (mirrored in `.streamlit/config.toml`, tested). Latest data by default, or the fixed sample that reproduces the results below. |
+| **Dashboard** | Streamlit app in six steps (1 Client, 2 Portfolio, 3 Analyse, 4 Optimise, 5 Suitability, 6 Report & trades), redesigned on 8 Nov 2026 to the mockups in `docs/ui-target/redesign.pdf`: a blue header band (client, risk score, portfolio value, IPS status, benchmark, *Ask the analyst*, *Try a demo client*, ⚙ Settings), clickable step cards as the navigation, one guidance line per screen with the rest in (i) tooltips, summaries and KPI cards first with tables and technical detail in collapsed details, and a sticky Back/Next bar. Each element appears once in its natural step: the welcome screen and the fact-find card with one-line section summaries, risk score and IPS on Client; holdings and allocation on Portfolio; KPIs on Analyse (Performance, Benchmark, Monte Carlo, Assets, Regime in one row); a *Run with* bar, four-part summary, current vs recommended and candidates on Optimise (frontier and strategy backtests one click away); the rules table, rationale and fund domicile on Suitability; trades and the client report on step 6 (one view). Design tokens live once in `gpl/theme.py` (mirrored in `.streamlit/config.toml`, tested). Latest data by default, or the fixed sample that reproduces the results below. |
 
 
 ## For a wealth manager: plan, execute, review
@@ -48,7 +48,7 @@ and explains results.
 | Suitability | Ten rules for the current and proposed portfolios: volatility, max drawdown, worst stress episode, concentration, home-market bias, region minimums, liquidity, exclusions (Sharia, sectors), currency, and knowledge & experience (complex products the client has not used are flagged for review). Each is pass, fail or review, with a reason written from the numbers; in Optimise, Analyst, the memo and the report. **Optimise only recommends portfolios that pass every rule**; if none does, it shows the closest with each breach (e.g. "Volatility: 13.10%, 1.10 pp beyond the 12.00% limit") and says so if the current portfolio fails too. Identical methods are shown once. |
 | Implementation | *Fund domicile check* for non-US clients: US-situs holdings (US-listed funds and stocks, including KSA), the illustrative US estate tax (18%–40% schedule minus the 13,000 USD non-resident credit, i.e. a 60,000 exemption), 30% vs 15% dividend withholding, and verified Irish-domiciled alternatives (SPY → CSPX.L, AGG → IUAA.L, GLD → IGLN.L…). Information, not tax advice. |
 | Monitoring and rebalancing | *6 Report & trades › Trades*: current vs editable target weights (default: the Optimise recommendation), a ±5 pp drift band, and a cash-neutral trade list (buy/sell in USD, estimated units and costs; buys + costs = sells), downloadable as CSV. The trades are checked against the cash need, and default targets are topped up so the need is still covered after costs. |
-| Reporting | One-click, date-stamped *client report* PDF in plain language: in brief, goals and limits, holdings in USD, past performance, **the optimiser's recommendation** (never a chat what-if), proposed trades, the policy checks, the adviser's commentary (AI memo without tool tags), an adviser sign-off block (name, licence, regulator, date, client acknowledgement), disclaimers and the IPS as an appendix. |
+| Reporting | One-click, date-stamped *client report* PDF in plain language: in brief, goals and limits, holdings in USD, past performance, **the optimiser's recommendation**, proposed trades, the policy checks, the AI explanation if the adviser asked for one (without tool tags), an adviser sign-off block (name, licence, regulator, date, client acknowledgement), disclaimers and the IPS as an appendix. |
 
 ## Build a portfolio for me
 
@@ -230,24 +230,21 @@ example; afterwards, 0 of 39. A regression test pins it.
   relative-drawdown charts. A benchmark's holidays never shorten your sample.
 - **Optimise like an analyst.** (1) *Diagnose*: each holding's share of money vs share of risk,
   volatility, Sharpe and beta, clusters of holdings that move together, and the portfolio vs the
-  benchmark. (2) *Goal*: maximise risk-adjusted return, reduce risk, reach a target return, hit a
-  target volatility, or beat the benchmark with less risk, picked from a list or described in plain
-  English (the AI fills in the goal and limits for you to check; numbers not in your text are
-  flagged). (3) *Candidates*: max Sharpe, min variance, risk parity, max diversification and target
+  benchmark. (2) *Goal*, from a dropdown that starts from the client's risk score (1-2 lower risk,
+  3 best risk-adjusted return, 4-5 beat the benchmark): lower risk; lower risk while keeping
+  today's return (at most 0.25 pp a year less, `keep_return_tolerance`); best risk-adjusted
+  return; beat the benchmark with less risk; reach a target return; or hit a target volatility.
+  (3) *Candidates*: max Sharpe, min variance, risk parity, max diversification and target
   volatility, each within your limits, re-optimised monthly on past data only (Ledoit-Wolf
   covariance) and evaluated after costs against your current portfolio and the benchmark. (4)
   *Recommendation*: a fixed rule per goal picks the method that fits the goal **and** held up out
-  of sample, or says to keep your current portfolio, and shows its reasons. (5) An optional AI memo
-  explains it. Results are historical and risk-adjusted, never presented as higher returns to come.
-- **Ask the analyst.** The AI analyst (step 6, or *Ask the analyst* in the header) opens on your portfolio (KPI cards vs the benchmark,
-  holdings with share of risk, allocation). *Review my portfolio*, *Stress test my portfolio* or
-  *Explain the Optimise recommendation*, then ask follow-ups such as "what if I cut NVDA to 10%?".
-  Each memo section is followed by the charts the AI picked from a fixed list: current vs proposed
-  weights, growth of $1, drawdowns, a metrics table with deltas, money vs risk, a correlation
-  heatmap, rolling one-year volatility, the efficient frontier, a Monte Carlo fan, exposure by
-  region, asset type and currency, and stress tests (COVID crash 19 Feb – 23 Mar 2020, oil crash
-  6 Mar – 21 Apr 2020, rate shock 3 Jan – 12 Oct 2022). A what-if sets the holdings you name to
-  your exact weights and scales the others pro-rata; later charts compare it with today.
+  of sample, or says to keep your current portfolio, and shows its reasons. Suitability works
+  both ways: unless the goal is a lower-risk one, a candidate is *too cautious for this client* if
+  its return is below the IPS required return or, for risk scores 4-5, its volatility is under half
+  the IPS cap (`too_cautious_vol_share`), so a growth client is never steered into a timid
+  portfolio. The result shows one sentence (switch, with return and volatility before and after, or
+  keep), a risk-vs-return chart, growth of $1 (current, benchmark and recommended; the rest in the
+  legend), drawdowns and each candidate's status. (5) An optional AI memo explains it. Results are historical and risk-adjusted, never presented as higher returns to come.
 - **Latest or reproducible.** The dashboard opens on the latest data ("Data as of …" at the top). The
   *Reproduce README results* option uses the fixed sample below and reproduces the tables in
   *Key results* exactly.
@@ -291,7 +288,7 @@ more, median 2.00×, bad case (5th percentile) 1.16×, 1.90% chance of losing mo
 bad-case drawdown is −35.15% with block bootstrap vs −31.53% with daily draws: keeping crashes
 together makes the path rougher.
 
-**AI analyst:** a typical memo uses 5 tool calls and about 15,500 input + 2,700 output tokens, roughly
+**AI explanation:** a typical memo uses 5 tool calls and about 15,500 input + 2,700 output tokens, roughly
 **$0.003** with Claude Haiku 5.5.
 
 ## Methodology
@@ -316,10 +313,10 @@ above the 80th percentile of its own past year, so the bar moves with recent con
 uses SPY, AGG and VIX history from 2005, longer than the GCC ETF sample. Class weighting was removed
 because it inflated the average predicted probability to 47.41% against a 21.51% actual rate.
 
-**AI analyst.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
-The seventeen tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
+**AI explanation.** A manual tool-use loop with the Anthropic Python SDK; the model ID is set in config.
+The sixteen tools (`get_universe`, `get_asset_metrics`, `optimise_portfolio`,
 `backtest_strategies`, `simulate_future`, `get_my_portfolio`, `get_portfolio_diagnosis`,
-`get_optimisation_result`, `show_chart`, `what_if_portfolio`, `stress_test`, `get_regime_view`,
+`get_optimisation_result`, `show_chart`, `stress_test`, `get_regime_view`,
 `check_suitability`, `check_domicile`, `get_drift_and_trades`, `get_client_profile`, `calculate`)
 wrap the engine and return pre-formatted numbers. `calculate` does simple arithmetic (sums,
 differences, shares) in code, and only on numbers already returned by a tool or written by the
@@ -361,11 +358,7 @@ volatility limit and 186 of 200 within their drawdown limit; the other 14 exceed
 percentage points on average (2.1 at most), mostly score-1 clients whose 10% limit is tight
 against the COVID crash. Suitability shows such a breach like any other.
 
-**Goals to a recommendation.** A separate, single model call fills one strict tool,
-`propose_spec`, whose schema is the spec: one of five goals, a target if the goal needs one, a
-per-asset cap, asset and group limits, a volatility cap and a return floor, in percent as the user
-wrote them. There is no field for weights or methods. Code converts percent to fractions and checks
-every number against the user's text. Each candidate method is the constrained optimiser with a
+**Goals to a recommendation.** The adviser picks the goal and any limits in the form (`spec_from_draft` converts percent to fractions and checks them; no AI). Each candidate method is the constrained optimiser with a
 different objective; it first checks feasibility exactly (a linear program for the weight and group
 limits, then the lowest achievable volatility and highest achievable return), so impossible limits
 get a specific reason instead of a solver failure, and solver output is re-checked against every
@@ -395,7 +388,7 @@ walk-forward 3 Oct 2016 – 30 Sep 2026, after costs, against 60/40):
   20 goal-and-portfolio checks it changed only these near-ties; larger gains (e.g. +0.20 of
   Sharpe with NVDA in the portfolio) are still recommended.
 
-**Testing.** 1034 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
+**Testing.** 1030 tests (`pytest`), run on every push by GitHub Actions, most with expected values small enough to check by hand. They
 include property tests (no optimiser output exceeds the weight cap across random problems; features
 and labels don't change when the future changes) and headless dashboard tests with synthetic data and
 a scripted fake model, so the suite never touches the network.
@@ -448,7 +441,7 @@ a scripted fake model, so the suite never touches the network.
   from 0.63 to 0.88.
 - **Monte Carlo** assumes the future resembles a reshuffle of this sample, with daily rebalancing and
   no costs.
-- **AI analyst:** the number check covers decimals, percentages and multiples, not bare integers or
+- **AI explanation:** the number check covers decimals, percentages and multiples, not bare integers or
   numbers written in words, and the model can still mis-describe a correct number. Treat the audit
   trail as the source of truth.
 - **Optimisation uses history.** Expected returns are historical means, which are noisy (Ledoit-Wolf
