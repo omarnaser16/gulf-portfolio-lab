@@ -205,10 +205,21 @@ def test_equity_chart_can_hide_series_in_the_legend() -> None:
     assert [t.visible for t in fig.data] == [True, True, "legendonly"]
 
 
-def test_risk_return_labels_cover_no_dot_and_no_other_label() -> None:
+SEED2_LOWER_RISK = pd.DataFrame(  # three dots so close that no near side is free for one label
+    {
+        "volatility": [0.0391, 0.0468, 0.0524, 0.0495, 0.0833, 0.0902, 0.0859, 0.1128],
+        "cagr": [0.0260, 0.0391, 0.0437, 0.0382, 0.0667, 0.0690, 0.0504, 0.0943],
+    },
+    index=["Min variance", "Max diversification", "Risk parity", "Re-weight + swaps",
+           "Max Sharpe", "Target volatility", "Current", "Benchmark"],
+)  # fmt: skip
+
+
+@pytest.mark.parametrize("crowded", [False, True])
+def test_risk_return_labels_cover_no_dot_and_no_other_label(crowded: bool) -> None:
     from gpl.plots import label_boxes, risk_return_chart
 
-    # the seed-2 demo's crowded chart, where labels used to sit on neighbouring dots
+    # the seed-2 demo's crowded charts, where labels used to sit on neighbouring dots
     pts = pd.DataFrame(
         {
             "volatility": [0.0833, 0.0902, 0.0859, 0.0863, 0.0391, 0.0524, 0.0468, 0.1128],
@@ -217,7 +228,9 @@ def test_risk_return_labels_cover_no_dot_and_no_other_label() -> None:
         index=["Max Sharpe", "Target volatility", "Current", "Re-weight + swaps",
                "Min variance", "Max diversification", "Risk parity", "Benchmark"],
     )  # fmt: skip
-    fig = risk_return_chart(pts, "Max Sharpe")
+    if crowded:
+        pts = SEED2_LOWER_RISK
+    fig = risk_return_chart(pts, "Min variance" if crowded else "Max Sharpe")
     sides = {}
     for a in fig.layout.annotations:  # labels are annotations, drawn above every dot
         sides[a.name] = next(

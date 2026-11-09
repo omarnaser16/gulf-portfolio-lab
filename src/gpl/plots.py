@@ -170,6 +170,15 @@ _LABEL_SIDES = {
     "top left": ("right", "bottom", -6, 6),
     "bottom right": ("left", "top", 6, -6),
     "bottom left": ("right", "top", -6, -6),
+    # a second ring, further out, only when every near side clashes (tight clusters)
+    "far top": ("center", "bottom", 0, 24),
+    "far bottom": ("center", "top", 0, -24),
+    "far right": ("left", "middle", 26, 0),
+    "far left": ("right", "middle", -26, 0),
+    "far top right": ("left", "bottom", 16, 16),
+    "far top left": ("right", "bottom", -16, 16),
+    "far bottom right": ("left", "top", 16, -16),
+    "far bottom left": ("right", "top", -16, -16),
 }
 # assumed plot area in pixels (the narrowest card it is shown in) and 11 px label text
 _PLOT_W, _PLOT_H, _CHAR_W, _LINE_H, _DOT_R = 420, 310, 6.2, 14, 8
