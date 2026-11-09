@@ -675,7 +675,7 @@ def shared_context() -> AnalystContext:
 
 
 def ask_analyst(analyst: agent.Analyst, question: str) -> dict:
-    """One question to the analyst; returns a chat turn (the reply, or a readable error)."""
+    """The fixed memo question to the analyst; returns the reply, or a readable error."""
     try:
         with st.spinner("The analyst is calling tools and writing…"):
             return {"role": "assistant", "reply": analyst.ask(question)}
@@ -2788,7 +2788,7 @@ with step_portfolio:
 
     with sec_rebal:
         trade_kpis = st.container()
-        trade_col, report_col = st.columns([1.75, 1], gap="medium")
+        trade_col, report_col = st.columns([2.2, 1], gap="medium")  # trade table fits at 1280 px
         report_col = report_col.container(border=True, key="report_card")
         opt_now = st.session_state.get("ws_opt")
         opt_rec = opt_now["report"]["recommendation"] if opt_now else None
@@ -3141,7 +3141,7 @@ def report_holdings(value: float | None) -> pd.DataFrame:
 def report_recommendation() -> tuple[dict | None, dict | None]:
     """The Optimise run's recommendation and its trade list, formatted (None if not run).
 
-    Always the optimiser's own result, never a what-if from the chat. Trades are proposed
+    Always the optimiser's own result. Trades are proposed
     only for a recommendation that passes the IPS.
     """
     opt = st.session_state.get("ws_opt")
@@ -3288,7 +3288,7 @@ def render_report_button() -> None:
             profile = client_ui.current_profile()
             rec, trades = report_recommendation()
             checked = {"Current": pd.Series(my_weights)}
-            if rec and rec["choice"]:  # the optimiser's portfolio, never a chat what-if
+            if rec and rec["choice"]:  # the optimiser's portfolio
                 latest = optimise_weights(st.session_state.ws_opt)
                 checked[rec["choice"]] = latest.loc[rec["choice"]].fillna(0.0)
             results = suitability_results(checked)
@@ -3343,9 +3343,8 @@ def render_report_button() -> None:
                 width="stretch",
             )
         st.caption(
-            "Uses the Optimise recommendation (never a chat what-if) and the Optimise memo if "
-            "one was written, else the latest analyst memo. The IPS PDF is on step 1. Prepare "
-            "it again after changes."
+            "Uses the Optimise recommendation and its AI explanation, if one was written. The "
+            "IPS PDF is on step 1. Prepare it again after changes."
         )
         flags = st.session_state.get("client_report_flags")
         if flags:
