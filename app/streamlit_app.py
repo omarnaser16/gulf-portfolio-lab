@@ -389,7 +389,7 @@ st.set_page_config(
 st.markdown(APP_CSS, unsafe_allow_html=True)
 header = st.container(key="gpl_header")
 head_title, head_bench, head_demo, head_settings = header.columns(
-    [4.4, 3.2, 2.0, 0.55], vertical_alignment="center"
+    [3.2, 4.4, 2.0, 0.55], vertical_alignment="center"
 )
 head_chips = header.container()
 with head_demo:
