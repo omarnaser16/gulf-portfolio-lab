@@ -1,0 +1,613 @@
+[
+ {
+  "item": "Try a demo client, header (1440x900)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1100,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "LIVE-demo-loaded-1440x900.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   800,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "LIVE-benchmark-open-1440x900-seed92713.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "LIVE-settings-open-1440x900-seed92713.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   443,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   626,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   996,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1440x900-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   249,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step 6 Report & trades before Optimise",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": "LIVE-report-before-optimise.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   1077,
+   433
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1060,
+   573
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   800,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "LIVE-benchmark-open-1440x900-seed2.png"
+ },
+ {
+  "item": "⚙ settings (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1241,
+   108
+  ],
+  "size": "1440x900",
+  "evidence": "LIVE-settings-open-1440x900-seed2.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   443,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   626,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   812,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   996,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1180,
+   235
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1440x900-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   249,
+   227
+  ],
+  "size": "1440x900",
+  "evidence": ""
+ },
+ {
+  "item": "Try a demo client, header (1280x800)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1020,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "LIVE-demo-loaded-1280x800.png"
+ },
+ {
+  "item": "⚙ settings (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   997,
+   433
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   980,
+   573
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   720,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "LIVE-benchmark-open-1280x800-seed92713.png"
+ },
+ {
+  "item": "⚙ settings (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "LIVE-settings-open-1280x800-seed92713.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   363,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   546,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   732,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   916,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1100,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1280x800-seed92713)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   169,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "⚙ settings (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Demo seed expander (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "DIV stExpander",
+  "effect": true,
+  "at": [
+   997,
+   433
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Load the demo client with this seed (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   980,
+   573
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Benchmark select (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "INPUT stSelectbox",
+  "effect": true,
+  "at": [
+   720,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "LIVE-benchmark-open-1280x800-seed2.png"
+ },
+ {
+  "item": "⚙ settings (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "SPAN stIconMaterial",
+  "effect": true,
+  "at": [
+   1161,
+   108
+  ],
+  "size": "1280x800",
+  "evidence": "LIVE-settings-open-1280x800-seed2.png"
+ },
+ {
+  "item": "Step card 2 Portfolio (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   363,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 3 Analyse (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   546,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 4 Optimise (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   732,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 5 Suitability (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   916,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 6 Report & trades (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   1100,
+   235
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ },
+ {
+  "item": "Step card 1 Client (1280x800-seed2)",
+  "ok": true,
+  "top_element_is_control": true,
+  "top": "P stMarkdownContainer",
+  "effect": true,
+  "at": [
+   169,
+   227
+  ],
+  "size": "1280x800",
+  "evidence": ""
+ }
+]

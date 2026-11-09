@@ -11,13 +11,16 @@ How it was checked:
   `qa-log-seed2-final.json` (seed 2 and all six goals, re-run after the two-check rule);
   `qa-log-lower-risk-seed2.json` (both lower-risk goals on seed 2); `qa-log-live-site.json`
   (header and step cards on the deployed site).
-- **Not checked:** the "Manage app" badge only exists on Streamlit Cloud, so its clearance is
-  checked by padding, not seen.
+- **Live site:** the same header and step-card clicks run on
+  https://gulf-portfolio-lab.streamlit.app inside Streamlit's wrapper page: 47 of 47 passed.
+  At each click point the wrapper's top element was the app's iframe, and inside the app it
+  was the control itself.
+- **Not checked:** the owner-only "Manage app" badge (not visible to a logged-out browser).
 
 | Item | Fixed? | Evidence | Notes |
 |---|---|---|---|
-| A1 Header controls clickable | Yes | `A1-*` (both sizes, seeds 92713 and 2) | Header sits below Streamlit's toolbar; decorative layers ignore clicks; toasts moved bottom right (one covered ⚙). |
-| A2 Clear of toolbar and badge | Partly seen | `A1-steps-*`, `E20-*` | Toolbar: seen. Badge: padding only (see above). |
+| A1 Header controls clickable | Yes, locally and live | `A1-*`, `LIVE-*` (both sizes, seeds 92713 and 2) | Header sits below Streamlit's toolbar; decorative layers ignore clicks; toasts moved bottom right (one covered ⚙). |
+| A2 Clear of toolbar and badge | Yes (public view) | `A1-steps-*`, `LIVE-steps-*` | On the live site the Back/Next bar ends left of Streamlit's bottom-right badges. The owner-only "Manage app" badge isn't shown to a logged-out browser, so that one is covered by padding only. |
 | A3 "Ask the analyst" removed | Yes | `A1-demo-loaded-1440x900.png` | |
 | B4 Chat and free-text AI removed | Yes | `C7-optimise-form.png`, `D13-*` | Covered by `test_no_chat_or_free_text_ai_anywhere`. |
 | B5 One AI feature | Yes | `B5-ai-memo.png`, `B5-memo-in-client-report.txt` | Real API call: 3 tool calls. The memo is in the downloaded client report. The no-key note is covered by an app test. |

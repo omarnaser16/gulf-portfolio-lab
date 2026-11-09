@@ -885,5 +885,7 @@ days; the work itself was done in a series of sessions.
   `requirements.txt` installs, stay old. New `app/freshness.py` puts the checkout's `src/`
   first and reloads project modules when a file is newer than the process. The
   `requirements.txt` comment changed too, to force a clean reinstall.
-- **Next step:** real-click check of the header and step cards on the live site.
+- **Live check after the fix:** 47 of 47 real clicks passed on the live site (header and step
+  cards, 1440 and 1280 px, seeds 92713 and 2), with screenshots in docs/qa.
+- **Next step:** watch the next code-only push go live without a reboot (the freshness fix).
 - **Status:** 1043 tests: 1042 pass locally; the real-install test runs in CI.
