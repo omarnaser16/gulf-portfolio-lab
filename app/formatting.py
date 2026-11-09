@@ -89,7 +89,8 @@ def compact_usd(x: float | None) -> str:
     """'$3.00m', '$250.0k', '$1.25bn', '$950' (fits a KPI card); '–' when unknown."""
     if x is None:
         return "–"
+    sign, x = ("-" if x < 0 else ""), abs(x)  # '-$1.20m', not '$-1.20m'
     for size, suffix, decimals in ((1e9, "bn", 2), (1e6, "m", 2), (1e3, "k", 1)):
-        if abs(x) >= size:
-            return f"${x / size:,.{decimals}f}{suffix}"
-    return f"${x:,.0f}"
+        if x >= size:
+            return f"{sign}${x / size:,.{decimals}f}{suffix}"
+    return f"{sign}${x:,.0f}" if round(x) else "$0"

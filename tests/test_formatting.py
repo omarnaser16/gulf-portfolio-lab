@@ -64,6 +64,7 @@ def test_compact_usd_fits_a_card() -> None:
     assert compact_usd(3_000_000) == "$3.00m" and compact_usd(250_000) == "$250.0k"
     assert compact_usd(1_250_000_000) == "$1.25bn" and compact_usd(950) == "$950"
     assert compact_usd(None) == "–"
+    assert compact_usd(-1_200_000) == "-$1.20m" and compact_usd(-0.4) == "$0"  # sign first
 
 
 def test_usage_stats_are_off() -> None:

@@ -560,13 +560,18 @@ DATA_HELP = (
 )
 
 
+def security_name(ticker: str) -> str:
+    """The name shown in the holdings table: the quote's, else config's, else the ticker."""
+    return getattr(get_quote(ticker), "name", None) or NAMES.get(ticker) or ticker
+
+
 def render_data_notes(history: pd.DataFrame) -> None:
     shown = history.loc[
         [t for t in history.index if t in universe or t in my_weights or t in ("SPY", "AGG")]
     ]
     table = pd.DataFrame(
         {
-            "Name": [NAMES.get(t, "") for t in shown.index],
+            "Name": [security_name(t) for t in shown.index],
             "First date": shown["first_date"].dt.strftime("%d %b %Y"),
             "Trading days": shown["observations"].map("{:,}".format),
             "Currency": shown["currency"],
@@ -575,7 +580,8 @@ def render_data_notes(history: pd.DataFrame) -> None:
         },
         index=shown.index,
     )
-    st.table(table)
+    with st.container(key="data_notes_table"):  # dates and counts never wrap (layout CSS)
+        st.table(table)
 
 
 short = data.history[data.history["too_short"] & data.history.index.isin(universe)]
@@ -2326,16 +2332,45 @@ bench_choices = {
 if st.session_state.get("ws_benchmark") not in bench_choices:
     st.session_state.pop("ws_benchmark", None)  # e.g. the policy benchmark of another client
 _bench_now = st.session_state.get("ws_benchmark") or next(iter(bench_choices))
-bench_name = head_bench.selectbox(
-    "Benchmark",
-    list(bench_choices),
-    label_visibility="collapsed",
-    key="ws_benchmark",
-    format_func=lambda n: f"Benchmark · {n}",
-    help=f"{_bench_now}: {bench_choices[_bench_now]['represents']} What your portfolio is "
-    "compared with across the dashboard: total-return ETF proxies, so dividends count as they "
-    "do in your portfolio.",
+BENCH_HELP = (
+    f"{_bench_now}: {bench_choices[_bench_now]['represents']} What your portfolio is compared "
+    "with across the dashboard: total-return ETF proxies, so dividends count as they do in your "
+    "portfolio."
 )
+with head_bench.container(horizontal=True, vertical_alignment="center", key="bench_pick"):
+    st.markdown('<p class="gpl-bench-label">Benchmark</p>', unsafe_allow_html=True, width="content")
+    bench_name = st.selectbox(
+        "Benchmark",
+        list(bench_choices),
+        label_visibility="collapsed",
+        key="ws_benchmark",
+        help=BENCH_HELP,
+    )
+
+
+def _bench_from_analyse() -> None:
+    """The Analyse copy of the selector writes the one shared setting (the header's)."""
+    st.session_state["ws_benchmark"] = st.session_state["analyse_benchmark"]
+
+
+def render_benchmark_choice(container) -> None:
+    """The benchmark selector on Analyse: the same setting as the header's, shown again next to
+    the comparison it controls."""
+    st.session_state["analyse_benchmark"] = bench_name  # follows the header
+    container.selectbox(
+        "Benchmark",
+        list(bench_choices),
+        key="analyse_benchmark",
+        on_change=_bench_from_analyse,
+        help=BENCH_HELP + " The same setting as the Benchmark selector in the header.",
+    )
+    if POLICY is None:
+        container.caption(
+            "No policy benchmark in the list: "
+            + (POLICY_WHY or "complete the client's fact-find first (step 1, Client).")
+        )
+
+
 try:
     bench = get_benchmark(
         bench_name, bench_choices[bench_name], all_returns.index, loaded, start, end, day
@@ -2551,6 +2586,7 @@ with analyse_head:
         help="Return, volatility, Sharpe and max drawdown: your current weights rebalanced "
         f"monthly after costs; the coloured differences are against {bench_name}.",
     )
+    render_benchmark_choice(_meta)
     if _kpi is not None:
         layout.meta(
             f"Backtest {_kpi.attrs['period']}",

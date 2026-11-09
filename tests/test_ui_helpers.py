@@ -117,3 +117,31 @@ def test_money_has_separators_and_never_a_negative_zero() -> None:
     assert money(-0.4) == "USD 0" and money(-0.0) == "USD 0"  # never "USD -0"
     assert money(107.981, 2) == "USD 107.98"
     assert money(None) == "–" and money(float("nan")) == "–"
+
+
+def test_finance_cards_are_compact_with_the_exact_value_in_the_tooltip() -> None:
+    from gpl.factfind import Finances
+
+    fin = Finances(300_000, 180_000, 18_000_000, 52_000, 17_948_000, 7_483_000, 0.4, 6.0)
+    assert client_ui.finance_cards(fin) == [
+        ("Net worth", "$17.95m", "USD 17,948,000"),
+        ("Investable assets", "$7.48m", "USD 7,483,000"),
+        ("Savings rate", "40.00%", None),
+        ("Emergency fund", "6.0 months", None),
+    ]
+    empty = Finances(0, None, 0, 0, 0, 0, None, None)
+    assert [v for _, v, _ in client_ui.finance_cards(empty)] == ["$0", "$0", "–", "–"]
+    assert all(len(v) <= 10 for _, v, _ in client_ui.finance_cards(fin))  # fits a card
+
+
+def test_money_echo_adds_thousands_separators_under_an_input() -> None:
+    shown = []
+
+    class Col:
+        def caption(self, text: str) -> None:
+            shown.append(text)
+
+    client_ui.money_echo(Col(), 7_393_000.0)
+    client_ui.money_echo(Col(), None)
+    client_ui.money_echo(Col(), 0.0)
+    assert shown == ["$7,393,000"]

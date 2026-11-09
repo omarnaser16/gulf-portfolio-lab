@@ -104,7 +104,7 @@ def value_input(container, key_prefix: str, label: str = "Portfolio value (USD)"
     key = f"{key_prefix}_{st.session_state.get(PF_VERSION, 0)}"
     if usd:  # the total follows every holdings edit: a new key shows the new total
         key += f"_{round((portfolio_value() or 0) * 100)}"
-    container.number_input(
+    entered = container.number_input(
         label,
         min_value=0.0,
         value=portfolio_value(),
@@ -119,6 +119,8 @@ def value_input(container, key_prefix: str, label: str = "Portfolio value (USD)"
         if usd
         else "Used for the suitability check, rebalancing trades, domicile check and report.",
     )
+    if entered:  # number inputs can't show thousands separators: echo the amount below
+        container.caption(money(entered, 2, prefix="$"))
 
 
 def groups_of_holdings() -> dict[str, str]:

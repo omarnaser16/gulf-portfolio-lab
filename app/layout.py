@@ -293,6 +293,10 @@ h1, h2, h3, h4 {{ color: var(--gpl-text) !important; letter-spacing: -0.01em; }}
   border: 1px solid rgba(255,255,255,.6) !important; font-weight: 600; }}
 .st-key-gpl_header .st-key-fill_demo button p {{ color: var(--gpl-brand-btn) !important; }}
 .st-key-gpl_header [data-baseweb="select"] > div {{ background: #fff; }}
+.gpl-bench-label {{ margin: 0; color: #fff; font-weight: 600; font-size: .95rem;
+  white-space: nowrap; }}
+.st-key-bench_pick {{ flex-wrap: nowrap !important; }}
+.st-key-bench_pick > div:last-child {{ flex: 1 1 auto; min-width: 0; }}
 .gpl-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: {t.space(0.5)}; }}
 .gpl-brandmark, .gpl-chips, .gpl-step, .gpl-kpis, .gpl-summary {{ pointer-events: none; }}
 .gpl-chip {{ font-size: 0.76rem; padding: 2px 9px; border-radius: 999px; background: #fff;
@@ -360,10 +364,19 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
 [data-testid="stMetric"] {{ background: var(--gpl-card); border: 1px solid var(--gpl-border);
   border-radius: var(--gpl-radius); padding: {t.space(2)}; }}
 [data-testid="stMetricValue"] {{ font-weight: 700; }}
+/* never cut a metric: labels and values wrap instead of ending in "…" */
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] *,
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {{ white-space: normal !important;
+  overflow: visible !important; text-overflow: clip !important; height: auto !important; }}
+[data-testid="stMetricValue"] {{ line-height: 1.15; }}
 [data-testid="stExpander"] details {{ background: var(--gpl-card);
   border: 1px solid var(--gpl-border); border-radius: var(--gpl-radius); }}
 [data-testid="stExpander"] summary p {{ font-weight: 600; }}
 [data-testid="stTable"] table {{ background: var(--gpl-card); }}
+.st-key-data_notes_table td:nth-child(3), .st-key-data_notes_table th:nth-child(3),
+.st-key-data_notes_table td:nth-child(4), .st-key-data_notes_table th:nth-child(4),
+.st-key-data_notes_table tbody th {{ white-space: nowrap; }}
+.st-key-data_notes_table td:nth-child(2) {{ min-width: 12rem; }}
 [data-testid="stTable"] th {{ background: var(--gpl-subtle); color: var(--gpl-muted);
   font-weight: 600; }}
 /* (?) icons sit right after their label, not at the far end of the row */
@@ -488,7 +501,13 @@ button[kind="primary"], [data-testid="stBaseButton-primary"] {{
   padding: 10px max(180px, calc((100vw - {t.MAX_WIDTH_PX}px) / 2)) 10px
     max(24px, calc((100vw - {t.MAX_WIDTH_PX}px) / 2)); }}
 /* the right padding keeps the buttons clear of Streamlit Cloud's "Manage app" badge */
-.gpl-foot {{ font-size: .82rem; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }}
+.gpl-foot {{ font-size: .82rem; line-height: 1.3; white-space: normal; overflow-wrap: anywhere;
+  text-align: left; }}
+/* the text column takes the room the buttons leave and wraps inside it: its wrappers are
+   left-aligned and may shrink, so text wider than the column can never be centred off the left */
+[class*="st-key-footer_"] [data-testid="stColumn"]:first-child {{ min-width: 0; }}
+[class*="st-key-footer_"] [data-testid="stColumn"]:first-child * {{
+  align-items: flex-start !important; min-width: 0 !important; max-width: 100%; }}
 .gpl-foot small {{ display: block; color: var(--gpl-muted); font-size: .72rem; }}
 </style>
 """

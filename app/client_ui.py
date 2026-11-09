@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 import workstation as ws
 
-from formatting import money
+from formatting import compact_usd, money
 from gpl.client import (
     CLOSEST_MIX_EXAMPLES,
     CLOSEST_MIX_LABEL,
@@ -351,6 +351,25 @@ def _key(name: str, k: str) -> str:
     return KEYS.get(name, f"cl_f_{name}") + k
 
 
+def money_echo(col, amount: float | None) -> None:
+    """The amount with thousands separators under its input ('$7,393,000'): Streamlit's
+    number inputs can't show separators themselves."""
+    if amount:
+        col.caption(money(amount, prefix="$"))
+
+
+def finance_cards(fin) -> list[tuple[str, str, str | None]]:
+    """The four fact-find figures as (label, compact value, exact value for the tooltip):
+    '$17.95m', '35.41%', '4.0 months', so a card never has to cut them."""
+    rate, months = fin.savings_rate, fin.emergency_months
+    return [
+        ("Net worth", compact_usd(fin.net_worth), money(fin.net_worth)),
+        ("Investable assets", compact_usd(fin.investable), money(fin.investable)),
+        ("Savings rate", "–" if rate is None else f"{rate:.2%}", None),
+        ("Emergency fund", "–" if months is None else f"{months:.1f} months", None),
+    ]
+
+
 def _field(col, f: Field, p: ClientProfile, k: str, **kw):
     """Draw one registry field in ``col`` and return its value (in the profile's form)."""
     value = getattr(p, f.name)
@@ -365,19 +384,22 @@ def _field(col, f: Field, p: ClientProfile, k: str, **kw):
         out = col.number_input(label, 0, 120, value, 1, key=key, help=help_, placeholder="–", **kw)
         return None if out is None else int(out)
     if f.kind in ("float", "money"):
-        money = f.kind == "money"
-        return col.number_input(
+        is_money = f.kind == "money"
+        out = col.number_input(
             label,
-            0.0 if money else -100.0,
-            1e12 if money else 100.0,
+            0.0 if is_money else -100.0,
+            1e12 if is_money else 100.0,
             _opt(value),
-            1000.0 if money else 1.0,
-            format="%.0f" if money else "%.2f",
+            1000.0 if is_money else 1.0,
+            format="%.0f" if is_money else "%.2f",
             key=key,
             help=help_,
             placeholder="–",
             **kw,
         )
+        if is_money:
+            money_echo(col, out)
+        return out
     if f.kind == "bool":
         return col.checkbox(label, bool(value), key=key, help=help_, **kw)
     if f.kind == "yesno":
@@ -457,6 +479,7 @@ def _money_map(p: ClientProfile, k: str, name: str, types: Mapping[str, str], la
             key=f"cl_{name}_{key}" + k,
             placeholder="0",
         )
+        money_echo(col, amount)
         if amount:
             out[key] = float(amount)
     return out
@@ -546,14 +569,10 @@ def _form(
             p, k, "liabilities", LIABILITY_TYPES, "Liabilities (USD, optional)"
         )
         fin = finances(replace(p, **vals))
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Net worth (USD)", f"{fin.net_worth:,.0f}")
-        m2.metric("Investable assets (USD)", f"{fin.investable:,.0f}")
-        m3.metric("Savings rate", "–" if fin.savings_rate is None else f"{fin.savings_rate:.2%}")
-        m4.metric(
-            "Emergency fund",
-            "–" if fin.emergency_months is None else f"{fin.emergency_months:.1f} months",
-        )
+        cards = finance_cards(fin)
+        for row in (cards[:2], cards[2:]):  # 2 x 2: room for the full label and value
+            for col, (label, value, exact) in zip(st.columns(2), row, strict=True):
+                col.metric(label, value, help=exact)
         st.caption(
             "Net worth = assets - liabilities. Investable = cash + investments. Savings rate = "
             "(income - expenses) ÷ income. Emergency fund = cash ÷ monthly expenses."
@@ -587,6 +606,7 @@ def _form(
             help="Sets the required return: income ÷ investable assets (after cash set aside), "
             "plus inflation.",
         )
+        money_echo(c2, vals["annual_income_need_usd"])
         vals["annual_contribution_usd"] = c3.number_input(
             "Yearly addition to the portfolio (USD)",
             0.0,
@@ -596,6 +616,7 @@ def _form(
             key="cl_f_annual_contribution_usd" + k,
             help="Used in the return needed to meet the goals.",
         )
+        money_echo(c3, vals["annual_contribution_usd"])
         vals["inflation_pct"] = c4.number_input(
             "Inflation assumption (% a year)",
             0.0,

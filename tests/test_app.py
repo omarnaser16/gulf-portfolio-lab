@@ -670,6 +670,27 @@ def test_benchmark_tab_compares_with_the_chosen_benchmark(app: AppTest) -> None:
     assert any("Information ratio" in t.value.index for t in app.table)
 
 
+def test_benchmark_in_the_header_and_on_analyse_is_one_setting(app: AppTest) -> None:
+    assert any('class="gpl-bench-label">Benchmark' in m.value for m in app.markdown)  # labelled
+    header, analyse = app.selectbox(key="ws_benchmark"), app.selectbox(key="analyse_benchmark")
+    assert analyse.label == "Benchmark" and analyse.value == header.value
+    assert list(analyse.options) == list(header.options)
+    analyse.set_value("Cash (13-week T-bills)").run()  # the Analyse copy changes the header
+    assert not app.exception, app.exception
+    assert app.selectbox(key="ws_benchmark").value == "Cash (13-week T-bills)"
+    table = next(t.value for t in app.table if "Information ratio" in t.value.index)
+    assert table.loc["Beta", "Your portfolio"].startswith("n/a")  # the comparison follows
+    app.selectbox(key="ws_benchmark").set_value("S&P 500 (SPY)").run()  # and the other way
+    assert not app.exception, app.exception
+    assert app.selectbox(key="analyse_benchmark").value == "S&P 500 (SPY)"
+
+
+def test_data_notes_name_every_ticker(app: AppTest) -> None:
+    notes = next(t.value for t in app.table if "First date" in t.value.columns)
+    assert set(notes.index) >= {"SPY", "AGG", "GLD", "KSA"}
+    assert all(name.strip() for name in notes["Name"])  # no blank names
+
+
 def test_monte_carlo_offers_my_portfolio(app: AppTest) -> None:
     assert "My portfolio" in app.selectbox(key="mc_strategy").options
     app.selectbox(key="mc_strategy").set_value("My portfolio").run()
@@ -1649,8 +1670,8 @@ def test_build_suggests_a_policy_benchmark_that_fits_the_ips(optimise_app) -> No
 
     at, _ = optimise_app([])
 
-    def names():  # options are shown as "Benchmark · <name>"
-        return [o.split(" · ", 1)[1] for o in at.selectbox(key="ws_benchmark").options]
+    def names():
+        return list(at.selectbox(key="ws_benchmark").options)
 
     assert POLICY_NAME not in names()  # no client yet
     at.selectbox(key="client_example").set_value("Dubai, moderate, 10 years")
