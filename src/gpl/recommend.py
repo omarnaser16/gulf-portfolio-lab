@@ -36,6 +36,7 @@ CURRENT, BENCHMARK, KEEP = "Current", "Benchmark", "Keep your current portfolio"
 SHARPE_GOALS = ("max_risk_adjusted", "beat_benchmark_less_risk")  # decided on Sharpe ratios
 LOWER_RISK_GOALS = ("reduce_risk", "reduce_risk_keep_return")  # may be cautious on purpose
 TOO_CAUTIOUS = "Too cautious for this client"
+COMPLIANT_MOVE = "Compliant move only"
 _EPS = 1e-9  # so a gain of exactly the minimum counts despite floating-point rounding
 
 
@@ -79,11 +80,17 @@ class Recommendation:
     reasons: list[str]
     ranking: list[str] = field(default_factory=list)  # qualifying candidates, best first
     held_up: dict[str, bool] = field(default_factory=dict)
-    # "recommended", "keep", or "closest_fails" (no portfolio passes the IPS; ``choice`` is the
-    # closest one, or KEEP when the current portfolio is closest)
+    # "recommended", "keep", "compliant_move" (the rule's pick fails the IPS on its walk-forward
+    # results or as a full portfolio over the full history: only the closest compliant move
+    # towards it is suggested) or "closest_fails" (no portfolio passes the IPS; ``choice`` is
+    # the closest one, or KEEP when the current portfolio is closest)
     status: str = "recommended"
     current_passes_ips: bool | None = None  # None: no IPS to check against
     too_cautious: dict[str, str] = field(default_factory=dict)  # candidate -> why
+    # why the full move to ``choice`` isn't recommended (status "compliant_move")
+    full_move_fails: list[str] = field(default_factory=list)
+    # a lower-risk goal's pick earns less than the IPS required return (shown as a warning)
+    return_warning: str | None = None
 
 
 def _closest(pool: pd.DataFrame) -> str:
@@ -244,6 +251,8 @@ def recommend(
     return_tolerance: float = 0.0025,
     min_return: float | None = None,
     min_volatility: float | None = None,
+    max_volatility: float | None = None,
+    max_drawdown: float | None = None,
 ) -> Recommendation:
     """Apply the goal's rule to walk-forward results.
 
@@ -290,6 +299,23 @@ def recommend(
       the goal's ranking is recommended even without an improvement on the goal, because the
       current portfolio is outside the client's limits;
     - the current portfolio is kept only when it passes.
+
+    Both checks for "recommended"
+    -----------------------------
+    ``passes_ips`` judges the weights suggested today (the turnover-limited move). The rule's
+    pick is labelled "recommended" only if, in addition:
+
+    - its **walk-forward** volatility and maximum drawdown are within the IPS limits
+      (``max_volatility``; ``max_drawdown`` as a positive fraction), and
+    - its **full target** passes every IPS rule over the **full history** (column
+      ``full_passes_ips``; ``full_ips_fails`` names the failed rules).
+
+    Otherwise the status is ``compliant_move``: the closest compliant move towards the pick is
+    still suggested, and ``full_move_fails`` says why the full move is not recommended.
+
+    Under the two lower-risk goals the too-cautious test is skipped on purpose, so if the pick's
+    walk-forward CAGR is below ``min_return`` (the IPS required return), ``return_warning``
+    says so.
 
     Returns
     -------
@@ -363,8 +389,11 @@ def recommend(
                 goal, passing, current, benchmark, target, tolerance, rule, survived,
                 held_up_ratio, return_tolerance,
             )  # fmt: skip
-            moved.too_cautious = cautious
-            return moved
+            finished = _finish(
+                moved.choice, rule, moved.reasons, moved.ranking, survived, False, cautious,
+                passing.loc[moved.choice], False, goal, min_return, max_volatility, max_drawdown,
+            )  # fmt: skip
+            return finished
         cands = passing
     if cands.empty:
         if cautious:
@@ -411,10 +440,77 @@ def recommend(
         )
         return keep(reasons, ranking)
     reasons.insert(0, f"{pick} ranks first under the rule: {rule[0].lower()}{rule[1:]}")
-    if gate:
-        reasons.append(f"{pick} passes every IPS rule.")
+    return _finish(
+        pick, rule, reasons, ranking, survived, current_ok, cautious, cands.loc[pick], gate,
+        goal, min_return, max_volatility, max_drawdown,
+    )  # fmt: skip
+
+
+def _full_move_failures(
+    row: pd.Series, max_volatility: float | None, max_drawdown: float | None
+) -> list[str]:
+    """Why the full move to a candidate isn't recommended: walk-forward volatility or drawdown
+    over the IPS limits, or the full target failing the IPS over the full history."""
+    out = []
+    if max_volatility is not None and row["volatility"] > max_volatility + _EPS:
+        out.append(
+            f"its walk-forward volatility, {row['volatility']:.2%}, is above the "
+            f"{max_volatility:.2%} IPS limit"
+        )
+    mdd = row.get("max_drawdown")
+    if max_drawdown is not None and mdd is not None and pd.notna(mdd):
+        if mdd < -max_drawdown - _EPS:
+            out.append(
+                f"its walk-forward maximum drawdown, {mdd:.2%}, is deeper than the "
+                f"{max_drawdown:.2%} IPS limit"
+            )
+    full_ok = row.get("full_passes_ips")
+    if full_ok is not None and pd.notna(full_ok) and not bool(full_ok):
+        rules = row.get("full_ips_fails")
+        out.append(
+            "the full portfolio fails the IPS over the full history"
+            + (f" ({rules})" if isinstance(rules, str) and rules else "")
+        )
+    return out
+
+
+def _finish(
+    pick,
+    rule,
+    reasons,
+    ranking,
+    survived,
+    current_ok,
+    cautious,
+    row,
+    gate,
+    goal,
+    min_return,
+    max_volatility,
+    max_drawdown,
+) -> Recommendation:
+    """The rule's pick: "recommended" if it passes both checks, else "compliant_move"; plus the
+    lower-risk return warning."""
+    fails = _full_move_failures(row, max_volatility, max_drawdown)
+    if fails:
+        reasons.append(
+            f"The full move to {pick} is not recommended: " + "; ".join(fails) + ". Only the "
+            "closest compliant move towards it, which passes every IPS rule, is suggested."
+        )
+        status = "compliant_move"
+    else:
+        if gate:
+            reasons.append(f"{pick} passes every IPS rule.")
+        status = "recommended"
+    warning = None
+    if goal in LOWER_RISK_GOALS and min_return is not None and row["cagr"] < min_return - _EPS:
+        warning = (
+            f"{pick} returned {row['cagr']:.2%} a year, below the {min_return:.2%} the client's "
+            "goals need. Lower risk will likely mean not reaching those goals."
+        )
+        reasons.append(warning)
     return Recommendation(
-        pick, rule, reasons, ranking, survived, "recommended", current_ok, cautious
+        pick, rule, reasons, ranking, survived, status, current_ok, cautious, fails, warning
     )
 
 
@@ -712,9 +808,11 @@ def candidate_statuses(
     chosen_label = (
         "≈ Closest (still fails the IPS)"
         if closest
-        else {"recommended": "✓ Recommended", "next_best": "✓ Next best"}.get(
-            rec.status, "✓ Recommended"
-        )
+        else {
+            "recommended": "✓ Recommended",
+            "next_best": "✓ Next best",
+            "compliant_move": f"◐ {COMPLIANT_MOVE}",
+        }.get(rec.status, "✓ Recommended")
     )
     build_fails = (
         build_test_failures(table, tracking_error_max, tolerance, held_up_ratio)
@@ -767,7 +865,14 @@ def candidate_statuses(
                 out[name] = ("— Today's portfolio", "What the client holds now, for comparison.")
             continue
         if name == rec.choice:
-            out[name] = (chosen_label, "Chosen by the rule (see the summary above).")
+            out[name] = (
+                chosen_label,
+                "Today's move towards it passes the IPS, but "
+                + "; ".join(rec.full_move_fails)
+                + "."
+                if rec.full_move_fails
+                else "Chosen by the rule (see the summary above).",
+            )
             continue
         if "feasible" in table and not bool(pd.isna(r["feasible"]) or r["feasible"]):
             out[name] = ("✗ Couldn't meet the limits", "No portfolio met every limit.")

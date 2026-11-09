@@ -713,3 +713,17 @@ def test_too_cautious_limits_from_the_ips() -> None:
     assert limits["min_volatility"] == pytest.approx(0.5 * growth.limits["max_volatility"])
     cautious = build_ips(ClientProfile(), CFG)  # incomplete questionnaire: no floor
     assert too_cautious_limits(cautious)["min_volatility"] is None
+
+
+def test_ips_risk_limits_for_the_walk_forward_check() -> None:
+    from gpl.agent.tools import ips_risk_limits
+    from gpl.client import build_ips
+    from gpl.demo import demo_client
+
+    assert ips_risk_limits(None) == {"max_volatility": None, "max_drawdown": None}
+    ips = build_ips(demo_client(2).profile, CFG)  # the seed-2 demo: 12% cap, 20% drawdown
+    assert ips_risk_limits(ips) == {
+        "max_volatility": ips.limits["max_volatility"],
+        "max_drawdown": ips.limits["max_drawdown"],
+    }
+    assert ips.limits["max_drawdown"] > 0  # a positive fraction, as recommend() expects

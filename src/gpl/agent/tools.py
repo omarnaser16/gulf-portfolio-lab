@@ -794,6 +794,14 @@ def run_candidates(
             n: _ips_checks(ctx, full_targets.loc[n].fillna(0.0), universe)
             for n in full_targets.index
         }
+        # the second check for "recommended": each method's full target over the full history
+        table["full_passes_ips"] = [
+            not failures(full_checks[n]) if n in full_checks else None for n in table.index
+        ]
+        table["full_ips_fails"] = [
+            ", ".join(c.rule for c in failures(full_checks[n])) if n in full_checks else ""
+            for n in table.index
+        ]
     say(0.92, "4/4 Applying the recommendation rule")
     rec = recommend(
         goal,
@@ -805,6 +813,7 @@ def run_candidates(
         extra=(swap_name,) if swaps_run is not None else (),
         return_tolerance=lab.get("keep_return_tolerance", 0.0025),
         **too_cautious_limits(ctx.ips, lab.get("too_cautious_vol_share", 0.5)),
+        **ips_risk_limits(ctx.ips),
     )
 
     months = len(results[CURRENT].weights)
@@ -851,7 +860,13 @@ def run_candidates(
             "rule": rec.rule,
             "reasons": rec.reasons,
             "ranking_under_the_rule": rec.ranking,
-        },
+        }
+        | (
+            {"full_move_not_recommended_because": rec.full_move_fails}
+            if rec.full_move_fails
+            else {}
+        )
+        | ({"return_warning": rec.return_warning} if rec.return_warning else {}),
         "candidate_status": {
             n: {"status": label, "why": why}
             for n, (label, why) in candidate_statuses(
@@ -880,9 +895,12 @@ def run_candidates(
             "failed_rules": {
                 n: [breach_text(c) for c in failures(ips_checks[n])] for n in latest.index
             },
-            "note": "Only methods that pass every IPS rule can be recommended. 'closest_fails' "
-            "means no portfolio passed: the closest one is shown for discussion and is NOT "
-            "suitable as it stands.",
+            "note": "Only methods that pass every IPS rule can be recommended. 'recommended' "
+            "also needs the method's walk-forward volatility and drawdown within the IPS "
+            "limits and its full target to pass the IPS over the full history; otherwise "
+            "'compliant_move': only the closest compliant move towards it is suggested. "
+            "'closest_fails' means no portfolio passed: the closest one is shown for "
+            "discussion and is NOT suitable as it stands.",
         }
     if max_turnover is not None:
         report["mode"] = "improve"
@@ -986,6 +1004,17 @@ def too_cautious_limits(ips, vol_share: float = 0.5) -> dict[str, float | None]:
         "min_volatility": vol_share * lim["max_volatility"]
         if growth and lim.get("max_volatility")
         else None,
+    }
+
+
+def ips_risk_limits(ips) -> dict[str, float | None]:
+    """The IPS volatility cap and drawdown limit (positive fraction) that a method's
+    walk-forward results must meet to be recommended (``recommend``); None without an IPS."""
+    if ips is None:
+        return {"max_volatility": None, "max_drawdown": None}
+    return {
+        "max_volatility": ips.limits.get("max_volatility"),
+        "max_drawdown": ips.limits.get("max_drawdown"),
     }
 
 
@@ -1341,7 +1370,13 @@ def run_build(
             "rule": rec.rule,
             "reasons": rec.reasons,
             "ranking_under_the_rule": rec.ranking,
-        },
+        }
+        | (
+            {"full_move_not_recommended_because": rec.full_move_fails}
+            if rec.full_move_fails
+            else {}
+        )
+        | ({"return_warning": rec.return_warning} if rec.return_warning else {}),
         "candidate_status": {
             n: {"status": label, "why": why}
             for n, (label, why) in candidate_statuses(

@@ -586,3 +586,92 @@ def test_too_cautious_status_label() -> None:
     status = candidate_statuses(table(GROWTH), rec, "improve")
     assert status["Min variance"][0] == "✗ Too cautious for this client"
     assert status["Max Sharpe"][0] == "✓ Recommended"
+
+
+# ---------------------------------------- "recommended" needs both IPS checks (seed-2 case)
+
+
+def _both(full_ok: bool, wf_vol: float = 0.11, wf_mdd: float = -0.15) -> pd.DataFrame:
+    """BASE gated (today's move passes) with walk-forward drawdowns and the full-target check."""
+    t = gated({})
+    t["max_drawdown"] = -0.10
+    t.loc["Max Sharpe", ["volatility", "max_drawdown"]] = [wf_vol, wf_mdd]
+    t["full_passes_ips"] = True
+    t.loc["Max Sharpe", "full_passes_ips"] = full_ok
+    t["full_ips_fails"] = ""
+    if not full_ok:
+        t.loc["Max Sharpe", "full_ips_fails"] = "Volatility, Max drawdown"
+    return t
+
+
+def test_recommended_when_walk_forward_and_full_history_both_pass() -> None:
+    rec = recommend("max_risk_adjusted", _both(True), max_volatility=0.12, max_drawdown=0.20)
+    assert rec.choice == "Max Sharpe" and rec.status == "recommended"
+    assert rec.full_move_fails == []
+    # exactly on the limits passes (11% -> 12% cap; -20% drawdown -> 20% limit)
+    edge = recommend(
+        "max_risk_adjusted", _both(True, 0.12, -0.20), max_volatility=0.12, max_drawdown=0.20
+    )
+    assert edge.status == "recommended"
+
+
+def test_full_target_failing_over_the_full_history_gives_a_compliant_move_only() -> None:
+    rec = recommend("max_risk_adjusted", _both(False), max_volatility=0.12, max_drawdown=0.20)
+    assert rec.choice == "Max Sharpe" and rec.status == "compliant_move"
+    assert rec.full_move_fails == [
+        "the full portfolio fails the IPS over the full history (Volatility, Max drawdown)"
+    ]
+    assert "The full move to Max Sharpe is not recommended" in rec.reasons[-1]
+    assert "closest compliant move" in rec.reasons[-1]
+    assert not any(r == "Max Sharpe passes every IPS rule." for r in rec.reasons)
+
+
+def test_walk_forward_results_over_the_ips_limits_give_a_compliant_move_only() -> None:
+    vol = recommend("max_risk_adjusted", _both(True, 0.13), max_volatility=0.12, max_drawdown=0.20)
+    assert vol.status == "compliant_move"
+    assert vol.full_move_fails == [
+        "its walk-forward volatility, 13.00%, is above the 12.00% IPS limit"
+    ]
+    dd = recommend(
+        "max_risk_adjusted", _both(True, 0.11, -0.25), max_volatility=0.12, max_drawdown=0.20
+    )
+    assert dd.full_move_fails == [
+        "its walk-forward maximum drawdown, -25.00%, is deeper than the 20.00% IPS limit"
+    ]
+    # without the limits or the column (no IPS) nothing changes
+    assert recommend("max_risk_adjusted", table(BASE)).status == "recommended"
+
+
+def test_both_checks_also_apply_when_the_current_portfolio_fails() -> None:
+    t = _both(False)
+    t.loc["Current", ["ips_fails", "ips_breach", "passes_ips"]] = [1, 0.2, False]
+    rec = recommend("max_risk_adjusted", t, max_volatility=0.12, max_drawdown=0.20)
+    assert rec.choice == "Max Sharpe" and rec.status == "compliant_move"
+    assert "fails the client's IPS" in rec.reasons[0]
+
+
+def test_compliant_move_status_label_says_why() -> None:
+    from gpl.recommend import candidate_statuses
+
+    t = _both(False)
+    rec = recommend("max_risk_adjusted", t, max_volatility=0.12, max_drawdown=0.20)
+    label, why = candidate_statuses(t, rec, "improve")["Max Sharpe"]
+    assert label == "◐ Compliant move only"
+    assert why == (
+        "Today's move towards it passes the IPS, but the full portfolio fails the IPS over the "
+        "full history (Volatility, Max drawdown)."
+    )
+
+
+def test_lower_risk_goal_warns_when_return_is_below_the_required_return() -> None:
+    # Min variance returns 5.50% a year; the client needs 6.00%
+    rec = recommend("reduce_risk", table(GROWTH), min_return=0.06)
+    assert rec.choice == "Min variance" and rec.too_cautious == {}
+    assert rec.return_warning == (
+        "Min variance returned 5.50% a year, below the 6.00% the client's goals need. Lower risk "
+        "will likely mean not reaching those goals."
+    )
+    assert rec.return_warning in rec.reasons
+    assert recommend("reduce_risk", table(GROWTH), min_return=0.05).return_warning is None
+    # other goals rule such a candidate out instead (too cautious), so no warning there
+    assert recommend("max_risk_adjusted", table(GROWTH), min_return=0.06).return_warning is None
